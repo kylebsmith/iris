@@ -1,6 +1,6 @@
 #!/bin/sh
 # iris — build everything three ways from one core.
-#   ./build.sh audit        run the twenty-five correctness checks
+#   ./build.sh audit        run the correctness checks (40 at 0.4.0)
 #   ./build.sh mpe          run the MPE sink's byte-level checks
 #   ./build.sh sinks        run the CC and OSC sinks' byte-level checks
 #                           (CC is the DEFAULT sink; see ports/cc/iris_cc.h)

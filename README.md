@@ -26,7 +26,7 @@ cc -std=c99 -O2 -I. -o hello examples/01_hello.c -lm && ./hello
 
 ## What it is
 
-`iris.h` is a single header — 1,982 lines, 895 of them code — implementing the
+`iris.h` is a single header — 2,042 lines, 912 of them code — implementing the
 interactive machine learning loop that Wekinator made standard in 2009, rebuilt
 for targets that have no operating system.
 
@@ -42,8 +42,12 @@ for targets that have no operating system.
   stated contract with three layers of enforcement: `#error` on `-ffast-math`,
   an FP-contraction pragma, and golden output hashes pinned as live test
   assertions. Verified across 16 of 20 optimisation and contraction flag
-  combinations — the four that fail are exactly `-ffp-contract=fast`, which the
-  header documents as the case clang ignores the pragma for.
+  combinations on Apple clang 17/arm64. The four that fail are
+  `-ffp-contract=fast` at `-O1/-O2/-O3/-Os` — `-O0 -ffp-contract=fast` passes —
+  which is the case clang ignores the pragma for. GCC ignores it always,
+  including xtensa-esp32s3, so those builds must pass `-ffp-contract=off`
+  explicitly. **The ESP32-S3 determinism leg is untested**: no on-device
+  hash check exists yet.
 - **The examples are the interface.** Every demonstration is individually
   listable, auditionable and deletable, because that is how practitioners
   actually repair these models — Fiebrink's 2011 study found composers never
@@ -52,7 +56,7 @@ for targets that have no operating system.
 ## Run the tests
 
 ```sh
-sh build.sh audit     # 35 correctness checks, including the golden hashes
+sh build.sh audit     # 40 correctness checks, including the golden hashes
 sh build.sh mpe       # the MPE encoder, byte level
 sh build.sh sinks     # the CC and OSC output ports
 ```
