@@ -28,6 +28,43 @@ everything else is detail.
 
 ---
 
+## Why this exists
+
+An instrument you cannot rely on is not an instrument.
+
+The tools musicians use to build gestural instruments keep dying. Not from bad
+mathematics — from dependency rot. Wekinator's example patches need Processing 2
+and Kinect SDKs that no longer exist. MnM will not load in 64-bit Max. GRT needs
+patching for modern compilers. ml.lib breaks on each Max release. The piece you
+wrote quietly becomes unperformable, and the practice you built around it goes
+with it.
+
+So the barrier is doubly unfair. It is already technical enough to exclude most
+musicians before they start, and the ones who get through find the ground moving
+under them faster than a practice can mature.
+
+**You should own your instrument.** A stranger's commit should not be able to
+change how yours responds. You cannot learn the guitar if someone restrings it
+every few months and moves the notes around.
+
+That is a design constraint, not a sentiment, and it is what most of this
+library's odd decisions are for:
+
+- **No dependencies**, so there is nothing to rot. One C compiler, forever.
+- **A frozen behavioural contract**, pinned by golden hashes in the test suite.
+  If a change alters what your instrument does, the tests fail — including
+  changes we make.
+- **Your instrument is a file you own.** Weights and demonstrations together,
+  loadable bit-identically, permanently. The loader keeps reading every older
+  format.
+- **A permissive licence with no account, no cloud, no service.** Nothing to
+  revoke.
+
+The library is a tool for making instruments — so its own stability is not a
+nice-to-have. It is the whole product.
+
+---
+
 ## What it is
 
 `iris.h` is a single header — 2,050 lines, 912 of them code — implementing the
@@ -75,7 +112,7 @@ frozen.
 |---|---|
 | `iris.h` | The whole library. Start at the masthead. |
 | `iris_sink.h`, `iris_source.h` | The two port interfaces — where sound goes out and sensors come in |
-| `examples/` | `01_hello.c` teaches three gestures; `02_fix_a_mistake.c` is the repair loop |
+| `examples/` | `00_minimal.c` draws the learned space; `01_hello.c` three gestures; `02_fix_a_mistake.c` the repair loop; `03_reroll.c` same demos, different instrument |
 | `ports/` | Output ports: MIDI CC (the default), MPE, OSC, null, a template, a wasm shim |
 | `tests/` | The audit suite and the frozen golden fixtures |
 | `experimental/` | L-BFGS. Not in the core, no production callers — read its header before citing it |
