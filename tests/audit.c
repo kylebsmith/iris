@@ -659,7 +659,7 @@ int main(void) {
       }
       { float in[NI] = { 1e6f, 0.5f }, out[NO] = { 0.5f, 0.5f, 0.5f };
         iris_record(k, in, out); }
-      iris_set_learning(k, lrs[li], moms[mi]);
+      iris__set_learning(k, lrs[li], moms[mi]);
       int detect_call = 0;
       for (int call = 1; call <= 4; ++call) {
         iris_train_epochs(k, 400);
@@ -674,7 +674,7 @@ int main(void) {
          reported on the train call where it happened — never later */
       if (detect_call > 1) sweep_unreported++;
     }
-    iris_set_learning(k, 0.10f, 0.85f);
+    iris__set_learning(k, 0.10f, 0.85f);
 
     ok("NaN never reaches output; guards report", refused && preserved
        && finite && reported && sweep_nan == 0 && sweep_unreported == 0,

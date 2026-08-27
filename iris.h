@@ -244,33 +244,52 @@ IRIS_API int iris_isbad(float x) {
    other optimization combined": neither figure survives scrutiny.
    ========================================================================== */
 
-/* Padé approximation of tanh, clamped to tanh's OWN CODOMAIN.
+/* THE NONLINEARITY. Chosen, measured, and now permanent.
 
-   p(x) = x(27+x^2)/(27+9x^2). Two exact facts make this work:
-   p(x) - 1 = (x-3)^3 / (27+9x^2), so p(3) = 1 EXACTLY, and
+   p(x) = x(27+x^2)/(27+9x^2), clamped to tanh's codomain.
+
+   THIS IS NOT A CHEAP STAND-IN FOR tanh THAT WE REGRET. It was tested against
+   a Padé [7/6] approximant that is 245x more accurate (max error 2.2e-05 vs
+   2.4e-02) and against true tanh itself, over 6 target shapes, 2,304 paired
+   runs, scoring held-out error:
+
+       accurate [7/6]   3.8% WORSE held-out, +43% training wall clock,
+                        +23% on the on-stage prediction path
+       true tanh        indistinguishable from [7/6]
+
+   Accuracy is not the objective. The overshoot this approximant carries in the
+   mid-range — up to +0.0235 above tanh at x = 1.566 — makes it a STEEPER
+   sigmoid with a hard floor on gradient flow past |s| = 3, and that is capacity
+   control. It is the same axis that the smoothing study and the hidden-width
+   audit each rediscovered through a different lever. The function is doing
+   useful work, not merely approximating.
+
+   Two exact facts make the clamp correct rather than arbitrary:
+   p(x) - 1 = (x-3)^3/(27+9x^2), so p(3) = 1 EXACTLY, and
    p'(x) = ((x^2-9)/(3(3+x^2)))^2 >= 0, so p is monotone and p'(3) = 0 exactly.
+   Clamping the RETURN VALUE is therefore identical to clamping the argument at
+   |x| = 3, and strictly better: an argument clamp leaves a 1-ulp escape (10,220
+   floats in [2.5,3.0] still evaluate above 1.0f). It is also branch-free, so
+   its cost does not depend on the data.
 
-   Clamping the RETURN VALUE is therefore mathematically identical to clamping
-   the argument at |x| = 3 — and strictly better, because an argument clamp
-   leaves a 1-ulp escape: 10,220 floats in [2.5,3.0] still evaluate to
-   p(x) = 1.00000012f. Clamping the output removes that, and is branch-free on
-   the hot path so its cost does not depend on the data.
+   WHAT THIS FIXED, 2026-08-27. The clamp used to sit at |x| > 4.9, letting p
+   reach 1.02822 — outside tanh's codomain — which put a 0.0282 jump into every
+   hidden unit and drove the backward factor (1 - a*a) NEGATIVE, pointing the
+   gradient the wrong way, on 3.4-49.6% of weight updates. That band is now
+   unreachable: at saturation a = +/-1 exactly, so 1 - a*a = 0, which is exactly
+   p'(3).
 
-   WHAT THIS FIXED (2026-08-27). The previous clamp was at |x| > 4.9, which let
-   p reach 1.02822 — OUTSIDE tanh's codomain — putting a 0.0282 jump into every
-   hidden unit and driving the backward factor (1 - a*a) NEGATIVE, i.e. the
-   gradient pointed the wrong way, in a band no guard could see. That band was
-   entered often: 3.4-49.6% of weight updates involved at least one hidden unit
-   past |s| = 3. Moving the clamp removes ~99.8% of them and makes the sign
-   error unreachable: at saturation a = +/-1 exactly, so 1 - a*a = 0, which is
-   exactly p'(3).
+   CONSEQUENCE, STATED PLAINLY AND PERMANENTLY. (1 - a*a) is the derivative of
+   TRUE tanh, not of this function, so the backward pass is a surrogate gradient
+   — under-scaled by 2.4-3.3% in aggregate, never wrong-signed. Making it exact
+   is worth a measured 1.4% (CI [0.977, 0.996]) and costs 2.4x per epoch in the
+   implementation tried. It is not a defect being tolerated; it is a described
+   property of a chosen nonlinearity, and it can be revisited any time it earns
+   its 1.4% without changing what a saved instrument means.
 
-   AND THE APPROXIMATION GOT BETTER, not worse: max |p - tanh| falls from
-   0.028327 (at the old clamp of 4.9) to 0.023520 (at x = 1.566).
-
-   The +/-1e9 test exists only to keep x*(27+x^2) finite — it overflows float32
-   near |x| ~ 1.9e12. It is not the saturation point and never fires in
-   practice; pre-activations are bounded by IRIS_W_LIMIT. */
+   The +/-1e9 test only keeps x*(27+x^2) finite; it is not the saturation point
+   and never fires — pre-activations are bounded by IRIS_W_LIMIT.
+   Full workings: docs/FREEZE.md, docs/negative-results/. */
 IRIS_API float iris_tanh(float x) {
   if (x >  1.0e9f) return  1.0f;
   if (x < -1.0e9f) return -1.0f;
@@ -415,7 +434,12 @@ IRIS_API iris_status iris_get_status(const iris *k) { return (iris_status)k->sta
 IRIS_API size_t iris_size(int n_in, int n_hid, int n_out, int cap) {
   if (n_in < 1 || n_in > IRIS_MAX_IN)   return 0;
   if (n_out < 1 || n_out > IRIS_MAX_OUT) return 0;
-  if (n_hid < 1 || n_hid > IRIS_MAX_HID) return 0;
+  /* Floor of 8, not 1. n_hid is written into the file header and iris_load
+     refuses a mismatch, so the width chosen on day one is that instrument's
+     width forever. Below 8 the network cannot represent the mappings this
+     library is for; 8-64 is flat on quality (grid 0.0255-0.0290), so the floor
+     costs nothing and prevents a permanent mistake. */
+  if (n_hid < 8 || n_hid > IRIS_MAX_HID) return 0;
   if (cap  < 1 || cap  > IRIS_MAX_EX)   return 0;
   return sizeof(iris)
        + sizeof(float) * (size_t)( 2*(n_in*n_hid + n_hid + n_hid*n_out + n_out)
@@ -501,8 +525,35 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
   return k;
 }
 
-IRIS_API void iris_set_learning(iris *k, float lr, float momentum) {
-  k->lr = iris_clampf(lr, 0.0001f, 2.0f);
+/* INTERNAL. Was public until 2026-08-27; removed from the public surface
+   because it is measurably a footgun and buys nothing.
+
+   MOMENTUM 0.99 — one nudge from the 0.85 default — DIVERGED 21 of 40 runs and
+   BRICKED 20 of them at the default learning rate (structured target, 40 seeds,
+   sigma=0.05). "Bricked" means the musician lowers it back, retrains, and gets
+   IRIS_DIVERGED_STUCK forever; only a reroll recovers, and a reroll is a
+   different instrument.
+
+   LR 2.0, the old permitted maximum, destroyed 5 of 16: recall 73x worse than
+   default, grid error 6.6x worse. Weka's own documented range for the same
+   parameter is 0-1; we permitted double it.
+
+   AND THE SAFE RANGES DO NOTHING. Momentum 0.00 to 0.95 is flat on instrument
+   quality (grid 0.0257 to 0.0290) — it is a SPEED knob, and iris_train_converge
+   already hides speed. lr's safe range is covered entirely by smoothing: tuning
+   lr, tuning l2 and tuning the epoch ceiling land within 2-4% of each other,
+   because they are three spellings of one axis.
+
+   WORSE, THE ONLY READOUT A UI CAN SHOW POINTS BACKWARDS. At sigma=0.10:
+   lr=0.001 gives training MSE 1.17e-2 and the BEST instrument (grid 0.0693);
+   lr=0.050 gives training MSE 1.25e-3 and nearly the WORST (grid 0.1472). A
+   student tuning by watching the error readout reliably picks the worst
+   setting on offer.
+
+   Retained internally for tests/audit.c's Weka-parity check, which sets
+   Weka's own 0.3/0.2 pair. See docs/KNOB-AUDIT.md. */
+IRIS_API void iris__set_learning(iris *k, float lr, float momentum) {
+  k->lr = iris_clampf(lr, 0.0001f, 2.0f);   /* range kept for Weka parity */
   k->momentum = iris_clampf(momentum, 0.0f, 0.99f);
 }
 
@@ -545,10 +596,43 @@ IRIS_API void iris_set_learning(iris *k, float lr, float momentum) {
 
    Applied as decoupled decay on the weights only, never the biases: penalising
    a bias just shifts the function for no capacity benefit. */
-IRIS_API void iris_set_l2(iris *k, float l2) {
-  k->l2 = iris_clampf(l2, 0.0f, 1.0f);
+IRIS_API void iris__set_l2(iris *k, float l2) {
+  k->l2 = iris_clampf(l2, 0.0f, 0.3f);   /* 0.3, not 1.0 — see smoothing */
 }
 IRIS_API float iris_get_l2(const iris *k) { return k->l2; }
+
+/* SMOOTHING — the one quality knob, in the musician's own terms.
+
+   0 = stick tightly to my demonstrations, whatever they say.
+   1 = smooth confidently between them, forgiving my shaky takes.
+
+   This is the ONLY knob in the library that changes how good the instrument is
+   rather than how big or how fast it is, and it is the only one worth a
+   musician's attention. It maps onto weight decay, but nobody should have to
+   know that to use it.
+
+   WHY IT EXISTS AT ALL, measured (12 tasks x 3 noise levels, held-out grid
+   error against clean truth):
+
+       noise      smoothing 0     tuned smoothing
+       none          0.0693           0.0601
+       light         0.1312           0.0755
+       heavy         0.2161           0.0904
+
+   At realistic take-to-take inconsistency it is worth about 2.4x. Nothing else
+   in the library comes close, and — this is the part that justifies collapsing
+   five other knobs into this one — tuning the learning rate, or the epoch
+   ceiling, or the hidden width, lands within 2-4% of this. They were five
+   spellings of one axis. This is the spelling that is safe: measured monotone
+   across its whole range and ZERO divergences at any value, where momentum at
+   its old maximum bricked half of all instruments.
+
+   Default is 0 — stick to the demonstrations — because a musician who has not
+   asked for smoothing should get exactly what they showed it. */
+IRIS_API void iris_set_smoothing(iris *k, float amount) {
+  iris__set_l2(k, iris_clampf(amount, 0.0f, 1.0f) * 0.3f);
+}
+IRIS_API float iris_get_smoothing(const iris *k) { return k->l2 / 0.3f; }
 
 /* ==========================================================================
    PART 4 — THE EXAMPLE STORE
@@ -1074,7 +1158,7 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
          It cannot fire at the defaults because targets live in [0.1,0.9], so
          y*(1-y) >= 0.09 whenever the network is near its target. It takes
          lr >= 0.5 to make it appear at all (0.735% on a cliff target at N=50)
-         and lr = 1.0 to make it common — and iris_set_learning permits up to
+         and lr = 1.0 to make it common. The setter is now internal (iris__set_learning); it permitted up to
          2.0, so THAT is the honest caveat: measured absent at the defaults,
          measured present above lr 0.5.
 
@@ -1409,6 +1493,46 @@ IRIS_API float iris_loo_error(iris *k, int epochs) {
 
   iris_retrain_new(k, seed0, ep);      /* leave it playable, fitted on all */
   return (float)(total / ((double)n * (double)no));
+}
+
+/* SUGGEST A SMOOTHING VALUE — an explicit, occasional act, not an automatic one.
+
+   Runs leave-one-out across five smoothing settings and returns the one that
+   scored best. IT DOES NOT APPLY IT. You get the number, you decide.
+
+   WHY IT IS NOT AUTOMATIC — this was tested as an automatic default and it
+   failed the bar set for it:
+
+     - IT IS NOT STABLE. On ONE fixed dataset, re-rolled 16 times, it returned
+       2.36 distinct values on average. An instrument whose smoothing changes
+       when you reroll is an instrument that stops being predictable, which is
+       worse than one that is merely unsmoothed.
+     - IT IS SOMETIMES WORSE THAN DOING NOTHING. On 16.7% of datasets its pick
+       scored worse than smoothing 0.
+     - IT IS SLOW. Five leave-one-out sweeps: ~120 ms on a laptop, but roughly
+       37 s on the ESP32-S3 at 20 demonstrations and 202 s at 50, scaled from
+       the one measured on-device figure. That is not something to hide inside
+       a training call.
+
+   WHAT IT IS GOOD FOR: an honest starting point when you genuinely do not know,
+   on a machine where 120 ms is nothing. It captured about 80% of what a perfect
+   oracle would have gained at realistic noise levels. Treat the number as a
+   suggestion to audition, not an answer — and if you like where you land, pin
+   it in your code rather than re-deriving it, so your instrument stays put. */
+IRIS_API float iris_suggest_smoothing(iris *k) {
+  const float ladder[5] = { 0.0f, 0.05f, 0.15f, 0.5f, 1.0f };
+  const float keep = iris_get_smoothing(k);
+  float best_v = 0.0f, best_e = -1.0f;
+  int i;
+  for (i = 0; i < 5; ++i) {
+    iris_set_smoothing(k, ladder[i]);
+    {
+      float e = iris_loo_error(k, 0);
+      if (e >= 0.0f && (best_e < 0.0f || e < best_e)) { best_e = e; best_v = ladder[i]; }
+    }
+  }
+  iris_set_smoothing(k, keep);      /* we suggest; we do not decide */
+  return best_e < 0.0f ? -1.0f : best_v;
 }
 
 

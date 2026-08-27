@@ -67,7 +67,7 @@ nice-to-have. It is the whole product.
 
 ## What it is
 
-`iris.h` is a single header — 2,265 lines, 953 of them code — implementing the
+`iris.h` is a single header — 2,389 lines, 972 of them code — implementing the
 interactive machine learning loop that Wekinator made standard in 2009, rebuilt
 for targets that have no operating system.
 
@@ -160,6 +160,56 @@ is the live, funded, BSD-licensed regressor in this domain and the most serious
 comparator. **MEMLNaut** is doing on-device training for musical mapping first,
 better resourced, and shipping — this is not a competitor to it.
 **scikit-learn** is the calibration instrument, not the rival.
+
+## What is frozen, and what is not
+
+The library has not shipped yet, so this is the moment things become permanent.
+Once a student saves an instrument, anything that changes what those bytes
+*mean* becomes a promise we cannot break — a stranger's commit should not
+restring your guitar.
+
+**Frozen permanently. These change what a saved instrument plays, and will not
+be changed again:**
+
+- The nonlinearity — `p(x) = x(27+x²)/(27+9x²)`, clamped to tanh's codomain.
+  Measured against a 245× more accurate approximant and against true tanh over
+  2,304 paired runs: the accurate versions are **3.8% worse** held-out and cost
+  43% more training time. It is a chosen function, not a compromise.
+- The update rule, per-example with classical momentum at 0.10 / 0.85.
+- The output scaling to [0.1, 0.9] and the input scaling to [−1, +1].
+- The save format's meaning: weights, demonstrations, RNG state, scaling version.
+
+**Free to change, because they do not alter a saved instrument:** anything
+additive to the API, the stopping rule's internals, diagnostics, ports, and the
+surrogate-gradient refinement if it ever earns its measured 1.4%.
+
+## The knobs, and why there are so few
+
+Every parameter here was audited against one question: *could a musician
+plausibly choose a good value, and what happens at the extremes?* Most could
+not, and several were dangerous.
+
+**Removed from the public API:** the learning rate and momentum. Momentum at
+0.99 — one nudge from the 0.85 default — **diverged 21 of 40 runs and
+permanently bricked 20 of them.** A learning rate of 2.0 destroyed 5 of 16. And
+their safe ranges buy nothing: tuning the learning rate, the epoch ceiling, the
+hidden width and the smoothing all land within 2–4% of each other, because they
+were five spellings of one axis. Worse, the only number a UI could show points
+*backwards* — the setting with the best-looking training error produced nearly
+the worst instrument.
+
+**What you actually choose:** the shape (`n_in`, `n_out`, `n_hid`, `cap`), the
+seed — which is the reroll, a die rather than a setting — and **smoothing**,
+0 to 1, the one knob that changes how good the instrument is. `0` sticks tightly
+to your demonstrations; `1` smooths confidently between them. On clean
+demonstrations 0 is best; on noisy ones 1 is **2.6× better**. Monotone across
+its whole range, zero divergences at any value.
+
+`iris_suggest_smoothing()` will run a leave-one-out sweep and hand you a number.
+It does not apply it, and it is not automatic — tested as an automatic default
+it returned 2.36 different values from one dataset across 16 rerolls, and an
+instrument whose character changes when you reroll is worse than one that is
+merely unsmoothed.
 
 ## Licence
 

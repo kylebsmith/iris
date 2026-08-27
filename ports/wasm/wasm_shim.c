@@ -111,7 +111,10 @@ EXPORT float iris_js_train(int epochs)   { return g_k ? iris_train_epochs(g_k, e
 EXPORT float iris_js_reroll(unsigned int seed, int epochs) {
   return g_k ? iris_retrain_new(g_k, seed, epochs) : 1.0f;
 }
-EXPORT void  iris_js_set_learning(float lr, float mom) { if (g_k) iris_set_learning(g_k, lr, mom); }
+/* REMOVED 2026-08-27. Exposing lr/momentum to a browser UI is exposing the
+   two knobs measured to brick instruments: momentum 0.99 bricked 20 of 40 runs
+   at the default lr. See docs/KNOB-AUDIT.md. The internal setter still exists
+   for the test suite's Weka-parity check; it is not for users. */
 
 /* --- the instant trainer (the substrate's path, ADR 0008 / 0012) ----------
    A commit, a dissolve, a reroll and an undo each end in one of these; the
