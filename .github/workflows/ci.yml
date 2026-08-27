@@ -21,6 +21,7 @@ jobs:
           sh build.sh audit
           sh build.sh mpe
           sh build.sh sinks
+          sh build.sh claims
 
   # The library claims zero external symbols. That claim is checkable in one
   # command, so check it on every push rather than asserting it in a README.

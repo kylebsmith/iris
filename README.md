@@ -19,14 +19,18 @@ iris_predict(k, gesture, sound);       /* now play it */
 ```
 
 ```sh
-cc -std=c99 -O2 -I. -o hello examples/01_hello.c -lm && ./hello
+cc -std=c99 -O2 -Wall -Wextra -I. -o min examples/00_minimal.c -lm && ./min
 ```
+
+That example is nine lines of body and compiles with **zero warnings** under
+`-Wall -Wextra`. If you can write those nine lines, you can use this library;
+everything else is detail.
 
 ---
 
 ## What it is
 
-`iris.h` is a single header — 2,042 lines, 912 of them code — implementing the
+`iris.h` is a single header — 2,050 lines, 912 of them code — implementing the
 interactive machine learning loop that Wekinator made standard in 2009, rebuilt
 for targets that have no operating system.
 

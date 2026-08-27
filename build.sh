@@ -1,6 +1,7 @@
 #!/bin/sh
 # iris — build everything three ways from one core.
 #   ./build.sh audit        run the correctness checks (40 at 0.4.0)
+#   ./build.sh claims       verify the docs still match the code
 #   ./build.sh mpe          run the MPE sink's byte-level checks
 #   ./build.sh sinks        run the CC and OSC sinks' byte-level checks
 #                           (CC is the DEFAULT sink; see ports/cc/iris_cc.h)
@@ -13,9 +14,17 @@
 # The core (iris.h) is never compiled differently. Only the shim changes.
 set -e
 mkdir -p build
-CFLAGS="-O2 -Wall -Wextra -Wno-unused-function"
+# -Wno-unused-function is GONE (2026-08-27). It was suppressing the compiler's
+# own dead-code detector, which is how 36 lines of dead code sat unnoticed until
+# a 23-agent audit found them. IRIS_API is `static inline` now, so unused
+# definitions in a header no longer warn and the flag is not needed.
+CFLAGS="-O2 -Wall -Wextra"
 
 case "${1:-audit}" in
+  claims)
+    # Do the documents still tell the truth about the code? See tools/.
+    sh tools/check-claims.sh
+    ;;
   audit)
     cc $CFLAGS -o build/audit tests/audit.c -lm && ./build/audit
     # Guards are inert on healthy runs — provable only across two builds:
