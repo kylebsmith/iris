@@ -13,7 +13,7 @@ optional module once the core is validated.
 /* ==========================================================================
    PART 8g — DYADIC POSITIONAL ENCODING   (OFF, AND STAYING OFF FOR NOW)
 
-   Compile with -DEW_OPT_POSENC to get the encoder. NOTHING IN THIS FILE
+   Compile with -DIRIS_OPT_POSENC to get the encoder. NOTHING IN THIS FILE
    CALLS IT. It is here because it was measured, the measurement is
    interesting, and the measurement is not yet good enough to ship — and a
    result that lives only in a scratch directory is a result that gets found

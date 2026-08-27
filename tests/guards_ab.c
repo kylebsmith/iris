@@ -2,14 +2,14 @@
  *
  * The guards' contract is "report, never mutate": on healthy training they
  * must not change one bit. That can only be proven by building the core
- * twice — guards compiled in vs compiled out (-DEW_NO_GUARDS) — and
+ * twice — guards compiled in vs compiled out (-DIRIS_NO_GUARDS) — and
  * comparing the trained blobs. This program is one half of that A/B;
  * ./build.sh audit builds it both ways and diffs the output.
  *
  * Prints one line: the fnv1a-32 hash of the check-5 recipe's saved blob.
  *
  * Build:  cc -O2 -o guards_ab tests/guards_ab.c -lm
- *         cc -O2 -DEW_NO_GUARDS -o guards_ab_ng tests/guards_ab.c -lm
+ *         cc -O2 -DIRIS_NO_GUARDS -o guards_ab_ng tests/guards_ab.c -lm
  */
 
 #include "../iris.h"

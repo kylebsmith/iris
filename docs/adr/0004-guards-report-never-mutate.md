@@ -41,7 +41,7 @@ silently, never print** (the core has no libc to print with).
   when it does fire, training stops and reports rather than looping.
 
 The proof that guards cost nothing when healthy is structural: `build.sh`
-builds the core twice, with guards and with `-DEW_NO_GUARDS`, runs the same
+builds the core twice, with guards and with `-DIRIS_NO_GUARDS`, runs the same
 recipe, and requires bit-identical blobs. Overhead measured ≤2.5%.
 
 ## Rejected alternatives
@@ -67,7 +67,7 @@ was E8's motivating measurement.
 - `iris_predict` writes the status through a const cast — reporting beats
   const purity; the alternative (a new `iris_predict_st`) would have split the
   API in two for one word of state. Noted in the header at the cast.
-- Guards are compiled out with `-DEW_NO_GUARDS` for the A/B proof only; the
+- Guards are compiled out with `-DIRIS_NO_GUARDS` for the A/B proof only; the
   shipping build always has them.
 - Re-derive: `./build.sh audit` (check 13 and the final guards A/B line).
   Measured on Apple M4 Max (arm64), Apple clang 17.0.0, `-O2`, 2026-08-21.

@@ -28,9 +28,9 @@ case "${1:-audit}" in
   audit)
     cc $CFLAGS -o build/audit tests/audit.c -lm && ./build/audit
     # Guards are inert on healthy runs — provable only across two builds:
-    # core with guards vs core with -DEW_NO_GUARDS, same recipe, same bits.
+    # core with guards vs core with -DIRIS_NO_GUARDS, same recipe, same bits.
     cc $CFLAGS -o build/guards_ab tests/guards_ab.c -lm
-    cc $CFLAGS -DEW_NO_GUARDS -o build/guards_ab_ng tests/guards_ab.c -lm
+    cc $CFLAGS -DIRIS_NO_GUARDS -o build/guards_ab_ng tests/guards_ab.c -lm
     G=$(./build/guards_ab); N=$(./build/guards_ab_ng)
     if [ "$G" = "$N" ]; then
       echo "PASS  guards are inert on healthy runs           $G == no-guards build"

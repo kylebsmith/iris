@@ -33,10 +33,21 @@ static void ok(const char *name, int pass, const char *fmt, ...) {
   vprintf(fmt, a); printf("\n"); va_end(a);
   if (!pass) failures++;
 }
+/* Wall clock, portably. clock_gettime(CLOCK_MONOTONIC, ...) is POSIX and is not
+   available under MSVC, which would stop a Windows student running the test
+   suite at all. C89's clock() is in <time.h> everywhere; it measures processor
+   time rather than wall time, which for these single-threaded, CPU-bound
+   benchmarks is the same number to well within the precision we quote.
+   The library itself needs none of this — iris.h includes only <stddef.h> and
+   <stdint.h> and compiles anywhere a C99 compiler exists, MSVC included. */
+#if defined(_WIN32) || !defined(CLOCK_MONOTONIC)
+static double now_ms(void) { return (double)clock() * 1000.0 / (double)CLOCKS_PER_SEC; }
+#else
 static double now_ms(void) {
   struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
   return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
 }
+#endif
 
 /* fnv1a-32 — the same hash E8 recorded its determinism envelope with. */
 static uint32_t fnv1a(const void *p, size_t n) {
