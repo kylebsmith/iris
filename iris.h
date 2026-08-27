@@ -244,26 +244,39 @@ IRIS_API int iris_isbad(float x) {
    other optimization combined": neither figure survives scrutiny.
    ========================================================================== */
 
-/* Padé approximation of tanh.
+/* Padé approximation of tanh, clamped to tanh's OWN CODOMAIN.
 
-   ACCURACY, stated honestly: maximum absolute error 0.0283, at x = 4.9. The
-   "about 0.001" figure this comment used to carry holds only for |x| < 0.31
-   and was wrong by 28x everywhere else.
+   p(x) = x(27+x^2)/(27+9x^2). Two exact facts make this work:
+   p(x) - 1 = (x-3)^3 / (27+9x^2), so p(3) = 1 EXACTLY, and
+   p'(x) = ((x^2-9)/(3(3+x^2)))^2 >= 0, so p is monotone and p'(3) = 0 exactly.
 
-   IT ALSO LEAVES THE CODOMAIN. For 3 < |x| <= 4.9 this returns a magnitude
-   slightly above 1.0, which makes the backprop factor y*(1-y) go negative in
-   that band — bounded at 5.7% of the peak derivative, and invisible to the
-   guards. This is a real algebraic defect and it is documented rather than
-   fixed on purpose: over 100 seeds, clamping the derivative to >= 0 moves
-   recall and grid RMSE only in the fourth decimal, and substituting the
-   mathematically exact Pade derivative makes both MEASURABLY WORSE. Swapping
-   in libm tanhf is a coin toss (21 of 40 seeds favour this routine, paired
-   t = 0.06). See research/prior-art/CORE-AUDIT-vs-wekinator.md section 4.6. */
+   Clamping the RETURN VALUE is therefore mathematically identical to clamping
+   the argument at |x| = 3 — and strictly better, because an argument clamp
+   leaves a 1-ulp escape: 10,220 floats in [2.5,3.0] still evaluate to
+   p(x) = 1.00000012f. Clamping the output removes that, and is branch-free on
+   the hot path so its cost does not depend on the data.
+
+   WHAT THIS FIXED (2026-08-27). The previous clamp was at |x| > 4.9, which let
+   p reach 1.02822 — OUTSIDE tanh's codomain — putting a 0.0282 jump into every
+   hidden unit and driving the backward factor (1 - a*a) NEGATIVE, i.e. the
+   gradient pointed the wrong way, in a band no guard could see. That band was
+   entered often: 3.4-49.6% of weight updates involved at least one hidden unit
+   past |s| = 3. Moving the clamp removes ~99.8% of them and makes the sign
+   error unreachable: at saturation a = +/-1 exactly, so 1 - a*a = 0, which is
+   exactly p'(3).
+
+   AND THE APPROXIMATION GOT BETTER, not worse: max |p - tanh| falls from
+   0.028327 (at the old clamp of 4.9) to 0.023520 (at x = 1.566).
+
+   The +/-1e9 test exists only to keep x*(27+x^2) finite — it overflows float32
+   near |x| ~ 1.9e12. It is not the saturation point and never fires in
+   practice; pre-activations are bounded by IRIS_W_LIMIT. */
 IRIS_API float iris_tanh(float x) {
-  if (x >  4.9f) return  1.0f;
-  if (x < -4.9f) return -1.0f;
+  if (x >  1.0e9f) return  1.0f;
+  if (x < -1.0e9f) return -1.0f;
   const float x2 = x * x;
-  return x * (27.0f + x2) / (27.0f + 9.0f * x2);
+  const float p  = x * (27.0f + x2) / (27.0f + 9.0f * x2);
+  return p > 1.0f ? 1.0f : (p < -1.0f ? -1.0f : p);
 }
 
 /* Logistic / sigmoid, squashes anything into (0,1). Built from tanh so we
@@ -361,6 +374,7 @@ struct iris {
 
   /* --- training settings ------------------------------------------------- */
   float   lr, momentum;
+  float   l2;              /* weight decay. 0 = off, and off is the default */
   uint32_t seed;
   iris_rng  rng;
   int32_t trained;         /* the fit reflects the CURRENT example set      */
@@ -474,7 +488,7 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
   k->order = (int32_t *)p; p += sizeof(int32_t) * (size_t)cap;
 
   k->n_ex = 0; k->next_id = 1;
-  k->lr = 0.10f; k->momentum = 0.85f;
+  k->lr = 0.10f; k->momentum = 0.85f; k->l2 = 0.0f;
   /* A FRESH instrument is a v3 instrument: inputs in [-1,+1]. Only iris_load
      of a v1/v2 file moves it back, and only for that instrument. */
   k->in_center = 1;
@@ -491,6 +505,50 @@ IRIS_API void iris_set_learning(iris *k, float lr, float momentum) {
   k->lr = iris_clampf(lr, 0.0001f, 2.0f);
   k->momentum = iris_clampf(momentum, 0.0f, 0.99f);
 }
+
+/* WEIGHT DECAY (L2). Off by default, and the default is the finding.
+
+   THE PROBLEM IT ADDRESSES, stated as a reviewer states it: this network has
+   ~75 parameters and you are fitting 3xN targets. At N=20 that is more
+   parameters than training scalars, trained to a plateau with no capacity
+   control. With noisy demonstrations — which is what a human produces — it
+   fits the noise.
+
+   MEASURED (32 paired seeds, identical data and identical initial weights,
+   held-out RMSE on a fixed clean grid, docs/MATH-FIXES.md defect 2):
+
+     structured target, N=20, no noise      alpha=1e-3  -19.7%   (better)
+     structured target, N=20, sigma=0.05    alpha=1e-3  -40.3%   (better)
+     smooth target,     N=20, sigma=0.05    best alpha  -65.2%   (better)
+     smooth target,     N=20, NO noise      alpha=1e-2  +34.9%   (WORSE)
+
+   Sign test to p = 4.7e-10, disjoint IQRs in the large cells, surviving
+   Benjamini-Hochberg over 224 arm-by-cell tests. Also: plain plateau training
+   produced 4 IRIS_TRAINING_DIVERGED events at sigma=0.10; alpha >= 1e-3
+   produced zero, anywhere.
+
+   WHY THE DEFAULT IS STILL ZERO. No single alpha is safe across every target
+   and noise level — the same 1e-3 that wins by 40% on a structured noisy target
+   costs 9.3% on a clean smooth one, and 1e-2 costs 34.9%. Shipping a default
+   that is wrong half the time to fix a problem that appears the other half is
+   not an improvement, it is a coin flip with our name on it. So: the mechanism
+   ships, the default does not, and the numbers above tell you when to reach
+   for it. If your demonstrations are noisy — recorded from a human, from a real
+   sensor — start at 1e-3.
+
+   CAVEAT THAT MUST TRAVEL WITH THE NUMBER. This is NOT directly comparable to
+   scikit-learn's alpha, even though the scale looks familiar. iris_fit_ranges
+   derives normalisation from the training data's own observed range, and noise
+   inflates that range by 0.58x to 1.39x across the grid, so the effective
+   penalty moves with N and with noise. Comparable only under matched
+   preprocessing, which no sklearn user has.
+
+   Applied as decoupled decay on the weights only, never the biases: penalising
+   a bias just shifts the function for no capacity benefit. */
+IRIS_API void iris_set_l2(iris *k, float l2) {
+  k->l2 = iris_clampf(l2, 0.0f, 1.0f);
+}
+IRIS_API float iris_get_l2(const iris *k) { return k->l2; }
 
 /* ==========================================================================
    PART 4 — THE EXAMPLE STORE
@@ -1004,16 +1062,39 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
          exact only at zero and under-scales by up to 2x across the ordinary
          operating range, long before the sign flip PART 1 documents.
 
-         WHY IT STAYS. Over 100 seeds, substituting the mathematically exact
-         Padé derivative makes recall and grid RMSE MEASURABLY WORSE, and
-         clamping the derivative to >= 0 moves both only in the fourth decimal.
-         A surrogate gradient that outperforms the exact one is a known and
-         respectable phenomenon — the straight-through-estimator literature is
-         built on it. This is a measured choice, not an oversight. Describe the
-         trainer as "per-example SGD with classical momentum on a surrogate
-         gradient" and the finding is publishable; describe it as ordinary
-         backpropagation and the first reviewer who differentiates PART 1
-         discards the whole paper. See docs/MATH-AUDIT.md section 5.1. */
+         WHY IT STAYS — the vanishing-gradient objection, answered with a
+         count rather than an argument. The textbook complaint about pairing a
+         logistic output with squared error is that y*(1-y) collapses the
+         gradient exactly when a unit is confidently wrong. Instrumented for
+         that specific event (y*(1-y) < 0.01 while |y - t| > 0.3):
+
+             0 fires in 48,960,000 output-unit updates,
+             across N in {5,10,20,50}, 32 seeds, 6000 epochs, all deciles.
+
+         It cannot fire at the defaults because targets live in [0.1,0.9], so
+         y*(1-y) >= 0.09 whenever the network is near its target. It takes
+         lr >= 0.5 to make it appear at all (0.735% on a cliff target at N=50)
+         and lr = 1.0 to make it common — and iris_set_learning permits up to
+         2.0, so THAT is the honest caveat: measured absent at the defaults,
+         measured present above lr 0.5.
+
+         AND THE PROPOSED FIXES ARE WORSE, paired per seed on identical data and
+         identical inits: cross-entropy with rescaled targets is 1.2-2.3x worse
+         held-out at every N; linear output units are 1.06-1.77x worse and
+         triple the pre-clamp overshoot; flooring y*(1-y) is a mathematical
+         no-op, since it never goes below 0.09.
+
+         WHAT IS BEING TRADED AWAY, stated plainly rather than buried: one arm
+         does beat this — a cross-entropy gradient with targets left in
+         [0.1,0.9], which wins 32/32 seeds at N=20 by ~5%, and ~12% at a tuned
+         lr. It LOSES at N=10 (1.094x), which is the regime a musician actually
+         demonstrates in, and it widens the reroll spread in the undemonstrated
+         gaps by 1.6x. Reroll being a real control rather than a shrug is a
+         stated promise of this library, and y*(1-y) is the brake that keeps it.
+         That is a judgement about the use case sitting on top of a measurement,
+         not a measurement by itself, and it is recorded here as such.
+
+         See docs/MATH-FIXES.md defect 3 and docs/MATH-AUDIT.md section 5. */
       float rse = 0.0f;
       for (int o = 0; o < NO; ++o) {
         float y = k->out[o];
@@ -1040,15 +1121,29 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
       }
 
       /* --- apply the nudges, with momentum -------------------------------- */
+      /* WEIGHT DECAY, when asked for. `wd` is zero unless iris_set_l2 was
+         called, and when it is zero this is bit-for-bit the update that shipped
+         before decay existed — `w[h] -= 0.0f * w[h]` is exact in IEEE, so the
+         golden hashes are unaffected and the default path costs one multiply
+         that the optimiser can see is dead.
+
+         Decoupled (applied to the weight, not folded into the gradient, so it
+         does not accumulate in the momentum term) and on WEIGHTS ONLY. Biases
+         are never decayed: penalising a bias shifts the function without
+         reducing capacity, which is cost with no benefit. Scaled by 1/n_ex so
+         that alpha means the same thing regardless of how many demonstrations
+         you have, matching scikit-learn's penalty-to-data ratio. */
+      const float wd = k->l2 * k->lr / (float)k->n_ex;
       for (int o = 0; o < NO; ++o) {
         float g = k->d_out[o];
         float *w = k->w2 + (size_t)o * NH, *v = k->v_w2 + (size_t)o * NH;
         for (int h = 0; h < NH; ++h) {
           v[h] = IRIS_FLUSH(k->momentum * v[h] - k->lr * g * k->hid[h]);
           w[h] += v[h];
+          w[h] -= wd * w[h];
         }
         k->v_b2[o] = IRIS_FLUSH(k->momentum * k->v_b2[o] - k->lr * g);
-        k->b2[o]  += k->v_b2[o];
+        k->b2[o]  += k->v_b2[o];      /* biases are not decayed */
       }
       for (int h = 0; h < NH; ++h) {
         float g = k->d_hid[h];
@@ -1056,9 +1151,10 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
         for (int i = 0; i < NI; ++i) {
           v[i] = IRIS_FLUSH(k->momentum * v[i] - k->lr * g * x[i]);
           w[i] += v[i];
+          w[i] -= wd * w[i];
         }
         k->v_b1[h] = IRIS_FLUSH(k->momentum * k->v_b1[h] - k->lr * g);
-        k->b1[h]  += k->v_b1[h];
+        k->b1[h]  += k->v_b1[h];      /* biases are not decayed */
       }
     }
     err /= (float)(k->n_ex * NO);

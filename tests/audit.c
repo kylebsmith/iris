@@ -579,7 +579,13 @@ int main(void) {
    weights it produces. The old value was 0x8260169D. The core SGD hash above
    is UNCHANGED, which is the point — the repair touched only
    experimental/iris_lbfgs.h. */
-      uint32_t wantl = pass == 0 ? 0xFB5BE623u : 0u;
+      /* Re-pinned 2026-08-27 (was 0xFB5BE623). The tanh codomain clamp moved from
+   |x|>4.9 to the codomain itself, which changes the weights L-BFGS reaches.
+   The CORE SGD hash on the line above is UNCHANGED, which is the informative
+   part: at the reference task SGD never drives a pre-activation past 3, so the
+   old defect was inert for it. L-BFGS takes larger steps, entered the band
+   routinely, and was being fed wrong-signed gradients. */
+      uint32_t wantl = pass == 0 ? 0x1648FA1Eu : 0u;
       ok(pass == 0 ? "golden blob: [0,1] training path bit-pinned"
                    : "golden blob: [-1,+1] training path bit-pinned",
          n1 == 852 && h == want && (pass != 0 ? 1 : hl == wantl),
@@ -1569,29 +1575,32 @@ int main(void) {
     iris *k3 = iris_init(arena_d, sizeof arena_d, NI, NH, NO, CAP, 4242u);
     load_examples(k3, 20);
     float sc = iris_train_converge(k3, 0, 0, 0);
-    /* WHAT IS ASSERTED, AND WHY IT CHANGED (2026-08-26).
-       This check used to assert `sc < l2 * 0.5f` — that SGD beats our L-BFGS
-       by at least 2x. It no longer does, and it should never have been
-       asserted: the gap it measured was mostly two defects in our own L-BFGS
-       (an absolutely-scaled curvature test, a float32 line search resolving
-       rounding noise). Both were repaired in experimental/iris_lbfgs.h and
-       the gap fell from ~3.8x to ~1.6x on this seed; across 8 seeds the
-       repaired median is 1.28x and the per-seed comparison is a coin flip.
-       Asserting a coin flip is not a test.
+    /* WHAT IS ASSERTED, AND WHY IT CHANGED TWICE.
 
-       What IS stable, seed-robust, and worth pinning is the PLATEAU property:
-       ten times the iteration budget buys essentially nothing, because the
-       method converges and stops improving. That is asserted. The comparative
-       number is REPORTED, not asserted, and must be quoted as a fact about
-       OUR IMPLEMENTATION on ONE seed — never as evidence about the L-BFGS
-       method, and never against scikit-learn's small-data guidance, which
-       concerns held-out error on a regularised objective we do not implement.
-       See research/prior-art/WHY-lbfgs-defaults-robustness.md section 1.    */
-    ok("L-BFGS converges and stays converged (10x budget buys nothing)",
-       l2 > l1 * 0.5f && l1 / l2 < 1.05f && l1 / l2 > 0.95f,
-       "L-BFGS 1000 it %.3e -> 10000 it %.3e (a %.2fx move for 10x the work); "
-       "SGD-to-plateau %.3e on the same seed (ratio %.2fx — REPORTED, not "
-       "asserted; our implementation, one seed)", l1, l2, l1 / l2, sc, l2 / sc);
+       2026-08-26: this asserted `sc < l2 * 0.5f` — that SGD beats our L-BFGS by
+       at least 2x. That was mostly measuring two defects in our own L-BFGS. Both
+       were repaired and the assertion was replaced by a plateau test.
+
+       2026-08-27: the plateau test is dead too, and the reason is worth reading.
+       Fixing the tanh codomain clamp REVERSED the comparison. L-BFGS now reaches
+       a LOWER training error than SGD-to-plateau on this seed, and is still
+       improving at 10,000 iterations rather than plateauing. The old activation
+       let 1-a*a go negative past |s|=3; L-BFGS takes large steps, entered that
+       band routinely, and was being fed wrong-signed gradients. SGD at these
+       hyperparameters never goes there — which is why the core golden hash above
+       did not move and this one did.
+
+       So: assert only what is stable, which is that both trainers actually fit.
+       REPORT the comparison and do not assert it. It has now flipped once, on a
+       change to a function neither trainer owns; a test that pins a comparative
+       ordering here would be pinning an artefact. Anyone quoting the ratio must
+       quote it as our implementation, one seed, one task.
+       See docs/MATH-FIXES.md defect 1.                                        */
+    ok("both trainers reach a usable fit; ratio reported, not asserted",
+       l2 > 0.0f && l2 < 1e-3f && sc > 0.0f && sc < 1e-3f,
+       "L-BFGS 1000 it %.3e -> 10000 it %.3e (%.2fx); SGD-to-plateau %.3e; "
+       "L-BFGS/SGD = %.2fx (REPORTED — flipped on 2026-08-27 when the tanh "
+       "codomain was fixed)", l1, l2, l1 / l2, sc, l2 / sc);
   }
 
   /* --- 34. THE HOLE CHECK 30 LEFT OPEN: open, re-train, save, re-open -----
