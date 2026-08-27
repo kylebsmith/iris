@@ -551,7 +551,12 @@ int main(void) {
       size_t n = iris_save(kb, file, sizeof file);
       size_t n1 = golden_v1_bytes(file, n);     /* v1-layout view of the blob */
       uint32_t h = fnv1a(file, n1);
-      uint32_t want = pass == 0 ? 0xFEFAEDF6u : 0x6805FB0Du;
+      /* The [-1,+1] value was re-pinned 2026-08-27 (was 0x6805FB0D) when format v4
+   added a trailing CRC32: the saved bytes are 4 longer and now carry a
+   checksum, so their hash necessarily moved. The [0,1] value is UNCHANGED,
+   because a legacy instrument still saves as v2 with no CRC -- which is the
+   compatibility promise working. */
+      uint32_t want = pass == 0 ? 0xFEFAEDF6u : 0x123FD0C8u;
       /* AND THE L-BFGS PATH, for one specific reason. The v0.3.0 scaling
          change edited exactly one piece of arithmetic that neither golden
          blob covers: iris__lbfgs_pass folds the input scaling into a
@@ -588,7 +593,12 @@ int main(void) {
       uint32_t wantl = pass == 0 ? 0x1648FA1Eu : 0u;
       ok(pass == 0 ? "golden blob: [0,1] training path bit-pinned"
                    : "golden blob: [-1,+1] training path bit-pinned",
-         n1 == 852 && h == want && (pass != 0 ? 1 : hl == wantl),
+         /* n1 is a v1-LAYOUT VIEW of the blob, not the save size, so it is not
+            derivable from iris_save_size. It was hardcoded at 852, which broke
+            the moment format v4 appended a CRC32. The length does not need its
+            own assertion: fnv1a is taken over exactly n1 bytes, so a wrong
+            length gives a wrong hash. The hash is the check. */
+         n1 > 0 && h == want && (pass != 0 ? 1 : hl == wantl),
          "%zu v1-layout bytes, fnv1a 0x%08X (want 0x%08X); L-BFGS weights "
          "0x%08X%s", n1, h, want, hl,
          pass == 0 ? " (want 0xFB5BE623, re-pinned after the 2026-08-26 L-BFGS repair)" : "");
@@ -1710,7 +1720,7 @@ int main(void) {
     }
     ok("migrating scaling is opt-in, idempotent, and carries the format",
        loaded && before == 0 && first == 1 && after == 1 && second == 0
-         && ver == 3 && moved <= 0.06f,
+         && ver == (int)IRIS_FORMAT && moved <= 0.06f,   /* v4 since 2026-08-27 */
        "scaling %d -> %d, migrate returned %d then %d, saves v%d, "
        "instrument moved %.4f (want <= 0.06, the check-30 fit tolerance)",
        before, after, first, second, ver, moved);

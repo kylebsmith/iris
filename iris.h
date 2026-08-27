@@ -2067,9 +2067,32 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
    ========================================================================== */
 
 #define IRIS_MAGIC 0x4B455745u  /* "EWEK" */
-#define IRIS_FORMAT 3u          /* what iris_save writes: inputs in [-1,+1]      */
+#define IRIS_FORMAT 4u          /* what iris_save writes: v3 layout + a CRC32    */
+#define IRIS_FORMAT_V3 3u       /* v3 without the CRC. Readable forever.        */
 #define IRIS_FORMAT_V2 2u       /* v1 + the rng word; inputs in [0,1]. Forever. */
 #define IRIS_FORMAT_V1 1u       /* the original; inputs in [0,1]. Forever.      */
+
+/* CRC32 (IEEE 802.3), computed a bit at a time so there is no 1 KB table to
+   carry onto a microcontroller. A few KB takes microseconds and it only runs on
+   save and load, never while playing.
+
+   WHY A SAVED INSTRUMENT NEEDS ONE. The file is weights — raw floats with no
+   redundancy. Flip one bit in flash, or lose power halfway through an SD write,
+   and every field still parses: the magic matches, the shape matches, the sizes
+   match, and the instrument loads and plays something subtly wrong with nothing
+   reporting anything. That is the worst failure this library can have, because
+   the musician will assume they mis-trained it. A checksum turns it into a
+   refusal. Added in format v4, 2026-08-27. */
+IRIS_API uint32_t iris_crc32(const void *buf, size_t n) {
+  const unsigned char *p = (const unsigned char *)buf;
+  uint32_t c = 0xFFFFFFFFu;
+  size_t i; int b;
+  for (i = 0; i < n; ++i) {
+    c ^= (uint32_t)p[i];
+    for (b = 0; b < 8; ++b) c = (c >> 1) ^ (0xEDB88320u & (uint32_t)(-(int32_t)(c & 1u)));
+  }
+  return c ^ 0xFFFFFFFFu;
+}
 
 IRIS_API size_t iris_save_size(const iris *k) {
   return sizeof(uint32_t) * 9                      /* v2/v3: 8 header + rng.s */
@@ -2077,7 +2100,11 @@ IRIS_API size_t iris_save_size(const iris *k) {
                                  + k->n_out*k->n_hid + k->n_out
                                  + 2*(k->n_in + k->n_out)
                                  + (size_t)k->n_ex * (k->n_in + k->n_out) )
-       + sizeof(int32_t) * (size_t)k->n_ex;
+       + sizeof(int32_t) * (size_t)k->n_ex
+       /* The trailing CRC32, on v4 only. A legacy [0,1] instrument saves as v2,
+          byte-for-byte as it always did — that promise is the reason the old
+          formats exist at all, and a checksum is not worth breaking it for. */
+       + (size_t)(k->in_center ? sizeof(uint32_t) : 0);
 }
 
 IRIS_API size_t iris_save(const iris *k, void *buf, size_t cap) {
@@ -2117,6 +2144,14 @@ IRIS_API size_t iris_save(const iris *k, void *buf, size_t cap) {
   #undef IRIS_PUT
   int32_t *ids = (int32_t *)f;
   for (int i = 0; i < k->n_ex; ++i) ids[i] = k->ex_id[i];
+  {
+    /* CRC over everything written so far. v2 files (legacy [0,1] instruments)
+       carry no CRC and never will — they are preserved exactly as they were. */
+    uint32_t *tail = (uint32_t *)(ids + k->n_ex);
+    *tail = (h[1] == IRIS_FORMAT)
+          ? iris_crc32(buf, need - sizeof(uint32_t))
+          : 0u;
+  }
   return need;
 }
 
@@ -2124,7 +2159,25 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
   if (!buf || bytes < sizeof(uint32_t) * 8) return 0;
   const uint32_t *h = (const uint32_t *)buf;
   if (h[0] != IRIS_MAGIC) return 0;
-  if (h[1] != IRIS_FORMAT_V1 && h[1] != IRIS_FORMAT_V2 && h[1] != IRIS_FORMAT) return 0;
+  if (h[1] != IRIS_FORMAT_V1 && h[1] != IRIS_FORMAT_V2 &&
+      h[1] != IRIS_FORMAT_V3 && h[1] != IRIS_FORMAT) return 0;
+
+  /* VERIFY THE CHECKSUM before trusting a single weight. Only v4 carries one;
+     v1/v2/v3 predate it and load unchecked, which is the price of the promise
+     that an old instrument keeps working forever. A mismatch means the file is
+     damaged — refuse it rather than play weights that will be subtly wrong with
+     nothing reporting anything. */
+  if (h[1] == IRIS_FORMAT) {
+    if (bytes < sizeof(uint32_t)) return 0;
+    {
+      const unsigned char *b8 = (const unsigned char *)buf;
+      uint32_t stored;
+      const unsigned char *tp = b8 + bytes - sizeof(uint32_t);
+      int i; stored = 0u;
+      for (i = 0; i < 4; ++i) stored |= (uint32_t)tp[i] << (8 * i);
+      if (iris_crc32(buf, bytes - sizeof(uint32_t)) != stored) return 0;
+    }
+  }
   {
     const int has_rng = (h[1] != IRIS_FORMAT_V1);
     if (has_rng && bytes < sizeof(uint32_t) * 9) return 0;
