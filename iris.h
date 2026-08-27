@@ -986,8 +986,34 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
       iris_forward_norm(k, x);
 
       /* --- output layer error ---------------------------------------------
-         d_out = (predicted - target) * sigmoid'(z), and sigmoid'(z) is
-         conveniently y*(1-y) using the value we already computed. */
+         ⚠️ THIS IS A SURROGATE GRADIENT, NOT THE GRADIENT. Read this before
+         citing anything about the trainer.
+
+         d_out = (predicted - target) * y*(1-y). y*(1-y) is the exact derivative
+         of the TRUE logistic function. Our forward pass does not use the true
+         logistic: iris_sigmoid is built from iris_tanh, which is a Padé
+         rational approximant (PART 1). So the backward pass is not the
+         derivative of the forward pass. An earlier version of this comment said
+         "sigmoid'(z) is conveniently y*(1-y)" — that is false of THIS
+         implementation and contradicted PART 1 twenty lines above it.
+
+         HOW WRONG, MEASURED. Ratio of the derivative used to the exact
+         derivative of the function actually evaluated, verified numerically
+         2026-08-27: 1.000 at x=0, 0.889 at x=1, 0.750 at 1.5, 0.555 at 2.0,
+         0.305 at 2.5 — then it changes sign, reaching -1.25 by x=4.5. It is
+         exact only at zero and under-scales by up to 2x across the ordinary
+         operating range, long before the sign flip PART 1 documents.
+
+         WHY IT STAYS. Over 100 seeds, substituting the mathematically exact
+         Padé derivative makes recall and grid RMSE MEASURABLY WORSE, and
+         clamping the derivative to >= 0 moves both only in the fourth decimal.
+         A surrogate gradient that outperforms the exact one is a known and
+         respectable phenomenon — the straight-through-estimator literature is
+         built on it. This is a measured choice, not an oversight. Describe the
+         trainer as "per-example SGD with classical momentum on a surrogate
+         gradient" and the finding is publishable; describe it as ordinary
+         backpropagation and the first reviewer who differentiates PART 1
+         discards the whole paper. See docs/MATH-AUDIT.md section 5.1. */
       float rse = 0.0f;
       for (int o = 0; o < NO; ++o) {
         float y = k->out[o];
@@ -1002,7 +1028,10 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
       k->ex_res[row_ix] += rse;
 
       /* --- hidden layer error: blame flows backward through the weights ----
-         tanh'(z) = 1 - tanh(z)^2, again reusing the stored activation. */
+         (1 - a*a) is the exact derivative of the TRUE tanh. iris_tanh is not
+         tanh — see the surrogate-gradient note on the output layer above, which
+         applies here identically. The exact derivative of the Padé approximant
+         is ((x*x - 9) / (3*(3 + x*x)))^2, and it is not what this uses. */
       for (int h = 0; h < NH; ++h) {
         float acc = 0.0f;
         for (int o = 0; o < NO; ++o) acc += k->w2[(size_t)o * NH + h] * k->d_out[o];
