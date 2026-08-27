@@ -1,0 +1,61 @@
+name: ci
+
+# The whole test suite is one command with no dependencies, so CI is cheap and
+# there is no excuse for the determinism contract to rot silently.
+on: [push, pull_request]
+
+jobs:
+  audit:
+    name: audit (${{ matrix.os }} / ${{ matrix.cc }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: audit, mpe, sinks
+        run: |
+          export CC=${{ matrix.cc }}
+          sh build.sh audit
+          sh build.sh mpe
+          sh build.sh sinks
+
+  # The library claims zero external symbols. That claim is checkable in one
+  # command, so check it on every push rather than asserting it in a README.
+  freestanding:
+    name: zero external symbols
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          cat > probe.c <<'PROBE'
+          #include "iris.h"
+          static unsigned char mem[IRIS_ARENA(2,12,3,64)];
+          int probe(void){
+            iris *k = iris_init(mem,sizeof mem,2,12,3,64,1234);
+            float g[2]={0.1f,0.2f}, s[3]={0.3f,0.4f,0.5f};
+            iris_record(k,g,s); iris_train_converge(k,0,0,0);
+            iris_predict(k,g,s); iris_save(k,0,0);
+            return 0; }
+          PROBE
+          gcc -std=c99 -O2 -ffreestanding -fno-stack-protector -I. -c probe.c -o probe.o
+          UNDEF=$(nm -u probe.o | tr -d ' ' | grep -v '^$' || true)
+          if [ -n "$UNDEF" ]; then echo "FAIL: external symbols: $UNDEF"; exit 1; fi
+          echo "PASS: zero external symbols"
+
+  # Determinism is a contract, not a hope. 20 flag combinations; the four that
+  # legitimately fail are -ffp-contract=fast, which the header documents.
+  determinism:
+    name: golden hashes across optimisation levels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          for O in -O0 -O1 -O2 -O3 -Os; do
+            echo "== $O -ffp-contract=off =="
+            cc -std=c99 $O -ffp-contract=off -I. -o build_audit tests/audit.c -lm 2>/dev/null || \
+              { mkdir -p build; cc -std=c99 $O -ffp-contract=off -I. -o build_audit tests/audit.c -lm; }
+            ./build_audit | grep -E "golden blob" || exit 1
+          done

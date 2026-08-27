@@ -1,0 +1,1403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>iris</title>
+<style>
+/* ============================================================================
+   the Mac twin of the substrate (D10, ADR 0012). PLAY is the whole window:
+   a canvas and nothing else. TRAIN is the same canvas under glass. The only
+   text on the glass is the error band. Everything the desktop cannot avoid
+   (MIDI ports, sinks, files) lives in a drawer that is invisible in PLAY
+   and opens only by a deliberate act ('?' or a 1 s press in the top-right
+   corner). One hint line explains the finger mapping and fades after first
+   use. A corner control picks the input rig and fades after first use.
+   ========================================================================= */
+:root{
+  --bg:#0a0c0b; --ink:#e8eae6; --ink-2:#b9bdb8; --muted:#7c817c; --faint:#50554f;
+  --line:#23272a; --panel:#121514; --panel-2:#191d1c; --accent:#5FD4BC; --err:#ff0000; --warn:#ffa500;
+  --font-ui:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  --font-data:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--font-ui);font-size:13px}
+#glass{position:fixed;inset:0;width:100vw;height:100vh;display:block;touch-action:none;cursor:crosshair;user-select:none;-webkit-user-select:none}
+#glass.play{cursor:none}
+/* the band: the law's one permitted text */
+#band{position:fixed;left:0;top:0;right:0;display:none;padding:0 10px;font-family:var(--font-data);font-weight:700;
+  letter-spacing:.35em;text-transform:uppercase;white-space:nowrap;overflow:hidden;pointer-events:none;z-index:5}
+#band.on{display:flex;align-items:center}
+#band.err{background:var(--err);color:#fff}
+#band.warn{background:var(--warn);color:#000}
+/* the hint: one line, fades after first use */
+#hint{position:fixed;left:0;right:0;bottom:14px;text-align:center;font-family:var(--font-data);font-size:11px;color:var(--muted);
+  letter-spacing:.04em;pointer-events:none;opacity:0;transition:opacity 1.2s ease;z-index:4}
+#hint.on{opacity:.85}
+/* the rig control: three dots in a corner */
+#rig{position:fixed;left:10px;bottom:10px;display:flex;gap:7px;padding:6px;opacity:0;transition:opacity .5s ease;z-index:4;cursor:pointer}
+#rig.seen{opacity:.55}#rig.near{opacity:.9}
+/* PLAY is pure: nothing but the glass and the band */
+body.play #rig,body.play #hint{opacity:0!important;pointer-events:none}
+#rig i{width:7px;height:7px;border-radius:50%;background:var(--faint);display:block}
+#rig i.on{background:var(--ink-2)}
+/* the drawer */
+#drawer{position:fixed;top:0;right:0;bottom:0;width:340px;max-width:92vw;background:var(--panel);border-left:1px solid var(--line);
+  transform:translateX(102%);transition:transform .22s ease;overflow:auto;z-index:6;padding:14px 16px 30px;box-sizing:border-box}
+#drawer.open{transform:none}
+#drawer h2{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:18px 0 8px;font-weight:600}
+#drawer h2:first-child{margin-top:2px}
+#drawer .row{display:flex;align-items:center;gap:8px;margin:5px 0;flex-wrap:wrap}
+#drawer label{color:var(--ink-2);font-size:12px}
+#drawer select,#drawer input[type=text],#drawer input[type=number]{background:var(--panel-2);color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:4px 6px;font:inherit;font-size:12px}
+#drawer input[type=number]{width:54px}
+#drawer input[type=text]{flex:1;min-width:120px}
+#drawer .b{background:var(--panel-2);color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:5px 10px;font:inherit;font-size:12px;cursor:pointer}
+#drawer .b:hover{border-color:var(--muted)}
+#drawer .mono{font-family:var(--font-data);font-size:11px;color:var(--faint)}
+#drawer .mono.ok{color:var(--accent)}
+#drawer details{margin:6px 0}#drawer summary{cursor:pointer;color:var(--ink-2);font-size:12px}
+#drawer .ccmap{display:grid;grid-template-columns:auto 1fr auto auto;gap:4px 8px;align-items:center;font-size:12px;margin-top:6px}
+#drawer pre{background:var(--panel-2);border:1px solid var(--line);border-radius:4px;font-family:var(--font-data);font-size:10px;max-height:140px;overflow:auto;padding:6px;margin:6px 0 0;color:var(--ink-2)}
+#drawer .seg{display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+#drawer .seg button{background:transparent;color:var(--ink-2);border:0;padding:5px 10px;font:inherit;font-size:12px;cursor:pointer}
+#drawer .seg button[aria-pressed=true]{background:var(--panel-2);color:var(--ink)}
+#drawer .close{position:absolute;right:12px;top:10px;background:none;border:0;color:var(--muted);font-size:16px;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="glass"></canvas>
+<div id="band" role="status" aria-live="polite"></div>
+<div id="hint"></div>
+<div id="rig" title="input rig"><i data-rig="pad"></i><i data-rig="vel"></i><i data-rig="mic"></i></div>
+
+<aside id="drawer" aria-label="settings drawer">
+  <button class="close" id="drawerClose" title="close (?)">×</button>
+  <h2>Instrument</h2>
+  <div class="row"><input type="text" id="instName" value="untitled" spellcheck="false" aria-label="instrument name"></div>
+  <div class="row">
+    <button class="b" id="saveBtn">save .ewk</button>
+    <button class="b" id="saveJsonBtn">save + settings</button>
+    <button class="b" id="openBtn">open…</button>
+    <input type="file" id="fileInput" accept=".ewk,.json" multiple style="display:none">
+  </div>
+  <div class="row"><span class="mono" id="fileLine"></span></div>
+  <div class="row"><span class="mono" id="storeLine"></span></div>
+
+  <h2>Input rig</h2>
+  <div class="row"><span class="seg" role="group" id="rigSeg">
+    <button data-rig="pad" aria-pressed="true">pad</button>
+    <button data-rig="vel" aria-pressed="false">pad + velocity</button>
+    <button data-rig="mic" aria-pressed="false">spring (mic)</button></span></div>
+  <div class="row"><span class="mono">switching the rig changes the input size and clears the marks</span></div>
+
+  <h2>MIDI in (the synth you are learning from)</h2>
+  <div class="row"><select id="midiInSel" style="flex:1"></select></div>
+  <div class="row"><span class="mono" id="midiLine"></span></div>
+  <div class="row"><span class="mono">bend → pitch · pressure → press · CC74 → slide · other CCs bind to free dims</span></div>
+
+  <h2>Sound (the audition)</h2>
+  <div class="row"><label for="synthSel">built-in synth</label>
+    <select id="synthSel"><option value="auto">when no MIDI sink</option><option value="on">always</option><option value="off">never</option></select></div>
+  <div class="row"><label><input type="checkbox" id="skMpe"> MIDI MPE</label>
+    <label><input type="checkbox" id="skCc"> MIDI CC</label>
+    <label><input type="checkbox" id="skOsc"> OSC text</label></div>
+  <details id="mpeConf"><summary>MPE</summary>
+    <div class="row"><label for="mpeOut">port</label><select id="mpeOut" style="min-width:160px"></select></div>
+    <div class="row"><label for="mpeMembers">members</label><input type="number" id="mpeMembers" min="1" max="15" value="7">
+      <label for="mpeBase">base note</label><input type="number" id="mpeBase" min="0" max="127" value="60"></div>
+    <div class="row"><label for="mpeSpan">pitch span</label><input type="number" id="mpeSpan" min="1" max="96" value="24">
+      <label for="mpeVel">velocity</label><input type="number" id="mpeVel" min="1" max="127" value="100">
+      <label for="mpeExtra">aux CC</label><input type="number" id="mpeExtra" min="0" max="127" value="1"></div>
+  </details>
+  <details id="ccConf"><summary>CC map</summary>
+    <div class="row"><label for="ccOut">port</label><select id="ccOut" style="min-width:160px"></select></div>
+    <div class="ccmap" id="ccMap"></div>
+  </details>
+  <details id="oscConf"><summary>OSC text log</summary>
+    <pre id="oscLog" aria-live="off"></pre>
+    <div class="row" style="justify-content:flex-end"><button class="b" id="oscCopy">copy</button></div>
+  </details>
+
+  <h2>About</h2>
+  <div class="row"><span class="mono" id="ftArena"></span></div>
+  <div class="row"><span class="mono">iris v0.2 · the same C file that runs on the board · ELM · format 2</span></div>
+</aside>
+
+<script>
+"use strict";
+const WASM_B64 = "__WASM_B64__";
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const NO = 4, CAPACITY = 256, HID = 12;
+const clamp = (v,a,b)=>v<a?a:(v>b?b:v);
+const clamp01 = v=>v<0?0:(v>1?1:v);
+const crypto32 = () => (crypto.getRandomValues(new Uint32Array(1))[0]>>>0) || 1;
+/* storage that may be absent (data: URLs, private mode): get returns null,
+   set returns false — the caller decides whether that is SAVE FAILED */
+const LS = {
+  get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
+  set(k,v){ try{ localStorage.setItem(k,v); return true; }catch(e){ return false; } },
+  del(k){ try{ localStorage.removeItem(k); }catch(e){} }
+};
+
+/* ================= time =================
+   One clock. The verifier may step it (iris.advance) so a 600 ms hold
+   can be exercised synchronously; the sinks and the surface both read it. */
+let clockOffset=0;
+const now = () => performance.now()+clockOffset;
+
+/* ================= wasm ================= */
+let W=null, mem=null, inPtr, outPtr, exInPtr, exOutPtr, filePtr, candPtr;
+let viewIn, viewOut, viewExIn, viewExOut, viewCand;
+
+/* ================= state (engines) ================= */
+const S = {
+  rig:'pad',
+  sinks:{synth:'auto',
+         mpe:{on:false,outId:null,members:7,baseNote:60,span:24,vel:100,extraCc:1},
+         cc:{on:false,outId:null,rows:[{on:true,ch:1,cc:20},{on:true,ch:1,cc:21},{on:true,ch:1,cc:22},{on:true,ch:1,cc:23}]},
+         osc:{on:false}},
+  midi:{supported:null,reason:'',ins:[],outs:[],inId:null},
+  learn:{bindings:[null,null,null,null]},   /* other CCs -> free dims; persisted in .ewk.json */
+  file:{name:null}
+};
+
+/* ================= conditions: the band =================
+   Priority order (bit 0 highest). The band is the only text on the glass. */
+const C_SAVE_FAILED=1, C_MIDI_DOWN=2, C_DIVERGED=4, C_STORE_FULL=8, C_LOAD_REFUSED=16;
+const COND_WORDS=["SAVE FAILED","MIDI DOWN","DIVERGED","STORE FULL","LOAD REFUSED"];
+const COND_ERR=[1,1,1,0,0];
+let cond=0, bandKey=-1;
+function setCond(c,on){ cond = on ? (cond|c) : (cond&~c); }
+function renderBand(){
+  let i=0; for(;i<COND_WORDS.length;i++) if(cond&(1<<i)) break;
+  const key=i<COND_WORDS.length?i:-1;
+  if(key===bandKey) return;
+  bandKey=key;
+  const el=$("#band");
+  if(key<0){ el.className=""; el.textContent=""; return; }
+  el.textContent=COND_WORDS[key];
+  el.className="on "+(COND_ERR[key]?"err":"warn");
+  el.style.height=(24*U)+"px"; el.style.fontSize=(13*U)+"px";
+}
+
+/* ================= input rigs ================= */
+const RIGS = {
+  pad: { n:2, labels:["x","y"] },
+  vel: { n:4, labels:["x","y","dx","dy"] },
+  mic: { n:6, labels:["120","300","750","1.8k","4.2k","all"] }
+};
+const RIG_ORDER=['pad','vel','mic'];
+const RIG_OF_NIN = {2:'pad', 4:'vel', 6:'mic'};
+let rig = RIGS.pad;
+let ptrVel={x:0,y:0}, prevPt=null;
+
+/* mic rig */
+let micBands=null, micVals=new Float32Array(6), micReady=false;
+async function startMic(){
+  if (micReady) return true;
+  if (!startAudio()) return false;
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({audio:{
+      echoCancellation:false, noiseSuppression:false, autoGainControl:false}});
+    const src = ac.createMediaStreamSource(stream);
+    const freqs=[120,300,750,1800,4200];
+    micBands = freqs.map(f=>{
+      const bp=ac.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=f; bp.Q.value=3.5;
+      const an=ac.createAnalyser(); an.fftSize=1024; an.smoothingTimeConstant=0.3;
+      src.connect(bp); bp.connect(an);
+      return {an, buf:new Float32Array(an.fftSize)};
+    });
+    const all=ac.createAnalyser(); all.fftSize=1024; src.connect(all);
+    micBands.push({an:all, buf:new Float32Array(all.fftSize)});
+    micReady=true; return true;
+  }catch(e){ return false; }
+}
+function readMic(){
+  if (!micReady) return micVals;
+  for (let i=0;i<micBands.length;i++){
+    const b=micBands[i];
+    b.an.getFloatTimeDomainData(b.buf);
+    let s=0; for(let j=0;j<b.buf.length;j++) s+=b.buf[j]*b.buf[j];
+    const rms=Math.sqrt(s/b.buf.length);
+    const v=clamp((Math.log10(rms+1e-6)+3.2)/3.0,0,1);
+    micVals[i]=micVals[i]*0.72+v*0.28;
+  }
+  return micVals;
+}
+/* mic energy gate with hysteresis: on >0.08, off <0.05, min 60 ms apart */
+let micGate=false, micGateT=0;
+function micResolveGate(t){
+  const e=micVals[5];
+  if (t-micGateT>=60){
+    if (!micGate && e>0.08){ micGate=true; micGateT=t; }
+    else if (micGate && e<0.05){ micGate=false; micGateT=t; }
+  }
+  return micGate;
+}
+/* the model's input for a glass point (gx,gy in 0..1, y down). Beyond x,y
+   the rig's remaining features ride along: rest for the velocity rig, the
+   live bands for the spring rig. */
+function probeIn(gx,gy){
+  if (rig.n===2) return [gx,gy];
+  if (rig.n===4) return [gx,gy,0.5+ptrVel.x*3,0.5+ptrVel.y*3];
+  return [gx,gy,micVals[2],micVals[3],micVals[4],micVals[5]];
+}
+function restIn(gx,gy){     /* the field probe: at rest, no velocity */
+  if (rig.n===2) return [gx,gy];
+  if (rig.n===4) return [gx,gy,0.5,0.5];
+  return [gx,gy,micVals[2],micVals[3],micVals[4],micVals[5]];
+}
+
+/* ================= audio (the fallback audition voice) ================= */
+let ac=null,o1,o2,filt,lfo,lfoAmt,amp,audioOn=false;
+function startAudio(){
+  if (audioOn) return true;
+  try{
+    ac = new (window.AudioContext||window.webkitAudioContext)();
+    o1=ac.createOscillator(); o1.type="sawtooth";
+    o2=ac.createOscillator(); o2.type="sawtooth";
+    filt=ac.createBiquadFilter(); filt.type="lowpass"; filt.Q.value=6;
+    lfo=ac.createOscillator(); lfo.type="sine";
+    lfoAmt=ac.createGain(); lfoAmt.gain.value=0;
+    amp=ac.createGain(); amp.gain.value=0;
+    o1.connect(filt); o2.connect(filt); filt.connect(amp); amp.connect(ac.destination);
+    lfo.connect(lfoAmt); lfoAmt.connect(filt.frequency);
+    o1.start(); o2.start(); lfo.start();
+    audioOn=true;
+    return true;
+  }catch(e){ return false; }
+}
+function synthActive(){
+  if (S.sinks.synth==='on') return true;
+  if (S.sinks.synth==='off') return false;
+  const midiSink = (S.sinks.mpe.on && midiOut(S.sinks.mpe.outId)) || (S.sinks.cc.on && midiOut(S.sinks.cc.outId));
+  return !midiSink;
+}
+const SynthSink = {
+  update(p, gate){
+    if (!audioOn) return;
+    if (!synthActive()) { this._mute(); return; }
+    const t=ac.currentTime, Sv=v=>clamp(v,0,1);
+    const hz=70*Math.pow(2,Sv(p[0])*4.0), cut=160*Math.pow(2,Sv(p[1])*5.4);
+    const det=1+Sv(p[2])*0.035, wob=Sv(p[3]);
+    o1.frequency.setTargetAtTime(hz,t,0.02);
+    o2.frequency.setTargetAtTime(hz*det,t,0.02);
+    filt.frequency.setTargetAtTime(cut,t,0.02);
+    lfo.frequency.setTargetAtTime(0.4+wob*11,t,0.05);
+    lfoAmt.gain.setTargetAtTime(wob*wob*cut*0.7,t,0.05);
+    amp.gain.setTargetAtTime(gate?0.15:0.0, t, gate?0.02:0.09);
+  },
+  _mute(){ amp.gain.setTargetAtTime(0, ac.currentTime, 0.05); }
+};
+
+/* ================= MIDI ================= */
+let midiAccess=null;
+/* the "__test__" port captures messages for the headless verifier */
+const testPort={ log:[], send(b){ this.log.push(Array.from(b)); } };
+function midiOut(id){
+  if (id==="__test__") return testPort;
+  return (midiAccess && id) ? midiAccess.outputs.get(id) : null;
+}
+function sendMidi(port, bytes){
+  if (!port) return;
+  try{ port.send(bytes); }catch(e){}
+}
+function refreshMidiPorts(){
+  if (!midiAccess) return;
+  S.midi.ins  = Array.from(midiAccess.inputs.values()).map(p=>({id:p.id,name:p.name}));
+  S.midi.outs = Array.from(midiAccess.outputs.values()).map(p=>({id:p.id,name:p.name}));
+  if (!S.midi.ins.find(p=>p.id===S.midi.inId))  S.midi.inId  = S.midi.ins[0]?S.midi.ins[0].id:null;
+  if (!S.midi.outs.find(p=>p.id===S.sinks.mpe.outId)) S.sinks.mpe.outId = S.midi.outs[0]?S.midi.outs[0].id:null;
+  if (!S.midi.outs.find(p=>p.id===S.sinks.cc.outId))  S.sinks.cc.outId  = S.midi.outs[0]?S.midi.outs[0].id:null;
+  midiDownCheck();
+  attachLearn();
+  renderDrawer();
+}
+async function initMidi(){
+  if (!navigator.requestMIDIAccess){
+    S.midi.supported=false; S.midi.reason='WebMIDI not supported by this browser';
+    midiDownCheck(); renderDrawer();
+    return;
+  }
+  try{
+    midiAccess = await navigator.requestMIDIAccess({sysex:false});
+    S.midi.supported=true;
+    midiAccess.addEventListener('statechange', refreshMidiPorts);
+    refreshMidiPorts();
+    midiDownCheck();
+  }catch(e){
+    S.midi.supported=false; S.midi.reason='permission denied';
+    midiDownCheck(); renderDrawer();
+  }
+}
+/* MIDI DOWN = a MIDI sink the musician switched on has no port behind it
+   (WebMIDI missing, denied, or the device unplugged). Without a MIDI sink
+   the built-in synth auditions and there is nothing down. */
+function midiDownCheck(){
+  const down=(S.sinks.mpe.on&&!midiOut(S.sinks.mpe.outId))||(S.sinks.cc.on&&!midiOut(S.sinks.cc.outId));
+  setCond(C_MIDI_DOWN, down?1:0);
+}
+
+/* ---------------- MPE sink ----------------
+   Lower zone: master = wire channel 1 (status nibble 0), members = wire
+   channels 2..M+1 (status nibbles 1..M). Zone is configured with the MPE
+   Configuration Message (RPN 0x0006 on the master), then bend ranges: ±2 on
+   the master, ±48 on every member, sent explicitly. */
+const MpeSink = {
+  chans:[], ptr:0, active:null, prevGate:false,
+  last:{bend:-1,cc74:-1,press:-1,extra:-1},
+  port(){ return midiOut(S.sinks.mpe.outId); },
+  reset(){
+    const M=S.sinks.mpe.members;
+    if (this.active) this.noteOff(now());
+    this.chans=[]; for(let i=0;i<M;i++) this.chans.push({busy:false,coolUntil:0,released:0});
+    this.ptr=0;
+  },
+  sendZone(){
+    const p=this.port(); if(!p) return;
+    const M=S.sinks.mpe.members;
+    sendMidi(p,[0xB0,0x65,0x00]); sendMidi(p,[0xB0,0x64,0x06]); sendMidi(p,[0xB0,0x06,M]);
+    sendMidi(p,[0xB0,0x65,0x7F]); sendMidi(p,[0xB0,0x64,0x7F]);
+    sendMidi(p,[0xB0,0x65,0x00]); sendMidi(p,[0xB0,0x64,0x00]);
+    sendMidi(p,[0xB0,0x06,0x02]); sendMidi(p,[0xB0,0x26,0x00]);
+    sendMidi(p,[0xB0,0x65,0x7F]); sendMidi(p,[0xB0,0x64,0x7F]);
+    for (let c=1;c<=M;c++){
+      const st=0xB0|c;
+      sendMidi(p,[st,0x65,0x00]); sendMidi(p,[st,0x64,0x00]);
+      sendMidi(p,[st,0x06,0x30]); sendMidi(p,[st,0x26,0x00]);
+      sendMidi(p,[st,0x65,0x7F]); sendMidi(p,[st,0x64,0x7F]);
+    }
+  },
+  alloc(t){
+    const M=this.chans.length;
+    for(let i=0;i<M;i++){
+      const idx=(this.ptr+i)%M, c=this.chans[idx];
+      if(!c.busy && t>=c.coolUntil){ this.ptr=(idx+1)%M; return idx; }
+    }
+    let best=-1, bestT=Infinity;
+    for(let i=0;i<M;i++){ const c=this.chans[i]; if(!c.busy && c.released<bestT){ bestT=c.released; best=i; } }
+    if(best<0) best=this.ptr%M;
+    this.ptr=(best+1)%M; return best;
+  },
+  vals(outs){
+    const m=S.sinks.mpe;
+    return {
+      bend: clamp(Math.round(8192+(outs[0]-0.5)*2*8191*(m.span/48)),0,16383),
+      cc74: clamp(Math.round(outs[1]*127),0,127),
+      press:clamp(Math.round(outs[2]*127),0,127),
+      extra:clamp(Math.round(outs[3]*127),0,127)
+    };
+  },
+  noteOn(outs, t){
+    const p=this.port(); if(!p||!this.chans.length) return;
+    const m=S.sinks.mpe, idx=this.alloc(t), c=this.chans[idx];
+    c.busy=true;
+    const wire=idx+1;
+    const v=this.vals(outs);
+    sendMidi(p,[0xE0|wire, v.bend&0x7F, (v.bend>>7)&0x7F]);
+    sendMidi(p,[0xB0|wire, 74, v.cc74]);
+    sendMidi(p,[0xD0|wire, v.press]);
+    sendMidi(p,[0x90|wire, m.baseNote, m.vel]);
+    this.active={idx, wire, note:m.baseNote};
+    this.last={bend:v.bend, cc74:v.cc74, press:v.press, extra:v.extra};
+  },
+  noteOff(t){
+    const p=this.port();
+    if(this.active){
+      const a=this.active, c=this.chans[a.idx];
+      if(p) sendMidi(p,[0x80|a.wire, a.note, 0x40]);
+      c.busy=false; c.coolUntil=t+300; c.released=t;
+      this.active=null;
+    }
+  },
+  update(outs, gate, nov, t){
+    if(!S.sinks.mpe.on) return;
+    const p=this.port(); if(!p){ this.prevGate=gate; return; }
+    if(gate && !this.prevGate) this.noteOn(outs, t);
+    else if(!gate && this.prevGate) this.noteOff(t);
+    if(this.active){
+      const v=this.vals(outs), wire=this.active.wire;
+      if(v.bend !==this.last.bend ){ sendMidi(p,[0xE0|wire, v.bend&0x7F,(v.bend>>7)&0x7F]); this.last.bend=v.bend; }
+      if(v.cc74 !==this.last.cc74 ){ sendMidi(p,[0xB0|wire, 74, v.cc74]); this.last.cc74=v.cc74; }
+      if(v.press!==this.last.press){ sendMidi(p,[0xD0|wire, v.press]); this.last.press=v.press; }
+      if(v.extra!==this.last.extra){ sendMidi(p,[0xB0|wire, S.sinks.mpe.extraCc, v.extra]); this.last.extra=v.extra; }
+    }
+    this.prevGate=gate;
+  },
+  stop(t){ this.noteOff(t||now()); this.prevGate=false; }
+};
+
+/* ---------------- CC sink ---------------- */
+const CcSink = {
+  last:[-1,-1,-1,-1],
+  update(outs){
+    if(!S.sinks.cc.on) return;
+    const p=midiOut(S.sinks.cc.outId); if(!p) return;
+    for(let i=0;i<NO;i++){
+      const r=S.sinks.cc.rows[i]; if(!r.on) continue;
+      const v=clamp(Math.round(outs[i]*127),0,127);
+      if(v!==this.last[i]){ sendMidi(p,[0xB0|((r.ch-1)&0x0F), r.cc&0x7F, v]); this.last[i]=v; }
+    }
+  },
+  reset(){ this.last=[-1,-1,-1,-1]; }
+};
+
+/* ---------------- OSC-text sink ---------------- */
+const OscSink = {
+  lines:[], lastAppend:0, prevGate:false, userScrolled:false,
+  push(line){
+    this.lines.push(line);
+    if(this.lines.length>200) this.lines.splice(0,this.lines.length-200);
+    const el=$("#oscLog");
+    el.textContent=this.lines.join("\n");
+    if(!this.userScrolled) el.scrollTop=el.scrollHeight;
+  },
+  update(outs, gate, nov, t){
+    if(!S.sinks.osc.on) return;
+    if(gate!==this.prevGate){ this.push("/iris/gate "+(gate?1:0)); this.prevGate=gate; }
+    if(t-this.lastAppend>=66){
+      this.push("/iris/out "+outs.map(v=>v.toFixed(3)).join(" "));
+      this.push("/iris/novelty "+nov.toFixed(2));
+      this.lastAppend=t;
+    }
+  }
+};
+function flushSinks(outs, gate, nov, t){
+  SynthSink.update(outs, gate);
+  MpeSink.update(outs, gate, nov, t);
+  CcSink.update(outs);
+  OscSink.update(outs, gate, nov, t);
+}
+
+/* ================= MIDI in: the implicit learn =================
+   The device's own vocabulary first (cand.c): bend -> pitch, channel
+   pressure -> press, CC74 -> slide, any channel. Any other CC (not an RPN /
+   data-entry / mode word) binds to the first free dimension — the bench's
+   old auto-bind, kept so a knob on any synth speaks. Recency (30 s, after
+   the last commit) decides whether a heard value is the candidate. */
+const LEARN_FILTER = new Set([6,38,98,99,100,101,120,121,122,123,124,125,126,127]);
+let learnPort=null;
+function midiIn(st, d1, d2){
+  const type=st&0xF0;
+  let d=-1, v=0;
+  if (type===0xE0){ d=0; v=((d1|0)|((d2|0)<<7))/16383; }
+  else if (type===0xD0){ d=1; v=d1/127; }
+  else if (type===0xB0){
+    const cc=d1|0;
+    if (cc===74){ d=2; v=d2/127; }
+    else if (!LEARN_FILTER.has(cc)){
+      const ch=(st&0x0F)+1;
+      let row=S.learn.bindings.findIndex(b=>b&&b.ch===ch&&b.cc===cc);
+      if (row<0){ row=S.learn.bindings.findIndex((b,i)=>!b&&i!==2); if(row>=0) S.learn.bindings[row]={ch,cc}; }
+      if (row<0) return;
+      d=row; v=d2/127;
+    } else return;
+  } else return;
+  heard(d, clamp01(v));
+}
+function learnHandler(e){ const b=e.data; if(b&&b.length>=2) midiIn(b[0], b[1], b.length>2?b[2]:0); }
+function attachLearn(){
+  detachLearn();
+  if(!midiAccess||!S.midi.inId) return;
+  learnPort=midiAccess.inputs.get(S.midi.inId);
+  if(learnPort) learnPort.addEventListener('midimessage', learnHandler);
+}
+function detachLearn(){
+  if(learnPort){ learnPort.removeEventListener('midimessage', learnHandler); learnPort=null; }
+}
+
+/* ============================================================================
+   THE SUBSTRATE — a port of app/core (surface.c, field.c, cand.c, store.c).
+   Same states, same timings, same field math, same candidate determinism.
+   Pixels are CSS px scaled by U (the device's 0.178 mm/px panel scaled to
+   the window); the field's novelty is measured in the device's own glass
+   px so the fade bands are identical.
+   ========================================================================= */
+const PLAY=0, TRAIN=1;
+const ST={IDLE:0,CHORD:1,SETTLE:2,AUD:3,AUD_DRIFT:4,MARK:5,HELD:6,SWIPE:7,DISSOLVE:8};
+const ST_NAME=["IDLE","CHORD","SETTLE","AUD","AUD_DRIFT","MARK","HELD","SWIPE","DISSOLVE"];
+const DOWN=0, MOVE=1, UP=2;
+const AN={NONE:0,SHRINK:1,FADE:2,PULSE:3};
+const ACT={NONE:0,TOGGLE:1,REROLL:2,UNDO:3,PULSE:4,COMMIT:5,DISSOLVE:6,CANCEL:7};
+const ACT_NAME=["NONE","TOGGLE","REROLL","UNDO","PULSE","COMMIT","DISSOLVE","CANCEL"];
+/* timings (ms) — app.h, us/1000 */
+const SET_DEAD=150, SET=600, DIS_DEAD=300, DIS=900, CHORD_MS=400, HEARD_MS=30000, HEARD_PULSE=300,
+      SAVE_MS=2000, SAVE_RETRY=10000, FRAME_MIN=30, FADE_N=3;
+/* distances (device px) — scaled by U at use */
+const DRIFT_PX=12, SWIPE_PX=60, MARK_R=22, RING_R=27, NOV_PX=200;
+const DEV_W=240, DEV_H=320, VX=25, VY=33, NV=VX*VY;
+const LAMBDA=1e-4;
+const SUB=[10,12,11];
+
+let U=1, CW=0, CH=0;                 /* scale, canvas size (CSS px) */
+const glass=$("#glass"), ctx=glass.getContext("2d");
+const fieldImg=document.createElement("canvas"); fieldImg.width=VX; fieldImg.height=VY;
+const fictx=fieldImg.getContext("2d");
+const fieldData=fictx.createImageData(VX,VY);
+
+const A = {
+  mode:TRAIN, st:ST.IDLE,
+  live:{down:0,x:0,y:0,sounding:0},       /* the "hot" finger in PLAY */
+  f:[{down:0,x:0,y:0,x0:0,y0:0,t0:0},{down:0,x:0,y:0,x0:0,y0:0,t0:0}],
+  fmap:[0,1], idown:[0,0],
+  t_chord:0, last_act:ACT.NONE,
+  hit_id:-1, hit_x:0, hit_y:0,
+  ghost_on:0, ghost_x:0, ghost_y:0, ghost_rgb:[0,0,0],
+  cand:[.5,.5,.5,.5], cand_rand:[.5,.5,.5,.5], snd:[.5,.5,.5,.5], cand_n:0,
+  aud_open:0,
+  heard:[0,0,0,0], heard_t:[-1e12,-1e12,-1e12,-1e12], last_commit_t:0, pulse_until:0,
+  prev_seed:0, has_prev:0, retrain_due:0,
+  save_due:0, ridge_ct:0, declined:0,
+  vtx_cur:new Uint8Array(NV*3), vtx_prev:new Uint8Array(NV*3), vtx_nov:new Uint8Array(NV),
+  field_gen:0, fade_k:FADE_N, field_dirty:1, field_img_key:"",
+  anim:AN.NONE, anim_step:0, anim_next:0, anim_t:0, dis_x:0, dis_y:0, dis_rgb:[0,0,0], dim_frame:0,
+  gate:false, outs:[.5,.5,.5,.5], nov:1
+};
+
+/* ---- geometry ------------------------------------------------------------ */
+const trained = ()=> W.iris_js_trained()!==0;
+const count   = ()=> W.iris_js_count();
+function markXY(idx){            /* canvas px of mark idx, or null */
+  if(!W.iris_js_get(idx)) return null;
+  return {x:viewExIn[0]*(CW-1), y:viewExIn[1]*(CH-1), gx:viewExIn[0], gy:viewExIn[1]};
+}
+function markRGB(idx, rgb){ W.iris_js_get(idx); fieldRGB(viewExOut, 0, rgb); }
+function markHit(x,y){
+  const n=count(), r=MARK_R*U; let best=-1, bd=r*r+1, bx=0, by=0;
+  for(let i=0;i<n;i++){
+    const m=markXY(i); if(!m) continue;
+    const d=(m.x-x)*(m.x-x)+(m.y-y)*(m.y-y);
+    if(d<bd){ bd=d; best=i; bx=m.x; by=m.y; }
+  }
+  if(best<0) return {id:-1};
+  return {id:W.iris_js_get(best), x:bx, y:by};
+}
+function drifted(f){ const dx=f.x-f.x0, dy=f.y-f.y0, r=DRIFT_PX*U; return dx*dx+dy*dy>r*r; }
+function anyDown(){ return A.f[0].down||A.f[1].down||A.live.down; }
+
+/* ---- field.c ------------------------------------------------------------- */
+function hsv_rgb(h,s,v,rgb,o){
+  if(h<0)h=0; if(h>=360)h=359.999;
+  const i=Math.floor(h/60), f=h/60-i, p=v*(1-s), q=v*(1-s*f), t=v*(1-s*(1-f));
+  let r,g,b;
+  switch(i){ case 0:r=v;g=t;b=p;break; case 1:r=q;g=v;b=p;break; case 2:r=p;g=v;b=t;break;
+             case 3:r=p;g=q;b=v;break; case 4:r=t;g=p;b=v;break; default:r=v;g=p;b=q; }
+  rgb[o]=Math.floor(r*255+0.5); rgb[o+1]=Math.floor(g*255+0.5); rgb[o+2]=Math.floor(b*255+0.5);
+}
+function fieldRGB(out, nov, rgb, o){
+  o=o||0;
+  const o0=clamp01(out[0]), o1=clamp01(out[1]), o2=clamp01(out[2]);
+  const k=clamp01((nov-0.15)/0.45);
+  const h=260-260*o0, v=(0.30+0.70*o1)*(1-0.60*k), s=(0.45+0.55*o2)*(1-0.75*k);
+  hsv_rgb(h,s,v,rgb,o);
+}
+/* novelty in the device's glass units: px distance to the nearest mark / 200 */
+let markCache=[];
+function glassNovelty(px,py){
+  if(!markCache.length) return 1;
+  let best=Infinity;
+  for(const m of markCache){ const d=(m.dx-px)*(m.dx-px)+(m.dy-py)*(m.dy-py); if(d<best) best=d; }
+  return clamp01(Math.sqrt(best)/NOV_PX);
+}
+function refreshMarkCache(){
+  markCache=[]; const n=count();
+  for(let i=0;i<n;i++){ const id=W.iris_js_get(i); markCache.push({id, gx:viewExIn[0], gy:viewExIn[1],
+    dx:Math.floor(viewExIn[0]*(DEV_W-1)+0.5), dy:Math.floor(viewExIn[1]*(DEV_H-1)+0.5)}); }
+}
+function vtxShown(i,c){ const k=A.fade_k; for(let ch=0;ch<3;ch++) c[ch]=Math.floor((A.vtx_prev[i*3+ch]*(FADE_N-k)+A.vtx_cur[i*3+ch]*k)/FADE_N); }
+/* recomputed ONLY on model change — never on touch */
+function fieldRecompute(){
+  const c=[0,0,0];
+  for(let i=0;i<NV;i++){ vtxShown(i,c); A.vtx_prev[i*3]=c[0]; A.vtx_prev[i*3+1]=c[1]; A.vtx_prev[i*3+2]=c[2]; }
+  refreshMarkCache();
+  const isT=trained();
+  for(let vy=0;vy<VY;vy++) for(let vx=0;vx<VX;vx++){
+    const i=vy*VX+vx;
+    let px=Math.min(10*vx,DEV_W-1), py=Math.min(10*vy,DEV_H-1);
+    if(!isT){ A.vtx_cur[i*3]=SUB[0]; A.vtx_cur[i*3+1]=SUB[1]; A.vtx_cur[i*3+2]=SUB[2]; A.vtx_nov[i]=255; continue; }
+    viewIn.set(restIn(px/(DEV_W-1), py/(DEV_H-1)));
+    W.iris_js_predict();
+    const nov=glassNovelty(px,py);
+    fieldRGB(viewOut, nov, A.vtx_cur, i*3);
+    A.vtx_nov[i]=Math.floor(clamp01((nov-0.15)/0.45)*255+0.5);
+  }
+  A.fade_k=0; A.field_gen++; A.field_dirty=1;
+}
+/* the lattice image for what is shown now (fade blend, mode dim) */
+function fieldImageRefresh(){
+  const key=A.fade_k+":"+A.mode+":"+A.field_gen;
+  if(key===A.field_img_key && !A.field_dirty) return;
+  A.field_img_key=key; A.field_dirty=0;
+  const d=fieldData.data, c=[0,0,0], train=A.mode===TRAIN;
+  for(let i=0;i<NV;i++){
+    vtxShown(i,c);
+    for(let ch=0;ch<3;ch++){ let v=c[ch]; if(train) v=(v*141)>>8; d[i*4+ch]=v; }
+    d[i*4+3]=255;
+  }
+  fictx.putImageData(fieldData,0,0);
+}
+
+/* ---- cand.c -------------------------------------------------------------- */
+function heardRecent(d,t){ return A.heard_t[d]>A.last_commit_t && t-A.heard_t[d]<HEARD_MS; }
+function applyHeard(){
+  const t=now();
+  for(let d=0;d<NO;d++) A.cand[d]=heardRecent(d,t)?A.heard[d]:A.cand_rand[d];
+  fieldRGB(A.cand,0,A.ghost_rgb);
+}
+function candNew(){
+  A.cand_n=(A.cand_n+1)>>>0;
+  W.iris_js_cand(A.cand_n);
+  for(let d=0;d<NO;d++) A.cand_rand[d]=viewCand[d];
+  applyHeard();
+  A.save_due=now()+SAVE_MS;           /* cand_n is persisted */
+}
+function candRefresh(){
+  const sounding=A.st===ST.AUD||A.st===ST.AUD_DRIFT;
+  applyHeard();
+  if(A.aud_open&&sounding) audition(A.cand);
+  A.pulse_until=now()+HEARD_PULSE;
+}
+function heard(d,v){
+  A.heard[d]=v; A.heard_t[d]=now();
+  if(A.mode===TRAIN&&(A.ghost_on||A.st===ST.AUD||A.st===ST.AUD_DRIFT)) candRefresh();
+}
+/* the wire: AUDITION (hold until release) / RELEASE — flushed each frame */
+function audition(t){ for(let d=0;d<NO;d++) A.snd[d]=t[d]; A.aud_open=1; }
+function release(){ A.aud_open=0; }
+
+/* ---- the model: solve -> say -> show ------------------------------------- */
+function retrain(newSeed, seed){
+  let rc;
+  if(count()===0){ A.retrain_due=0; rc=0; }
+  else{
+    rc=newSeed?W.iris_js_reroll_elm(seed>>>0,LAMBDA):W.iris_js_train_elm(LAMBDA);
+    A.retrain_due=0;
+    if(rc>0) A.ridge_ct++;
+  }
+  setCond(C_DIVERGED, rc<0 || W.iris_js_status()===2);
+  fieldRecompute();
+  return rc>=0;
+}
+function changed(){
+  A.save_due=now()+SAVE_MS;
+  setCond(C_STORE_FULL, count()>=CAPACITY);
+  setCond(C_LOAD_REFUSED, 0);
+}
+
+/* ---- animations ---------------------------------------------------------- */
+function animStart(kind, at){
+  if(A.anim!==AN.NONE){ A.anim_next=kind; return; }
+  A.anim=kind; A.anim_step=0; A.anim_t=at;
+}
+function animTick(t){
+  if(A.anim===AN.NONE||t<A.anim_t) return;
+  A.anim_t=t+FRAME_MIN;
+  switch(A.anim){
+    case AN.SHRINK:
+      A.anim_step++;
+      if(A.anim_step<4) return;
+      if(A.st===ST.DISSOLVE) A.st=A.f[0].down?ST.HELD:ST.IDLE;
+      break;
+    case AN.FADE:
+      if(A.fade_k<FADE_N) A.fade_k++;
+      if(A.fade_k<FADE_N) return;
+      break;
+    case AN.PULSE:
+      A.anim_step++;
+      A.dim_frame=A.anim_step===1?1:0;
+      if(A.anim_step<2) return;
+      break;
+  }
+  A.anim=AN.NONE;
+  if(A.anim_next){ const k=A.anim_next; A.anim_next=0; animStart(k,t); }
+}
+
+/* ---- the acts ------------------------------------------------------------ */
+function commitAt(x,y,t){
+  viewIn.set(probeIn(x/(CW-1), y/(CH-1)));
+  for(let d=0;d<NO;d++) viewOut[d]=A.cand[d];
+  if(W.iris_js_record()<0){ setCond(C_STORE_FULL,1); A.st=A.f[0].down?ST.HELD:ST.IDLE; return false; }
+  A.last_commit_t=t;
+  A.ghost_on=0;
+  retrain(0,0);
+  changed();
+  animStart(AN.FADE, t+FRAME_MIN);
+  A.st=A.f[0].down?ST.HELD:ST.IDLE;
+  A.last_act=ACT.COMMIT;
+  return true;
+}
+function commit(t){ return commitAt(A.f[0].x, A.f[0].y, t); }
+function dissolve(t){
+  const idx=indexOf(A.hit_id);
+  release();
+  A.dis_x=A.hit_x; A.dis_y=A.hit_y;
+  if(idx>=0) markRGB(idx, A.dis_rgb);
+  W.iris_js_delete_id(A.hit_id);
+  A.hit_id=-1;
+  retrain(0,0);
+  changed();
+  A.st=ST.DISSOLVE;
+  animStart(AN.SHRINK,t);
+  A.anim_next=AN.FADE;
+  A.last_act=ACT.DISSOLVE;
+}
+function indexOf(id){ const n=count(); for(let i=0;i<n;i++) if(W.iris_js_get(i)===id) return i; return -1; }
+function pulse(t){ animStart(AN.PULSE,t); A.last_act=ACT.PULSE; }
+/* right = a new seed; left = swap with the previous seed. right/left/right
+   is A -> B -> A -> B, bit-exact (the ELM is a pure function of seed + data) */
+function reroll(t, undo){
+  const old=W.iris_js_seed()>>>0;
+  let seed;
+  if(!trained()){ pulse(t); return; }
+  if(undo||A.last_act===ACT.UNDO){
+    if(!A.has_prev){ pulse(t); return; }
+    seed=A.prev_seed;
+  } else seed=crypto32();
+  retrain(1,seed);
+  A.prev_seed=old; A.has_prev=1;
+  changed();
+  animStart(AN.FADE,t);
+  A.last_act=undo?ACT.UNDO:ACT.REROLL;
+}
+function setMode(mode){
+  A.mode=mode;
+  A.st=anyDown()?ST.SETTLE:ST.IDLE;
+  A.field_dirty=1;
+  glass.classList.toggle("play", mode===PLAY);
+  document.body.classList.toggle("play", mode===PLAY);
+  if(mode===PLAY) closeDrawer();
+}
+/* take finger 0 away from the hot path (chord in PLAY) */
+function adoptHotFinger(t){
+  if(!A.live.down) return;
+  A.live.down=0;                          /* the hot sends its release */
+  A.f[0].down=1; A.f[0].x=A.f[0].x0=A.live.x; A.f[0].y=A.f[0].y0=A.live.y; A.f[0].t0=t;
+  A.fmap[0]=0; A.idown[0]=1;
+}
+function toggle(){
+  const t=now();
+  release();
+  if(A.mode===PLAY) adoptHotFinger(t);
+  setMode(A.mode===PLAY?TRAIN:PLAY);
+  A.last_act=ACT.TOGGLE;
+  hintUsed();
+}
+function chordStart(t){
+  release();
+  if(A.mode===PLAY) adoptHotFinger(t);
+  A.f[0].x0=A.f[0].x; A.f[0].y0=A.f[0].y;
+  A.f[1].x0=A.f[1].x; A.f[1].y0=A.f[1].y;
+  A.t_chord=t; A.hit_id=-1; A.st=ST.CHORD;
+}
+function settle(){ A.st=ST.SETTLE; A.last_act=ACT.CANCEL; }
+
+/* ---- touch (surface.c) --------------------------------------------------- */
+function surfTouch(id, kind, x, y){
+  const t=now(), f=A.f[id], mode=A.mode, st=A.st;
+  if(kind===DOWN){ f.down=1; f.x=f.x0=x; f.y=f.y0=y; f.t0=t; }
+  else if(!f.down) return;
+  else { f.x=x; f.y=y; }
+
+  if(kind===DOWN){
+    const two=(A.f[0].down&&A.f[1].down)||(id===1&&A.live.down);
+    if(two){
+      if(st===ST.IDLE||st===ST.AUD||st===ST.AUD_DRIFT||st===ST.MARK||st===ST.HELD) chordStart(t);
+    } else if(mode===TRAIN&&st===ST.IDLE&&id===0){
+      const h=markHit(x,y);
+      if(h.id>=0){
+        A.hit_id=h.id; A.hit_x=h.x; A.hit_y=h.y;
+        W.iris_js_get(indexOf(h.id));
+        audition(Array.from(viewExOut.slice(0,NO)));
+        A.st=ST.MARK;
+      } else {
+        const gdx=x-A.ghost_x, gdy=y-A.ghost_y, r=MARK_R*U;
+        if(!(A.ghost_on&&gdx*gdx+gdy*gdy<=r*r)) candNew();
+        A.ghost_on=1; A.ghost_x=x; A.ghost_y=y;
+        audition(A.cand);
+        A.st=ST.AUD;
+      }
+    } else if(mode===PLAY&&id===0&&trained()&&st===ST.IDLE){
+      A.declined++;
+    }
+    return;
+  }
+  if(kind===MOVE){
+    switch(st){
+      case ST.AUD: A.ghost_x=x; A.ghost_y=y; if(drifted(f)) A.st=ST.AUD_DRIFT; break;
+      case ST.AUD_DRIFT: A.ghost_x=x; A.ghost_y=y; break;
+      case ST.MARK: if(drifted(f)){ A.st=ST.HELD; A.hit_id=-1; } break;
+      case ST.CHORD:
+        if(mode===PLAY){ if(drifted(A.f[0])||drifted(A.f[1])) settle(); }
+        else { const dx=(A.f[0].x-A.f[0].x0)+(A.f[1].x-A.f[1].x0); if(Math.abs(dx)>2*DRIFT_PX*U) A.st=ST.SWIPE; }
+        break;
+      case ST.SWIPE: {
+        const dx=(A.f[0].x-A.f[0].x0)+(A.f[1].x-A.f[1].x0);
+        if(dx>=2*SWIPE_PX*U){ reroll(t,0); A.st=ST.SETTLE; hintUsed(); }
+        else if(dx<=-2*SWIPE_PX*U){ reroll(t,1); A.st=ST.SETTLE; hintUsed(); }
+        break;
+      }
+    }
+    return;
+  }
+  /* UP */
+  f.down=0;
+  switch(st){
+    case ST.AUD: case ST.AUD_DRIFT:
+      if(id===0){ release(); A.ghost_x=x; A.ghost_y=y; A.st=ST.IDLE; } break;
+    case ST.MARK: case ST.HELD:
+      if(id===0){ release(); A.hit_id=-1; A.st=ST.IDLE; } break;
+    case ST.CHORD: case ST.SWIPE: settle(); break;
+    default: break;
+  }
+}
+/* app.c: id by order of arrival; the hot path owns id 0 in PLAY */
+function touchId(id, kind, x, y){
+  x=clamp(x,0,CW-1); y=clamp(y,0,CH-1);
+  if(id!==0&&id!==1) return;
+  if(kind===DOWN){
+    if(A.idown[id]&&A.f[A.fmap[id]].down) surfTouch(A.fmap[id],UP,A.f[A.fmap[id]].x,A.f[A.fmap[id]].y);
+    if(A.live.down&&A.live.id===id) A.live.down=0;           /* a lost UP never strands the hot */
+    A.idown[id]=1;
+    /* the hot takes a DOWN in PLAY when trained and it holds no finger */
+    if(A.mode===PLAY&&A.st===ST.IDLE&&trained()&&!A.f[0].down&&!A.f[1].down&&!A.live.down){
+      A.live.down=1; A.live.x=x; A.live.y=y; A.fmap[id]=0; A.live.id=id;
+      return;
+    }
+    A.fmap[id]=(A.f[0].down||A.live.down)?1:0;
+  } else if(A.live.down&&A.live.id===id&&!A.f[0].down){
+    if(kind===MOVE){ A.live.x=x; A.live.y=y; }
+    else { A.live.down=0; A.idown[id]=0; }
+    return;
+  } else if(kind===UP) A.idown[id]=0;
+  surfTouch(A.fmap[id],kind,x,y);
+}
+
+/* ---- tick ---------------------------------------------------------------- */
+function surfTick(t){
+  const held=t-A.f[0].t0;
+  switch(A.st){
+    case ST.AUD: if(A.f[0].down&&held>=SET&&count()<CAPACITY){ commit(t); hintUsed(); } break;
+    case ST.MARK: if(A.f[0].down&&held>=DIS) dissolve(t); break;
+    case ST.CHORD: if(t-A.t_chord>=CHORD_MS) toggle(); break;
+    case ST.SETTLE: if(!anyDown()) A.st=ST.IDLE; break;
+  }
+  if(A.pulse_until&&t>=A.pulse_until) A.pulse_until=0;
+  animTick(t);
+}
+/* the hot half: the finger -> MIDI path, and the audition wire */
+function hotTick(t){
+  let outs=A.outs, gate=false, nov=1;
+  if(rig.n===6) readMic();
+  if(A.aud_open){ for(let d=0;d<NO;d++) outs[d]=A.snd[d]; gate=true; }
+  else if(A.mode===PLAY&&trained()){
+    if(rig.n===6){                         /* spring: the sound is the finger */
+      viewIn.set(Array.from(micVals)); gate=micResolveGate(t)&&!A.f[0].down&&!A.f[1].down;
+      A.live.x=micVals[0]*(CW-1); A.live.y=micVals[1]*(CH-1); A.live.down=gate?1:0; A.live.id=-1;
+    } else if(A.live.down){ viewIn.set(probeIn(A.live.x/(CW-1), A.live.y/(CH-1))); gate=true; }
+    if(gate){ W.iris_js_predict(); for(let d=0;d<NO;d++) outs[d]=viewOut[d]; nov=W.iris_js_novelty(); }
+  }
+  A.gate=gate; A.nov=nov; A.live.sounding=gate?1:0;
+  flushSinks(outs, gate, nov, t);
+}
+function tick(){
+  const t=now();
+  surfTick(t);
+  hotTick(t);
+  if(A.save_due&&t>=A.save_due&&!anyDown()&&!A.live.sounding) A.save_due=storeSave()?0:t+SAVE_RETRY;
+  renderBand();
+  render(t);
+}
+function frame(){ tick(); requestAnimationFrame(frame); }
+
+/* ---- store.c: localStorage, the device's EWP3 container ----------------- */
+const STORE_KEY="iris.substrate.v3";
+const CRC_T=(()=>{const T=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c>>>1)^(0xEDB88320&(-(c&1)));T[n]=c>>>0;}return T;})();
+function crc32(u8){ let c=0xFFFFFFFF; for(let i=0;i<u8.length;i++) c=CRC_T[(c^u8[i])&255]^(c>>>8); return (~c)>>>0; }
+function put32(h,o,v){ h[o]=v&255; h[o+1]=(v>>>8)&255; h[o+2]=(v>>>16)&255; h[o+3]=(v>>>24)&255; }
+function get32(h,o){ return (h[o]|(h[o+1]<<8)|(h[o+2]<<16)|(h[o+3]<<24))>>>0; }
+function storeBlob(){
+  const n=W.iris_js_save(); if(!n) return null;
+  const out=new Uint8Array(48+n); const pl=new Uint8Array(mem.buffer,filePtr,n);
+  out[0]=69;out[1]=87;out[2]=80;out[3]=51;out[4]=3; out[5]=rig.n; out[6]=HID; out[7]=NO; out[8]=CAPACITY&255;
+  put32(out,12,n); put32(out,16,crc32(pl)); put32(out,20,A.cand_n); put32(out,24,A.prev_seed); out[28]=A.has_prev?1:0;
+  out.set(pl,48); return out;
+}
+function b64(u8){ let s=""; for(let i=0;i<u8.length;i+=0x8000) s+=String.fromCharCode.apply(null,u8.subarray(i,i+0x8000)); return btoa(s); }
+function unb64(s){ const b=atob(s), u=new Uint8Array(b.length); for(let i=0;i<b.length;i++) u[i]=b.charCodeAt(i); return u; }
+function storeSave(){
+  const blob=storeBlob();
+  if(!blob){ setCond(C_SAVE_FAILED,1); return false; }
+  if(!LS.set(STORE_KEY, b64(blob))){ setCond(C_SAVE_FAILED,1); return false; }
+  LS.set(STORE_KEY+".meta", JSON.stringify(metaJson()));
+  setCond(C_SAVE_FAILED,0);
+  $("#storeLine").textContent="auto-saved · "+blob.length+" B · "+count()+" marks";
+  return true;
+}
+function storeLoad(){
+  let s=null, meta=null;
+  s=LS.get(STORE_KEY); try{ meta=JSON.parse(LS.get(STORE_KEY+".meta")||"null"); }catch(e){}
+  if(!s) return;                              /* first boot */
+  const h=unb64(s);
+  const bad=()=>{ setCond(C_LOAD_REFUSED,1); W.iris_js_init(rig.n,HID,crypto32()); };
+  if(h.length<48||h[0]!==69||h[1]!==87||h[2]!==80||h[3]!==51||h[4]!==3||h[7]!==NO||h[6]!==HID) return bad();
+  const pl=get32(h,12); if(pl+48!==h.length||crc32(h.subarray(48))!==get32(h,16)) return bad();
+  const rn=RIG_OF_NIN[h[5]]; if(!rn) return bad();
+  applyRig(rn);
+  W.iris_js_init(rig.n,HID,1);
+  new Uint8Array(mem.buffer,filePtr,pl).set(h.subarray(48));
+  if(!W.iris_js_load(pl)) return bad();
+  if(count()===0) W.iris_js_clear();
+  A.cand_n=get32(h,20); A.prev_seed=get32(h,24); A.has_prev=h[28]?1:0;
+  setCond(C_STORE_FULL, count()>=CAPACITY);
+  if(meta) applyMeta(meta,true);
+}
+
+/* ---- compose ------------------------------------------------------------- */
+/* pseudo-angle: 12 o'clock = 0, clockwise, range [0,4) -> radians */
+function ringFrac(i,t){
+  if(A.st===ST.CHORD) return clamp01((t-A.t_chord)/CHORD_MS);
+  if(i===0&&A.st===ST.AUD&&count()<CAPACITY) return clamp01((t-A.f[0].t0-SET_DEAD)/(SET-SET_DEAD));
+  if(i===0&&A.st===ST.MARK) return -clamp01((t-A.f[0].t0-DIS_DEAD)/(DIS-DIS_DEAD));
+  return 0;
+}
+function ringPos(i){
+  if(i===0&&A.mode===PLAY&&A.live.down&&!A.f[0].down) return {x:A.live.x,y:A.live.y};
+  if(!A.f[i].down) return null;
+  if(i===0&&A.st===ST.MARK) return {x:A.hit_x,y:A.hit_y};
+  return {x:A.f[i].x,y:A.f[i].y};
+}
+function disc(x,y,r0,r1,style){
+  ctx.beginPath(); ctx.arc(x,y,r1,0,Math.PI*2);
+  if(r0>0){ ctx.arc(x,y,r0,0,Math.PI*2,true); }
+  ctx.fillStyle=style; ctx.fill("evenodd");
+}
+const INK_L="#fff", INK_D="#000", INK_G="rgb(184,188,184)";
+function drawRing(x,y,frac){
+  const R=RING_R*U;
+  disc(x,y,(RING_R-6)*U,(RING_R-5)*U,INK_D);
+  disc(x,y,(RING_R-5)*U,(RING_R-2)*U,INK_G);
+  disc(x,y,(RING_R-2)*U,(RING_R-1)*U,INK_D);
+  if(frac===0) return;
+  const a0=-Math.PI/2, span=(frac>0?frac:1+frac)*Math.PI*2;
+  if(span<=0) return;
+  ctx.beginPath(); ctx.arc(x,y,R,a0,a0+span); ctx.arc(x,y,(RING_R-8)*U,a0+span,a0,true);
+  ctx.closePath(); ctx.fillStyle=INK_L; ctx.fill();
+}
+function drawMark(x,y,rgb){
+  if(A.mode===PLAY){ disc(x,y,5*U,6*U,INK_D); disc(x,y,4*U,5*U,INK_L); return; }
+  disc(x,y,0,8*U,`rgb(${rgb[0]},${rgb[1]},${rgb[2]})`);
+  disc(x,y,8*U,9*U,INK_L); disc(x,y,9*U,10*U,INK_D);
+}
+function render(t){
+  fieldImageRefresh();
+  ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high";
+  ctx.drawImage(fieldImg,0,0,VX,VY,-CW/(2*(VX-1)),-CH/(2*(VY-1)),CW*VX/(VX-1),CH*VY/(VY-1));
+  if(A.dim_frame){ ctx.fillStyle="rgba(0,0,0,0.30)"; ctx.fillRect(0,0,CW,CH); A.dim_frame=0; }
+  /* the lattice: 2x2 dots at (10+20i, 10+20j) = every other vertex; TRAIN
+     always, PLAY only while untrained */
+  const train=A.mode===TRAIN, untr=!trained();
+  if(train||untr){
+    const sx=CW/(DEV_W-1), sy=CH/(DEV_H-1), c=[0,0,0], d=Math.max(2,2*U);
+    for(let vy=1;vy<VY;vy+=2) for(let vx=1;vx<VX;vx+=2){
+      const i=vy*VX+vx;
+      if(train){ vtxShown(i,c); const add=40+Math.floor(50*A.vtx_nov[i]/255);
+        ctx.fillStyle=`rgb(${Math.min(255,((c[0]*141)>>8)+add)},${Math.min(255,((c[1]*141)>>8)+add)},${Math.min(255,((c[2]*141)>>8)+add)})`; }
+      else ctx.fillStyle="rgb(34,38,36)";
+      ctx.fillRect(10*vx*sx,10*vy*sy,d,d);
+    }
+  }
+  const n=count(), rgb=[0,0,0];
+  for(let i=0;i<n;i++){ const m=markXY(i); if(!m) continue; markRGB(i,rgb); drawMark(m.x,m.y,rgb); }
+  if(A.anim===AN.SHRINK&&train){ const r=8-2*A.anim_step; if(r>0) disc(A.dis_x,A.dis_y,0,r*U,`rgb(${A.dis_rgb[0]},${A.dis_rgb[1]},${A.dis_rgb[2]})`); }
+  if(train&&A.ghost_on){
+    disc(A.ghost_x,A.ghost_y,7*U,9*U,`rgb(${A.ghost_rgb[0]},${A.ghost_rgb[1]},${A.ghost_rgb[2]})`);
+    disc(A.ghost_x,A.ghost_y,9*U,10*U,INK_D);
+    if(A.pulse_until) disc(A.ghost_x,A.ghost_y,18*U,19*U,INK_L);
+  }
+  for(let i=0;i<2;i++){ const p=ringPos(i); if(p) drawRing(p.x,p.y,ringFrac(i,t)); }
+}
+function resize(){
+  const dpr=window.devicePixelRatio||1;
+  /* a headless or unlaid-out window reports 0x0: fall back to the device's glass */
+  CW=window.innerWidth>=2?window.innerWidth:DEV_W; CH=window.innerHeight>=2?window.innerHeight:DEV_H;
+  glass.width=Math.round(CW*dpr); glass.height=Math.round(CH*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  U=clamp(Math.min(CW/DEV_W, CH/DEV_H),1,2.5);
+  bandKey=-2; renderBand();
+}
+addEventListener("resize",resize);
+
+/* ================= input: the finger mapping =================
+   Mouse / first pointer = finger 0. A second pointer (multi-touch) or a held
+   Shift = finger 1, riding 40 px right of the pointer so a chord is a
+   mouse-hold + Shift and a swipe is the same, dragged sideways. */
+const pointers=new Map();                 /* pointerId -> slot 0/1 */
+let mouse={x:0,y:0}, shiftFinger=false;
+function slotFor(pid){ if(pointers.has(pid)) return pointers.get(pid); const used=new Set(pointers.values()); const s=!used.has(0)?0:(!used.has(1)?1:-1); if(s>=0) pointers.set(pid,s); return s; }
+const CORNER=44;
+let cornerT=0;
+glass.addEventListener("pointerdown",e=>{
+  e.preventDefault(); startAudio(); if(rig.n===6&&!micReady) startMic();
+  mouse={x:e.clientX,y:e.clientY};
+  if(A.mode===TRAIN&&e.clientX>CW-CORNER&&e.clientY<CORNER&&pointers.size===0&&!shiftFinger){ cornerT=setTimeout(()=>{cornerT=0; openDrawer();},1000); return; }
+  const s=slotFor(e.pointerId); if(s<0) return;
+  try{ glass.setPointerCapture(e.pointerId); }catch(_){}
+  prevPt={x:e.clientX,y:e.clientY};
+  touchId(s,DOWN,e.clientX,e.clientY);
+  if(shiftFinger&&!pointers.has("shift")) shiftDown();   /* Shift was already held: the chord starts now */
+});
+glass.addEventListener("pointermove",e=>{
+  e.preventDefault();
+  mouse={x:e.clientX,y:e.clientY};
+  rigNear(e.clientX<CORNER+20&&e.clientY>CH-CORNER-20);
+  if(prevPt){ ptrVel.x=(e.clientX-prevPt.x)/CW; ptrVel.y=(e.clientY-prevPt.y)/CH; prevPt={x:e.clientX,y:e.clientY}; }
+  if(cornerT){ if(!(e.clientX>CW-CORNER&&e.clientY<CORNER)){ clearTimeout(cornerT); cornerT=0; } return; }
+  if(pointers.has(e.pointerId)){ touchId(pointers.get(e.pointerId),MOVE,e.clientX,e.clientY); }
+  if(pointers.has("shift")) touchId(pointers.get("shift"),MOVE,e.clientX+40*U,e.clientY);
+});
+function pointerEnd(e){
+  if(cornerT){ clearTimeout(cornerT); cornerT=0; }
+  if(!pointers.has(e.pointerId)) return;
+  touchId(pointers.get(e.pointerId),UP,e.clientX,e.clientY);
+  pointers.delete(e.pointerId);
+  ptrVel={x:0,y:0};
+}
+glass.addEventListener("pointerup",pointerEnd);
+glass.addEventListener("pointercancel",pointerEnd);
+glass.addEventListener("contextmenu",e=>e.preventDefault());
+/* the Shift finger exists only while a real pointer is down: typing '?'
+   (Shift+/) must never tap the glass */
+function shiftDown(){
+  if(pointers.has("shift")) return;
+  if(![...pointers.keys()].some(k=>k!=="shift")) return;
+  const s=slotFor("shift"); if(s<0) return;
+  touchId(s,DOWN,mouse.x+40*U,mouse.y);
+}
+function shiftUp(){
+  if(!pointers.has("shift")) return;
+  touchId(pointers.get("shift"),UP,mouse.x+40*U,mouse.y);
+  pointers.delete("shift");
+}
+addEventListener("blur",()=>{ shiftFinger=false; shiftUp(); });
+
+/* keyboard: Shift = finger 1 · Space = the explicit act by key · Esc = PLAY · ? = drawer */
+document.addEventListener("keydown",e=>{
+  const el=document.activeElement;
+  const typing=el&&(el.tagName==="INPUT"||el.tagName==="TEXTAREA"||el.tagName==="SELECT");
+  if((e.metaKey||e.ctrlKey)&&(e.key==="s"||e.key==="S")){ e.preventDefault(); saveEwk(false); return; }
+  if(e.key==="Escape"){ if(typing){ el.blur(); return; } if(drawerOpen()){ closeDrawer(); return; } escToPlay(); return; }
+  if(typing) return;
+  if(e.key==="?"){ e.preventDefault(); drawerOpen()?closeDrawer():openDrawer(); return; }
+  if(e.key==="Shift"){ if(!e.repeat){ shiftFinger=true; shiftDown(); } return; }
+  if(e.key===" "){ e.preventDefault(); if(!e.repeat) spaceCommit(); return; }
+});
+document.addEventListener("keyup",e=>{
+  if(e.key==="Shift"){ shiftFinger=false; shiftUp(); }
+});
+function escToPlay(){ if(A.mode===TRAIN){ release(); setMode(PLAY); A.last_act=ACT.TOGGLE; } }
+/* the explicit act by key: commits the candidate under the finger (AUD, or
+   AUD_DRIFT — the fill was cancelled by drift, the key is unambiguous), or
+   the standing ghost when no finger is down. Never anything else. */
+function spaceCommit(){
+  if(A.mode!==TRAIN) return false;
+  const t=now();
+  if(count()>=CAPACITY){ setCond(C_STORE_FULL,1); return false; }
+  if(A.f[0].down&&(A.st===ST.AUD||A.st===ST.AUD_DRIFT)){ const ok=commit(t); if(ok){ release(); A.f[0].t0=t; } hintUsed(); return ok; }
+  if(!anyDown()&&A.st===ST.IDLE&&A.ghost_on){ const ok=commitAt(A.ghost_x,A.ghost_y,t); hintUsed(); return ok; }
+  return false;
+}
+
+/* ================= the hint and the rig control ================= */
+const HINT_KEY="iris.substrate.hint";
+let hintShown=false;
+function hintShow(){
+  if(LS.get(HINT_KEY)) return;
+  $("#hint").textContent="drag = finger · hold still = set · Shift+hold 400 ms = PLAY/TRAIN · Shift+drag sideways = reroll/undo · Space = set · Esc = PLAY · ? = drawer";
+  $("#hint").classList.add("on"); hintShown=true;
+}
+function hintUsed(){
+  if(!hintShown) return;
+  hintShown=false; $("#hint").classList.remove("on");
+  LS.set(HINT_KEY,"1");
+}
+const RIG_KEY="iris.substrate.rigseen";
+function rigRender(){ $$("#rig i").forEach(i=>i.classList.toggle("on",i.dataset.rig===S.rig)); $$("#rigSeg button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.rig===S.rig?"true":"false")); }
+function rigNear(on){ $("#rig").classList.toggle("near",on); }
+$("#rig").addEventListener("click",e=>{ const r=e.target.dataset&&e.target.dataset.rig; const next=r||RIG_ORDER[(RIG_ORDER.indexOf(S.rig)+1)%3]; setRig(next); $("#rig").classList.remove("seen"); LS.set(RIG_KEY,"1"); });
+$("#rig").addEventListener("pointerenter",()=>rigNear(true));
+$("#rig").addEventListener("pointerleave",()=>rigNear(false));
+
+function applyRig(name){ S.rig=name; rig=RIGS[name]; rigRender(); }
+async function setRig(name, opts){
+  opts=opts||{};
+  if(!RIGS[name]) return false;
+  if(name==='mic'&&!opts.skipMic){ if(!(await startMic())) return false; }
+  applyRig(name);
+  if(!opts.skipInit){
+    release(); A.ghost_on=0; A.hit_id=-1;
+    W.iris_js_init(rig.n,HID,crypto32());
+    A.has_prev=0; A.cand_n=0;
+    retrain(0,0); changed();
+    animStart(AN.FADE, now());
+    if(A.mode===PLAY) setMode(TRAIN);
+  }
+  return true;
+}
+
+/* ================= the drawer ================= */
+function drawerOpen(){ return $("#drawer").classList.contains("open"); }
+function openDrawer(){ if(A.mode===PLAY) return; renderDrawer(); $("#drawer").classList.add("open"); }
+function closeDrawer(){ $("#drawer").classList.remove("open"); }
+$("#drawerClose").addEventListener("click",closeDrawer);
+function fillSelect(sel, items, cur){
+  sel.innerHTML=items.length?items.map(p=>'<option value="'+p.id+'"'+(p.id===cur?' selected':'')+'>'+p.name.replace(/</g,"&lt;")+'</option>').join(""):'<option value="">— none —</option>';
+}
+function renderDrawer(){
+  fillSelect($("#midiInSel"), S.midi.ins, S.midi.inId);
+  fillSelect($("#mpeOut"), S.midi.outs, S.sinks.mpe.outId);
+  fillSelect($("#ccOut"), S.midi.outs, S.sinks.cc.outId);
+  const ml=$("#midiLine");
+  if(S.midi.supported===false){ ml.textContent="MIDI unavailable — "+S.midi.reason+"; the built-in synth auditions"; ml.className="mono"; }
+  else if(S.midi.supported){ ml.textContent=S.midi.ins.length+" in · "+S.midi.outs.length+" out"; ml.className="mono ok"; }
+  else ml.textContent="";
+  $("#synthSel").value=S.sinks.synth;
+  $("#skMpe").checked=S.sinks.mpe.on; $("#skCc").checked=S.sinks.cc.on; $("#skOsc").checked=S.sinks.osc.on;
+  $("#ccMap").innerHTML=S.sinks.cc.rows.map((r,i)=>
+    '<label><input type="checkbox" data-ccon="'+i+'"'+(r.on?' checked':'')+'> dim '+i+'</label>'+
+    '<span></span><label>ch <input type="number" data-ccch="'+i+'" min="1" max="16" value="'+r.ch+'"></label>'+
+    '<label>cc <input type="number" data-cccc="'+i+'" min="0" max="127" value="'+r.cc+'"></label>').join("");
+  rigRender();
+}
+$("#midiInSel").addEventListener("change",e=>{ S.midi.inId=e.target.value||null; attachLearn(); });
+$("#synthSel").addEventListener("change",e=>{ S.sinks.synth=e.target.value; if(S.sinks.synth!=='off') startAudio(); });
+$("#skMpe").addEventListener("change",e=>{ S.sinks.mpe.on=e.target.checked; if(e.target.checked){ MpeSink.reset(); MpeSink.sendZone(); } else MpeSink.stop(); midiDownCheck(); });
+$("#skCc").addEventListener("change",e=>{ S.sinks.cc.on=e.target.checked; CcSink.reset(); midiDownCheck(); });
+$("#skOsc").addEventListener("change",e=>{ S.sinks.osc.on=e.target.checked; });
+$("#mpeOut").addEventListener("change",e=>{ MpeSink.stop(); S.sinks.mpe.outId=e.target.value||null; if(S.sinks.mpe.on){ MpeSink.reset(); MpeSink.sendZone(); } midiDownCheck(); });
+$("#mpeMembers").addEventListener("change",e=>{ S.sinks.mpe.members=clamp(+e.target.value|0,1,15); e.target.value=S.sinks.mpe.members; if(S.sinks.mpe.on){ MpeSink.reset(); MpeSink.sendZone(); } });
+$("#mpeBase").addEventListener("change",e=>{ S.sinks.mpe.baseNote=clamp(+e.target.value|0,0,127); e.target.value=S.sinks.mpe.baseNote; });
+$("#mpeSpan").addEventListener("change",e=>{ S.sinks.mpe.span=clamp(+e.target.value|0,1,96); e.target.value=S.sinks.mpe.span; });
+$("#mpeVel").addEventListener("change",e=>{ S.sinks.mpe.vel=clamp(+e.target.value|0,1,127); e.target.value=S.sinks.mpe.vel; });
+$("#mpeExtra").addEventListener("change",e=>{ S.sinks.mpe.extraCc=clamp(+e.target.value|0,0,127); e.target.value=S.sinks.mpe.extraCc; });
+$("#ccOut").addEventListener("change",e=>{ S.sinks.cc.outId=e.target.value||null; CcSink.reset(); midiDownCheck(); });
+$("#ccMap").addEventListener("change",e=>{
+  const t=e.target;
+  if(t.dataset.ccon!==undefined) S.sinks.cc.rows[+t.dataset.ccon].on=t.checked;
+  if(t.dataset.ccch!==undefined) S.sinks.cc.rows[+t.dataset.ccch].ch=clamp(+t.value|0,1,16);
+  if(t.dataset.cccc!==undefined) S.sinks.cc.rows[+t.dataset.cccc].cc=clamp(+t.value|0,0,127);
+  CcSink.reset();
+});
+$("#oscLog").addEventListener("scroll",e=>{ const el=e.target; OscSink.userScrolled = el.scrollTop < el.scrollHeight-el.clientHeight-30; });
+$("#oscCopy").addEventListener("click",async ()=>{ try{ await navigator.clipboard.writeText(OscSink.lines.join("\n")); }catch(e){} });
+$$("#rigSeg button").forEach(b=>b.addEventListener("click",()=>{ if(b.dataset.rig!==S.rig) setRig(b.dataset.rig); }));
+
+/* ================= file save / load =================
+   The .ewk file is exactly the iris_save byte stream. Settings travel in a
+   companion .ewk.json (and ride along in localStorage). */
+function instName(){ return ($("#instName").value.trim()||"untitled").replace(/[^\w\- .]/g,"_"); }
+function download(name, data, type){
+  const blob=new Blob([data],{type:type||"application/octet-stream"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download=name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),4000);
+}
+function saveBytes(){
+  const n=W.iris_js_save();
+  if(!n){ setCond(C_SAVE_FAILED,1); return null; }
+  return new Uint8Array(mem.buffer, filePtr, n).slice();
+}
+function metaJson(){
+  return {
+    app:"iris-bench", v:2,
+    rig:S.rig, n_in:rig.n, hidden:HID, name:$("#instName").value,
+    sinks:{ synth:S.sinks.synth,
+            mpe:{on:S.sinks.mpe.on, members:S.sinks.mpe.members, baseNote:S.sinks.mpe.baseNote, span:S.sinks.mpe.span, vel:S.sinks.mpe.vel, extraCc:S.sinks.mpe.extraCc},
+            cc:{on:S.sinks.cc.on, rows:S.sinks.cc.rows.map(r=>({on:r.on,ch:r.ch,cc:r.cc}))},
+            osc:{on:S.sinks.osc.on} },
+    learnBindings:S.learn.bindings.slice(),
+    date:new Date().toISOString()
+  };
+}
+function saveEwk(withJson){
+  const bytes=saveBytes(); if(!bytes) return;
+  const nm=instName();
+  download(nm+".ewk", bytes);
+  if(withJson) download(nm+".ewk.json", JSON.stringify(metaJson(),null,2), "application/json");
+  S.file.name=nm+".ewk";
+  $("#fileLine").textContent=nm+".ewk · "+bytes.length+" bytes";
+}
+/* JS mirror of iris_save_size, for validating a file before anything touches
+   wasm. THIS IS A DUPLICATE OF THE C FORMULA and duplicates drift. It is
+   checked against the C at startup by assertSaveSizeAgrees() below; if the two
+   ever disagree the page refuses to run rather than silently mis-sizing a
+   buffer. Third copy lives in firmware/app/core/app.h (EWA_SAVE_BYTES) where a
+   compile-time integer constant is genuinely required and a static assert
+   already guards it. */
+function ewSaveSizeJS(ni,nh,no,nex,fmt){
+  const hdr=(fmt===2?36:32);
+  return hdr + 4*(nh*ni + nh + no*nh + no + 2*(ni+no) + nex*(ni+no)) + 4*nex;
+}
+
+/* Compare the JS mirror against the authoritative C implementation for the
+   instrument currently loaded in wasm. Call after the module is ready and an
+   instrument exists. Returns true on agreement. */
+function assertSaveSizeAgrees(ni,nh,no,nex,fmt){
+  if(!W || !W.iris_js_save_size) return true;      /* nothing to compare against */
+  const c = W.iris_js_save_size();
+  if(c === 0) return true;                       /* no instrument yet */
+  const js = ewSaveSizeJS(ni,nh,no,nex,fmt);
+  if(c !== js){
+    console.error("iris_save_size DISAGREEMENT — C says "+c+", JS mirror says "+js+
+                  " (ni="+ni+" nh="+nh+" no="+no+" nex="+nex+" fmt="+fmt+")");
+    return false;
+  }
+  return true;
+}
+async function loadEwkBytes(bytes, fileName){
+  const fail=msg=>{ setCond(C_LOAD_REFUSED,1); $("#fileLine").textContent="refused "+fileName+": "+msg; return false; };
+  if(bytes.length<32) return fail("too short");
+  const dv=new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const u=i=>dv.getUint32(i*4,true);
+  if(u(0)!==0x4B455745) return fail("bad magic");
+  const fmt=u(1); if(fmt!==1&&fmt!==2) return fail("format "+fmt);
+  const ni=u(2), nh=u(3), no=u(4), nex=u(5);
+  if(no!==NO) return fail(no+" outputs");
+  if(!RIG_OF_NIN[ni]) return fail("n_in="+ni+" — no rig");
+  if(nh<8||nh>32) return fail("hidden="+nh+" — the instant trainer needs 8..32");
+  if(nh!==HID) return fail("hidden="+nh+" — this twin is fixed at "+HID);
+  if(nex>CAPACITY) return fail(nex+" examples");
+  const need=ewSaveSizeJS(ni,nh,no,nex,fmt);
+  if(bytes.length<need) return fail("truncated");
+  if(bytes.length>W.iris_js_file_cap()) return fail("too large");
+  const rn=RIG_OF_NIN[ni];
+  if(rn==='mic'&&!(await startMic())) return fail("spring rig needs the microphone");
+  release(); A.ghost_on=0; A.hit_id=-1;
+  applyRig(rn);
+  if(!W.iris_js_init(ni, nh, 1)) return fail("core init refused");
+  new Uint8Array(mem.buffer, filePtr, bytes.length).set(bytes);
+  if(!W.iris_js_load(bytes.length)) return fail("core rejected the payload");
+  if(count()===0) W.iris_js_clear();
+  setCond(C_LOAD_REFUSED,0);
+  A.has_prev=0; A.cand_n=0;
+  if(count()>0&&!trained()) retrain(0,0); else { setCond(C_DIVERGED,0); fieldRecompute(); }
+  changed();
+  animStart(AN.FADE, now());
+  S.file.name=fileName;
+  $("#fileLine").textContent=fileName+" · "+bytes.length+" bytes · "+count()+" marks · seed "+(W.iris_js_seed()>>>0);
+  return true;
+}
+function applyMeta(meta, quiet){
+  try{
+    if(!meta||meta.app!=="iris-bench") return;
+    if(typeof meta.name==="string") $("#instName").value=meta.name;
+    if(meta.sinks){
+      if(meta.sinks.synth) S.sinks.synth=meta.sinks.synth;
+      const m=meta.sinks.mpe;
+      if(m){ if(m.members) S.sinks.mpe.members=clamp(m.members|0,1,15);
+        if(m.baseNote!==undefined) S.sinks.mpe.baseNote=clamp(m.baseNote|0,0,127);
+        if(m.span) S.sinks.mpe.span=clamp(m.span|0,1,96);
+        if(m.vel) S.sinks.mpe.vel=clamp(m.vel|0,1,127);
+        if(m.extraCc!==undefined) S.sinks.mpe.extraCc=clamp(m.extraCc|0,0,127);
+        $("#mpeMembers").value=S.sinks.mpe.members; $("#mpeBase").value=S.sinks.mpe.baseNote; $("#mpeSpan").value=S.sinks.mpe.span;
+        $("#mpeVel").value=S.sinks.mpe.vel; $("#mpeExtra").value=S.sinks.mpe.extraCc;
+        if(m.on!==undefined){ S.sinks.mpe.on=!!m.on; }
+      }
+      if(meta.sinks.cc&&Array.isArray(meta.sinks.cc.rows)){
+        meta.sinks.cc.rows.slice(0,4).forEach((r,i)=>{ S.sinks.cc.rows[i]={on:!!r.on, ch:clamp((r.ch|0)||1,1,16), cc:clamp(r.cc|0,0,127)}; });
+        if(meta.sinks.cc.on!==undefined) S.sinks.cc.on=!!meta.sinks.cc.on;
+      }
+      if(meta.sinks.osc&&meta.sinks.osc.on!==undefined) S.sinks.osc.on=!!meta.sinks.osc.on;
+    }
+    if(Array.isArray(meta.learnBindings))
+      S.learn.bindings=meta.learnBindings.slice(0,4).map(b=>b&&b.cc!==undefined?{ch:clamp((b.ch|0)||1,1,16),cc:clamp(b.cc|0,0,127)}:null);
+    while(S.learn.bindings.length<4) S.learn.bindings.push(null);
+    renderDrawer();
+  }catch(e){}
+}
+$("#saveBtn").addEventListener("click",()=>saveEwk(false));
+$("#saveJsonBtn").addEventListener("click",()=>saveEwk(true));
+$("#openBtn").addEventListener("click",()=>$("#fileInput").click());
+$("#fileInput").addEventListener("change",async e=>{
+  const files=Array.from(e.target.files); e.target.value="";
+  let meta=null;
+  for(const f of files) if(f.name.endsWith(".json")){ try{ meta=JSON.parse(await f.text()); }catch(err){} }
+  for(const f of files) if(!f.name.endsWith(".json")){
+    const ok=await loadEwkBytes(new Uint8Array(await f.arrayBuffer()), f.name);
+    if(ok&&meta) applyMeta(meta);
+  }
+  if(files.length===1&&meta) applyMeta(meta);
+});
+
+/* ================= console / verifier API ================= */
+const px=(v,n)=> v<=1&&v>=0 ? v*(n-1) : v;          /* 0..1 = glass units, else px */
+function stepClock(ms){
+  const end=now()+ms;
+  while(now()<end){ clockOffset+=Math.min(16,end-now()); tick(); }
+}
+window.iris={
+  get W(){ return W; }, S, A,
+  mode(){ return A.mode===PLAY?"PLAY":"TRAIN"; },
+  state(){ return ST_NAME[A.st]; },
+  lastAct(){ return ACT_NAME[A.last_act]; },
+  cond(){ return COND_WORDS.filter((w,i)=>cond&(1<<i)); },
+  count, trained, seed(){ return W.iris_js_seed()>>>0; },
+  fieldGen(){ return A.field_gen; },
+  field(){ return {vx:VX,vy:VY,cur:Array.from(A.vtx_cur),nov:Array.from(A.vtx_nov),fade_k:A.fade_k}; },
+  marks(){ refreshMarkCache(); return markCache.map(m=>{ const i=indexOf(m.id); W.iris_js_get(i); return {id:m.id,x:m.gx,y:m.gy,out:Array.from(viewExOut.slice(0,NO))}; }); },
+  ghost(){ return A.ghost_on?{x:A.ghost_x/(CW-1),y:A.ghost_y/(CH-1),cand:A.cand.slice(),rgb:A.ghost_rgb.slice()}:null; },
+  /* substrate actions — x,y in glass units (0..1, y down) or px */
+  touch(id,kind,x,y){ touchId(id,{down:DOWN,move:MOVE,up:UP}[kind],px(x,CW),px(y,CH)); tick(); },
+  tapAt(x,y){ touchId(0,DOWN,px(x,CW),px(y,CH)); stepClock(40); touchId(0,UP,px(x,CW),px(y,CH)); tick(); },
+  holdAt(x,y,ms){ touchId(0,DOWN,px(x,CW),px(y,CH)); stepClock(ms===undefined?SET+60:ms); touchId(0,UP,px(x,CW),px(y,CH)); stepClock(FRAME_MIN*(FADE_N+6)); },
+  chord(){ const x=CW/2,y=CH/2; touchId(0,DOWN,x,y); touchId(1,DOWN,x+40*U,y); stepClock(CHORD_MS+40); touchId(0,UP,x,y); touchId(1,UP,x+40*U,y); tick(); },
+  swipe(dir){ const d=(dir==='left'||dir<0)?-1:1, x=CW/2,y=CH/2; touchId(0,DOWN,x,y); touchId(1,DOWN,x+40*U,y);
+    for(let k=1;k<=8;k++){ const o=d*(SWIPE_PX+10)*U*k/8; touchId(0,MOVE,x+o,y); touchId(1,MOVE,x+40*U+o,y); stepClock(16); }
+    touchId(0,UP,x,y); touchId(1,UP,x+40*U,y); stepClock(FRAME_MIN*(FADE_N+6)); },
+  space(){ return spaceCommit(); }, esc(){ escToPlay(); },
+  advance:stepClock, tick,
+  predict(v){ viewIn.set(v.slice(0,rig.n)); W.iris_js_predict(); return Array.from(viewOut.slice(0,NO)); },
+  novelty(v){ viewIn.set(v.slice(0,rig.n)); return W.iris_js_novelty(); },
+  cand(n){ W.iris_js_cand(n>>>0); return Array.from(viewCand); },
+  saveBytes, loadBytes(u8,name){ return loadEwkBytes(u8,name||"console.ewk"); }, saveSizeJS:ewSaveSizeJS,
+  storeSave, storeLoad, storeBlob, clearStore(){ LS.del(STORE_KEY); LS.del(STORE_KEY+".meta"); },
+  setRig, midiIn, learnInject(ch,cc,val){ midiIn(0xB0|((ch-1)&15),cc,val); },
+  mpe:MpeSink, cc:CcSink, osc:OscSink, testPort,
+  openDrawer, closeDrawer, setCond, midiDownCheck, outs(){ return {outs:A.outs.slice(),gate:A.gate,nov:A.nov}; }
+};
+
+/* ================= boot ================= */
+(async function boot(){
+  resize();
+  try{
+    const bin=Uint8Array.from(atob(WASM_B64),c=>c.charCodeAt(0));
+    const {instance}=await WebAssembly.instantiate(bin.buffer,{});
+    W=instance.exports; mem=W.memory;
+    inPtr=W.iris_js_in_ptr(); outPtr=W.iris_js_out_ptr(); exInPtr=W.iris_js_ex_in_ptr(); exOutPtr=W.iris_js_ex_out_ptr();
+    filePtr=W.iris_js_file_ptr(); candPtr=W.iris_js_cand_ptr();
+    viewIn=new Float32Array(mem.buffer,inPtr,32);
+    viewOut=new Float32Array(mem.buffer,outPtr,16);
+    viewExIn=new Float32Array(mem.buffer,exInPtr,32);
+    viewExOut=new Float32Array(mem.buffer,exOutPtr,16);
+    viewCand=new Float32Array(mem.buffer,candPtr,NO);
+    W.iris_js_init(2, HID, crypto32());
+  }catch(e){
+    $("#band").textContent="CORE FAILED"; $("#band").className="on err"; $("#band").style.height="24px";
+    return;
+  }
+  $("#ftArena").textContent="core arenas "+W.iris_js_arena_bytes()+" B · file buffer "+W.iris_js_file_cap()+" B";
+  storeLoad();                                  /* bad store -> LOAD REFUSED, empty */
+  if(count()>0&&!trained()) retrain(0,0); else fieldRecompute();
+  A.fade_k=FADE_N;                              /* boot: no crossfade */
+  setMode((count()===0||(cond&C_LOAD_REFUSED))?TRAIN:PLAY);
+  A.st=ST.IDLE;
+  if(!LS.get(RIG_KEY)) $("#rig").classList.add("seen");
+  hintShow();
+  renderDrawer();
+  initMidi();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
