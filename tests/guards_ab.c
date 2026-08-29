@@ -48,5 +48,19 @@ int main(void) {
   iris_retrain_new(k, 1234, 800);
   size_t n = iris_save(k, file, sizeof file);
   printf("blob %zu B fnv1a 0x%08X\n", n, fnv1a(file, n));
+
+  /* THE POSITIVE CONTROL.
+     Asserting the two builds are EQUAL proves the guards are inert -- and it
+     is also exactly what you get if -DIRIS_NO_GUARDS does nothing at all.
+     Rename the macro in the header and the equality check still passes, which
+     means it cannot detect its own defeat. So print one more line: a value the
+     guards MUST change. With guards, a poisoned demonstration is refused and
+     the count stays 20; without them it is accepted and the count becomes 21.
+     build.sh asserts these two lines DIFFER. */
+  { float bad_in[NI], bad_out[NO];
+    bad_in[0] = 0.0f / 0.0f; bad_in[1] = 0.5f;
+    truth(0.5f, 0.5f, bad_out);
+    iris_record(k, bad_in, bad_out);
+    printf("poison-probe count %d status %d\n", iris_count(k), (int)iris_get_status(k)); }
   return 0;
 }

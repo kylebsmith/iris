@@ -21,6 +21,8 @@ mkdir -p build
 CFLAGS="-O2 -Wall -Wextra"
 
 case "${1:-audit}" in
+  mutate)     # Does every check actually protect what it claims to? See tools/.
+              sh tools/mutate.sh "${2:-}" ;;
   claims)
     # Do the documents still tell the truth about the code? See tools/.
     sh tools/check-claims.sh
@@ -31,11 +33,22 @@ case "${1:-audit}" in
     # core with guards vs core with -DIRIS_NO_GUARDS, same recipe, same bits.
     cc $CFLAGS -o build/guards_ab tests/guards_ab.c -lm
     cc $CFLAGS -DIRIS_NO_GUARDS -o build/guards_ab_ng tests/guards_ab.c -lm
-    G=$(./build/guards_ab); N=$(./build/guards_ab_ng)
+    G=$(./build/guards_ab | head -1);      N=$(./build/guards_ab_ng | head -1)
+    GP=$(./build/guards_ab | tail -1);     NP=$(./build/guards_ab_ng | tail -1)
     if [ "$G" = "$N" ]; then
       echo "PASS  guards are inert on healthy runs           $G == no-guards build"
     else
       echo "FAIL  guards are inert on healthy runs           guarded: $G  no-guards: $N"
+      exit 1
+    fi
+    # POSITIVE CONTROL. The equality above is also what you get when the flag
+    # does nothing, so it cannot detect its own defeat -- renaming the macro in
+    # the header left it passing. This asserts the flag actually reaches the
+    # code: on a poisoned demonstration the two builds MUST disagree.
+    if [ "$GP" != "$NP" ]; then
+      echo "PASS  the guards flag actually reaches the code  guarded: $GP / no-guards: $NP"
+    else
+      echo "FAIL  the guards flag is inert -- IRIS_NO_GUARDS reached nothing.  both: $GP"
       exit 1
     fi ;;
   mpe)
@@ -70,8 +83,36 @@ case "${1:-audit}" in
     python3 -c "import base64;w=base64.b64encode(open('build/iris.wasm','rb').read()).decode();\
 open('build/bench.html','w').write(open('bench/page.html').read().replace('__WASM_B64__',w))"
     echo "built build/bench.html — open it in a browser" ;;
-  golden)     cc $CFLAGS -o build/make_golden tests/golden/make_golden.c -lm \
-                && ./build/make_golden ;;
+  golden)
+    # DESTRUCTIVE. This rewrites the frozen baselines the audit compares against,
+    # so a regression it should have caught becomes the new "correct" answer.
+    # It happened: on 2026-08-27 an automated run regenerated v3-instrument.bin
+    # as a v4 file, and the backward-compatibility check went from PASS to a
+    # silent FAIL that looked like a code defect. Recovered from git.
+    # Refuse unless the caller says so out loud.
+    if [ "$IRIS_REGENERATE_GOLDEN" != "yes-i-mean-it" ]; then
+      echo "REFUSED: 'golden' overwrites the frozen test baselines in tests/golden/."
+      echo "The audit compares against those files; regenerating them re-defines"
+      echo "what 'correct' means and silently erases whatever they would have caught."
+      echo
+      echo "If that is genuinely what you want:"
+      echo "  IRIS_REGENERATE_GOLDEN=yes-i-mean-it sh build.sh golden"
+      echo
+      echo "Commit first, so 'git checkout -- tests/golden' can undo it."
+      exit 1
+    fi
+    cc $CFLAGS -o build/make_golden tests/golden/make_golden.c -lm \
+      && ./build/make_golden ;;
   clean)      rm -rf build ;;
-  *)          echo "usage: ./build.sh [audit|mpe|sinks|experiment|bench|golden|clean]"; exit 1 ;;
+  tiny)       cc $CFLAGS -o build/tiny docs/tiny.c -lm && ./build/tiny ;;
+  regressions)
+              # One test per reviewed defect, each written before its fix and
+              # watched to fail. Non-zero exit if any regresses.
+              cc $CFLAGS -I. -o build/regressions tests/regressions.c -lm \
+                && ./build/regressions ;;
+  fuzz)       # Oracle-free: the sanitizers decide, not our assertions.
+              cc -std=c99 -O1 -g -fsanitize=address,undefined \
+                 -fno-sanitize-recover=all -I. -o build/fuzz tests/fuzz.c -lm \
+                && ./build/fuzz "${2:-400}" ;;
+  *)          echo "usage: ./build.sh [audit|mpe|sinks|claims|fuzz|regressions|mutate|experiment|tiny|bench|golden|clean]"; exit 1 ;;
 esac
