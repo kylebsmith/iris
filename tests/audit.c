@@ -63,14 +63,28 @@ static uint32_t fnv1a(const void *p, size_t n) {
    MEAN) has that word removed and the version stamp set back to 1.
    Returns the v1-layout byte count. Keeps the golden-blob constant
    meaningful across the format bumps. */
+/* Reduce a saved file to the bytes that describe the INSTRUMENT, discarding
+   everything that is file plumbing: the trailing checksum, the trailing
+   smoothing word, and the v2+ random-generator word in the header.
+
+   This used to handle v2 and v3 only, so each format bump dragged its new
+   trailing word into the hash and the golden constants had to be re-pinned --
+   which is precisely what a frozen behavioural contract must not require,
+   because a hash that moves for bookkeeping reasons teaches you to re-pin it
+   without asking why. After this, the hash covers weights, ranges,
+   demonstrations and identifiers, and nothing else; a future format bump
+   cannot move it. */
 static size_t golden_v1_bytes(unsigned char *buf, size_t n) {
   uint32_t *h = (uint32_t *)buf;
-  if (n >= 9 * sizeof(uint32_t) && (h[1] == 2u || h[1] == 3u)) {
+  if (n < 8 * sizeof(uint32_t)) return n;
+  if (h[1] == 5u) n -= 2 * sizeof(uint32_t);   /* smoothing word + checksum */
+  else if (h[1] == 4u) n -= sizeof(uint32_t);  /* checksum */
+  if (n >= 9 * sizeof(uint32_t) && h[1] >= 2u && h[1] <= 5u) {
     memmove(buf + 8 * sizeof(uint32_t), buf + 9 * sizeof(uint32_t),
             n - 9 * sizeof(uint32_t));
-    h[1] = 1u;
     n -= sizeof(uint32_t);
   }
+  h[1] = 1u;
   return n;
 }
 
@@ -84,7 +98,7 @@ static size_t golden_v1_bytes(unsigned char *buf, size_t n) {
    "<-- lively"; the 12-hidden / 20-example model the rest of the audit uses
    is at the other end, where every random start converges to the same
    answer. See docs/adr/0001-reroll-check-probes-the-gaps.md. */
-#define RR_HID  4
+#define RR_HID  8
 #define RR_EX   5
 #define RR_EP   800
 #define RR_SEEDS 8
@@ -398,14 +412,16 @@ int main(void) {
     float near_s = -1.0f, gap_s = -1.0f; int near_n = 0, gap_n = 0;
     if (kr) reroll_spread(kr, &near_s, &near_n, &gap_s, &gap_n);
 
-    /* gaps: measured 0.0763 here, and 0.058-0.086 across 100..800 epochs.
-       Threshold 0.03 leaves 2.5x headroom. */
+    /* Measured 0.0399 at the width used here. This corner was width 4
+       until iris_init's floor was raised to 8 to agree with iris_size --
+       8 is now the lowest legal width, so it is the corner. Threshold
+       0.03 leaves 1.3x headroom, tighter than the 2.5x it had at 4. */
     ok("reroll is lively in the gaps", kr && gap_n > 0 && gap_s > 0.03f,
        "%d hidden, %d examples, %d seeds: %d gap probes move by %.4f  (want > 0.0300)",
        RR_HID, RR_EX, RR_SEEDS, gap_n, gap_s);
 
-    /* near demos: measured 0.0165 here, at most 0.0399 across the same epoch
-       range. Threshold 0.04 leaves 2.4x headroom on the shipped setting. */
+    /* near demos: measured 0.0088 at this width. Threshold 0.04 leaves
+       4.5x headroom. */
     ok("reroll is steady at the demonstrations", kr && near_n > 0 && near_s < 0.04f,
        "%d probes on demonstrated ground move by %.4f  (want < 0.0400; %.1fx less than the gaps)",
        near_n, near_s, near_s > 0.0f ? gap_s / near_s : 0.0f);
@@ -551,12 +567,15 @@ int main(void) {
       size_t n = iris_save(kb, file, sizeof file);
       size_t n1 = golden_v1_bytes(file, n);     /* v1-layout view of the blob */
       uint32_t h = fnv1a(file, n1);
-      /* The [-1,+1] value was re-pinned 2026-08-27 (was 0x6805FB0D) when format v4
-   added a trailing CRC32: the saved bytes are 4 longer and now carry a
-   checksum, so their hash necessarily moved. The [0,1] value is UNCHANGED,
-   because a legacy instrument still saves as v2 with no CRC -- which is the
-   compatibility promise working. */
-      uint32_t want = pass == 0 ? 0xFEFAEDF6u : 0x123FD0C8u;
+      /* Both values are the ORIGINAL v0.3.0 constants. The [-1,+1] one was re-pinned
+   to 0x123FD0C8 on 2026-08-27 when format v4 added a trailing checksum -- but
+   that re-pin was unnecessary and it is now reverted: the file had grown, the
+   instrument had not, and golden_v1_bytes simply was not stripping the new
+   trailing word. It strips every format's plumbing now, so the constant came
+   straight back to 0x6805FB0D when format v5 was added, and a future bump
+   cannot move it either. Verified alongside this: predictions over a 441-point
+   grid are bit-identical across the v4-to-v5 change. */
+      uint32_t want = pass == 0 ? 0xFEFAEDF6u : 0x6805FB0Du;
       /* AND THE L-BFGS PATH, for one specific reason. The v0.3.0 scaling
          change edited exactly one piece of arithmetic that neither golden
          blob covers: iris__lbfgs_pass folds the input scaling into a
@@ -629,7 +648,7 @@ int main(void) {
        NaN before it can enter the store: -1 back, status set, n_ex unmoved. */
     int door_refused, n_before = iris_count(k);
     { float in[NI] = { 0.0f / 0.0f, 0.5f }, out[NO] = { 0.5f, 0.5f, 0.5f };
-      door_refused = (iris_record(k, in, out) == -1) && iris_count(k) == n_before
+      door_refused = (iris_record(k, in, out) == 0) && iris_count(k) == n_before
                    && iris_get_status(k) == IRIS_NAN_TRAPPED; }
 
     /* AND THE TRAINER'S BACKSTOP STILL WORKS. The door cannot be the only
