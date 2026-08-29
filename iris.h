@@ -2,7 +2,7 @@
    Copyright (c) 2026 Kyle Smith */
 /* ============================================================================
    iris.h  —  interactive machine learning for handmade instruments
-   v0.3.0 · single file · C99 · no dependencies · no malloc · no libc
+   v0.1.0 · single file · C99 · no dependencies · no malloc · no libc
 
    You show it a handful of examples of "when I do THIS, it sounds like THAT".
    It learns a mapping and fills in everything in between.
@@ -70,8 +70,57 @@
 
    ============================================================================ */
 
-#ifndef EMBWEK_H
-#define EMBWEK_H
+#ifndef IRIS_H
+#define IRIS_H
+
+/* ============================================================================
+   THE WHOLE INTERFACE, ON ONE SCREEN
+
+   Ten functions. Everything else in this file is detail you can reach for
+   later. `k` is the instrument. `in` and `out` are plain float arrays you own.
+
+     iris *iris_init(mem, sizeof mem, n_in, n_hid, n_out, cap, seed)
+         Hands back an instrument built inside YOUR memory. The four numbers
+         are: how many sensor values come in, how wide the hidden layer is
+         (12 is a good answer; 8 is the minimum), how many things you control,
+         and how many demonstrations you can store. They must match the four
+         you gave IRIS_ARENA. Returns 0 if they do not.
+
+     int   iris_record(k, in, out)     in: n_in floats     out: n_out floats
+         Stores one demonstration: this gesture goes with that sound.
+         Returns its identifier (1 or higher). Returns 0 if it refused.
+
+     int   iris_train(k)
+         Fits the demonstrations you have now, from a defined start.
+         Returns 1, or 0 if it refused. How WELL it fits is a separate
+         question: iris_last_error(k).
+
+     void  iris_predict(k, in, out)    READS n_in, WRITES n_out floats
+         The playing call. It writes exactly n_out floats into `out`; if your
+         array is shorter than that, it writes past the end and nothing warns
+         you. This is the one thing to get right.
+
+     int   iris_count(k)               how many demonstrations are stored
+     int   iris_delete_id(k, id)       remove one, by the identifier above
+     int   iris_worst_example_id(k, m) which demonstration fights the others
+     iris_status iris_get_status(k)    is the INSTRUMENT unwell? 0 is healthy
+     size_t iris_save(k, buf, cap)     bytes written, or 0
+     int   iris_load(k, buf, n)        1, or 0
+
+   FAILURE, in two rules and no exceptions:
+     A call that either works or does not returns 0 for "did nothing".
+     A call that returns a MEASUREMENT returns it, or -1 if it refused.
+   iris_get_status answers a different question -- whether the instrument
+   itself is in trouble -- and 0 is the good news in both.
+
+   THREADING: never touch the same instrument from two places at once. That is
+   the entire contract; see the note above iris_get_status for why.
+
+   Units: none. Feed it raw sensor readings. It fits its own range to whatever
+   you actually give it, so scaling, centring and normalising are not merely
+   unnecessary, they are the wrong thing to do.
+   ========================================================================= */
+
 
 /* --------------------------------------------------------------------------
    FLOAT DETERMINISM CONTRACT
@@ -86,12 +135,28 @@
 #if defined(__FAST_MATH__)
 #error "iris: -ffast-math / -Ofast breaks same-seed bit-determinism and disables NaN trapping. Build without it."
 #endif
+/* -ffinite-math-only is one of the flags -ffast-math turns on, but on its own
+   it does NOT set __FAST_MATH__, so this tripwire used to stay silent while
+   every guard in the library was optimised away: iris_isbad folded to false,
+   poisoned demonstrations were accepted, and a broken sensor produced a
+   plausible number and a healthy status. Measured on Apple clang 17. */
+#if defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__
+#error "iris: -ffinite-math-only tells the compiler no NaN or infinity can exist, which deletes every guard in this library. Build without it."
+#endif
 /* 2. Forbid contraction at the source level. Clang honours this pragma at
       default and -ffp-contract=on (measured: blob becomes bit-identical to
       a -ffp-contract=off build); clang IGNORES it under -ffp-contract=fast,
       and GCC (incl. xtensa-esp32s3) ignores it always — those builds must
       pass -ffp-contract=off explicitly. The golden-blob audit check catches
       any build where neither defence held.                                 */
+/* GNU compilers ignore the standard pragma, and in GNU mode -- which is what
+   the Arduino IDE builds with, g++ -std=gnu++17 -O2 -- they contract by
+   default. Measured: the same seed and the same demonstrations produced a
+   DIFFERENT instrument there, which breaks the one promise this library
+   exists to keep. They do honour this, at file scope, in every mode. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC optimize ("fp-contract=off")
+#endif
 #if defined(__clang__)
 #pragma STDC FP_CONTRACT OFF
 #endif
@@ -101,10 +166,6 @@
 #include <stdint.h>
 
 /* THE ONLY VERSION NUMBER FOR THIS LIBRARY. Nothing else may state one.
-   The predecessor repo carried four different numbers for one artifact (0.3.0
-   here, 0.1.0 in the benchmark JSON, "v0.2" in one README, "v1.0" in a release
-   note); that is fixed by having exactly one declaration and making every
-   other document cite it.
 
    SEPARATE AXIS: the SAVE FILE format version (v1/v2/v3) is NOT this number.
    It carries the input-scaling semantics and has its own permanent-compat
@@ -112,9 +173,9 @@
    invalidates a saved instrument; only a format bump can, and the loader keeps
    reading every older format. */
 #define IRIS_VERSION_MAJOR 0
-#define IRIS_VERSION_MINOR 4
+#define IRIS_VERSION_MINOR 1
 #define IRIS_VERSION_PATCH 0
-#define IRIS_VERSION_STRING "0.4.0"
+#define IRIS_VERSION_STRING "0.1.0"
 
 #define IRIS_MAX_IN   32   /* sensor features in  */
 #define IRIS_MAX_OUT  16   /* sound parameters out */
@@ -188,21 +249,29 @@ typedef enum {
   IRIS_RIDGE_ESCALATED   = 3,  /* a closed-form solve (ELM) needed its ridge
                                 doubled to factor. Result is valid; the data
                                 was harder than usual.                       */
-  IRIS_DIVERGED_STUCK    = 5,  /* a previous run diverged and left weights at the
-                                  clamp. Training refuses until the instrument is
-                                  rerolled (iris_retrain_new) — the examples are
-                                  intact, the weights are not. See the note at
-                                  iris__train_run.                             */
-  IRIS_NOT_FITTED        = 4   /* iris_predict was called on an instrument that has
-                                never been fitted. Outputs are the centre of the
-                                demonstrated range (0 with no demonstrations),
-                                never the forward pass over random weights.  */
+  IRIS_NOT_FITTED        = 4,  /* iris_predict was called on an instrument that
+                                has never been fitted. Outputs are the centre of
+                                the demonstrated range (0 with no
+                                demonstrations), never the forward pass over
+                                random weights.                              */
+  IRIS_DIVERGED_STUCK    = 5   /* a previous run diverged and left weights at the
+                                clamp. Training refuses until the instrument is
+                                rerolled (iris_retrain_new) — the examples are
+                                intact, the weights are not.                 */
 } iris_status;
 
 /* NaN or Inf, by bit pattern — exponent field all ones. No libc, no fenv,
    and immune to -ffinite-math-only style optimisations on the comparison. */
 IRIS_API int iris_isbad(float x) {
-  union { float f; uint32_t u; } c; c.f = x;
+  /* Read the bits through a copy the compiler must actually make, not through
+     a union it can see through. With a union, clang propagated "this value is
+     finite" across the type pun and folded the test to false. Routing it
+     through a volatile forces a real store and load, which the optimiser may
+     not reason across. (__builtin_memcpy also works on clang but GNU compilers
+     turn it into a call to the C library's memcpy -- an undefined symbol, which
+     breaks the no-dependency claim. Measured both ways.) */
+  volatile float v = x;      /* a store the compiler must actually perform */
+  union { float f; uint32_t u; } c; c.f = v;
   return (c.u & 0x7F800000u) == 0x7F800000u;
 }
 
@@ -302,6 +371,12 @@ IRIS_API float iris_tanh(float x) {
    only have to be fast once. */
 IRIS_API float iris_sigmoid(float x) { return 0.5f * (iris_tanh(0.5f * x) + 1.0f); }
 
+/* __builtin_sqrtf compiles to one hardware instruction -- except on GNU
+   compilers, which assume it must set errno for a negative input and so also
+   emit a call to the C library's sqrtf for that branch. That is an undefined
+   symbol, and it breaks the no-dependency claim on the ESP32's own toolchain.
+   Build with -fno-math-errno; check-claims.sh verifies it on every compiler it
+   can find. This function is never called with a negative argument. */
 IRIS_API float iris_sqrt(float x) { return __builtin_sqrtf(x); }
 IRIS_API float iris_absf(float x) { return x < 0.0f ? -x : x; }
 
@@ -411,10 +486,90 @@ struct iris {
      iris_train_progress reports it as such and snaps to 1.0 when the run
      ends, which is the only way a plateau-stopped bar can be truthful. */
   int32_t tr_done, tr_ceiling, tr_running;
+  int32_t tr_n_ex;         /* how many demonstrations the shuffle covers */
   float   tr_ref;          /* error one plateau-window ago */
 };
 
-IRIS_API iris_status iris_get_status(const iris *k) { return (iris_status)k->status; }
+/* WHAT THIS DOES AND DOES NOT COVER.
+
+   It reports NUMERICAL HEALTH ONLY: a poisoned value trapped at the door or
+   before an output, a diverged or stuck run, a ridge escalation, a prediction
+   from an instrument that was never fitted, a closed-form solve that collapsed
+   to a constant. Those are the conditions a caller cannot detect for itself.
+
+   It does NOT report an argument mistake. Asking for demonstration 5,000 of
+   twelve, or deleting an index that does not exist, returns a failure through
+   the RETURN VALUE and leaves the status alone. That is deliberate: those
+   calls tell you immediately and locally, whereas a trapped not-a-number is
+   discovered somewhere else entirely, which is why it needs a channel of its
+   own. Making argument errors sticky here would leave a polled user interface
+   showing a fault for ever after one out-of-range query.
+
+   So: check the return value of the call you made, and check this for whether
+   the instrument itself is in trouble. Two questions, two answers. */
+/* THREADING, IN ONE SENTENCE.
+
+       Never touch the same instrument from two places at once.
+
+   That is the whole contract, and it is short because there is no mutable
+   state anywhere outside the instrument you passed in -- no globals, no static
+   buffers, no shared scratch. Two instruments therefore cannot interact, on
+   any number of cores. Verified: four instruments trained interleaved and
+   8,000 interleaved predictions produced zero cross-talk.
+
+   WHAT IS SAFE
+     Any number of instruments on one core, called one after another. There is
+     no limit and no per-core rule -- a single-core chip runs one thing at a
+     time anyway, so nothing can overlap.
+     One instrument per thread, on as many cores as you have.
+     One instrument used only inside an interrupt.
+
+   WHAT IS NOT
+     The SAME instrument from an interrupt and the main loop. iris_predict
+     writes its working values inside the instrument, so an interrupt that
+     lands mid-call leaves both answers wrong. Give the interrupt its own
+     instrument, or keep prediction on one side of the fence.
+
+   TIMING, for the audio case. One prediction measured 7.4-7.8 microseconds on
+   an ESP32-S3; one audio sample period at 48 kHz is 20.8. So a prediction fits
+   inside a sample, with room but not vast room. TRAINING does not: 571 ms for
+   800 epochs over 20 demonstrations, measured on the same board. Train in
+   slices from the main loop -- see iris_train_slice -- and never from an
+   interrupt.                                                                */
+
+/* HOW EVERY FUNCTION IN THIS FILE REPORTS FAILURE — two rules, and only two.
+
+   RULE 1, for a call that either works or does not:
+       0 means the call did nothing. Non-zero means it worked.
+   That covers iris_record, iris_train, the delete functions, iris_load,
+   iris_save, iris_size, iris_train_begin and iris_migrate_scaling. Nothing to
+   look up: zero is bad. iris_record returns the new demonstration's
+   identifier on success, which is naturally non-zero because identifiers start
+   at 1 -- so it obeys the rule AND hands you the number you need later to
+   delete or re-map that specific take.
+
+   RULE 2, for a call that returns a MEASUREMENT you asked for:
+       the measurement on success, -1 on refusal.
+   That covers the detailed trainers (which return the training error),
+   iris_loo_error, iris_suggest_smoothing, iris_worst_example, iris_index_of
+   and iris_classify_1nn. These cannot use rule 1 because zero is often a
+   perfectly good answer -- iris_train_elm returns the number of ridge
+   escalations, and none needed is the best possible outcome.
+
+   And a separate question, with a separate answer: is the INSTRUMENT in
+   trouble? That is iris_get_status, below. A call can succeed on an
+   instrument that is unwell, and a call can fail on a perfectly good one.
+   Two questions, two answers, and 0 is the bad news in both.
+
+   ---------------------------------------------------------------------- */
+
+IRIS_API iris_status iris_get_status(const iris *k) {
+  /* A null instrument is not healthy. The header says "if (iris_get_status(k))
+     reads as 'is something wrong?'", and for the one input where something is
+     definitely wrong it used to answer no. */
+  if (!k) return IRIS_NOT_FITTED;
+  return (iris_status)k->status;
+}
 
 /* ==========================================================================
    PART 3 — SETUP
@@ -431,6 +586,23 @@ IRIS_API iris_status iris_get_status(const iris *k) { return (iris_status)k->sta
    validates every dimension INCLUDING cap before it ever calls iris_size
    (see the guard block at the top of iris_init). Any other caller must test
    for 0 explicitly. */
+/* How many bytes a shape occupies. Arithmetic only, no opinion about whether
+   the shape is a good idea — iris_size below adds that. They are separate
+   because conflating them cost us a memory-safety bug: iris_size returned 0
+   for widths under its quality floor, iris_init compared `bytes < 0` on
+   unsigned types, and the arena bound silently ceased to exist. A size
+   function that can refuse is not a size function. */
+static size_t iris__bytes(int n_in, int n_hid, int n_out, int cap) {
+  return sizeof(iris)
+       + sizeof(float) * (size_t)( 2*(n_in*n_hid + n_hid + n_hid*n_out + n_out)
+                                 + n_hid + n_out + n_hid + n_out
+                                 + 2*(n_in + n_out)
+                                 + (size_t)cap
+                                 + (size_t)cap * (n_in + n_out) )
+       + sizeof(int32_t) * (size_t)cap * 2
+       + 64;
+}
+
 IRIS_API size_t iris_size(int n_in, int n_hid, int n_out, int cap) {
   if (n_in < 1 || n_in > IRIS_MAX_IN)   return 0;
   if (n_out < 1 || n_out > IRIS_MAX_OUT) return 0;
@@ -441,14 +613,7 @@ IRIS_API size_t iris_size(int n_in, int n_hid, int n_out, int cap) {
      costs nothing and prevents a permanent mistake. */
   if (n_hid < 8 || n_hid > IRIS_MAX_HID) return 0;
   if (cap  < 1 || cap  > IRIS_MAX_EX)   return 0;
-  return sizeof(iris)
-       + sizeof(float) * (size_t)( 2*(n_in*n_hid + n_hid + n_hid*n_out + n_out)
-                                 + n_hid + n_out + n_hid + n_out
-                                 + 2*(n_in + n_out)
-                                 + (size_t)cap
-                                 + (size_t)cap * (n_in + n_out) )
-       + sizeof(int32_t) * (size_t)cap * 2
-       + 64;
+  return iris__bytes(n_in, n_hid, n_out, cap);
 }
 
 /* Randomise the weights. This is the reroll.
@@ -460,7 +625,7 @@ IRIS_API size_t iris_size(int n_in, int n_hid, int n_out, int cap) {
    inputs keeps the sums in the responsive part of the curve. This is a
    standard trick and it is the difference between "trains in 50 ms" and
    "never trains at all". */
-IRIS_API void iris_reseed(iris *k, uint32_t seed) {
+IRIS_API void iris_reseed(iris *k, uint32_t seed) { if (!k) return;
   k->seed = seed ? seed : 1u;
   k->rng.s = k->seed;
   const float s1 = 1.0f / iris_sqrt((float)(k->n_in  > 0 ? k->n_in  : 1));
@@ -484,14 +649,41 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
   if (!mem) return 0;
   if (n_in  < 1 || n_in  > IRIS_MAX_IN ) return 0;
   if (n_out < 1 || n_out > IRIS_MAX_OUT) return 0;
-  if (n_hid < 1 || n_hid > IRIS_MAX_HID) return 0;
+  /* Floor of 8, matching iris_size. These two used to disagree: iris_size
+     returned its "impossible shape" answer of 0 for every width below 8 while
+     iris_init happily built one, so `malloc(iris_size(2,4,3,64))` allocated
+     nothing and the obvious next line wrote into it. docs/FREEZE.md has said
+     "raise the floor to 8 in iris_init. NOW." since before this release; n_hid
+     is written into the save file and iris_load refuses a mismatch, so the
+     width chosen on day one is that instrument's width for ever, which is why
+     a permanent mistake is worth refusing rather than accepting. */
+  if (n_hid < 8 || n_hid > IRIS_MAX_HID) return 0;
   if (cap   < 1 || cap > IRIS_MAX_EX) return 0;      /* see IRIS_MAX_EX: overflow */
-  if (bytes < iris_size(n_in, n_hid, n_out, cap)) return 0;
+  /* The floors above now match iris_size exactly, so the two agree on which
+     shapes exist. They did not always, and the way that failed is worth
+     keeping: iris_size floored n_hid at 8 and returned 0 below it, iris_init
+     floored it at 1, and the arena bound was written `bytes < iris_size(...)`.
+     For n_hid in 1..7 that became `bytes < 0` on unsigned types -- false,
+     always -- so the bound was not merely wrong, it was absent.
+     iris_init(a 1-byte arena, n_hid = 4) returned a live instrument and
+     training wrote 611 bytes past the end.
+
+     The bound below therefore goes through iris__bytes, which is arithmetic
+     with no opinion, rather than through iris_size, which has one. A size
+     function that can refuse cannot also be a bound. */
+  if (bytes < iris__bytes(n_in, n_hid, n_out, cap)) return 0;
 
   unsigned char *p = (unsigned char *)mem;
+  /* Align BEFORE placing the structure, not after. The caller's arena is only
+     guaranteed 1-byte aligned -- the front-page example declares it as
+     `unsigned char mem[...]` -- and this used to align the float arrays while
+     leaving the structure itself wherever the arena happened to start. A
+     sanitizer reports it as a misaligned member access; a chip that faults on
+     unaligned loads reports it as a crash. The 64 bytes of slack in
+     iris__bytes exist for exactly this. */
+  p += ((uintptr_t)p & 7u) ? (8u - (size_t)((uintptr_t)p & 7u)) : 0u;
   iris *k = (iris *)p;  p += sizeof(iris);
-  /* align to 8 bytes so float loads are never unaligned */
-  p += ((uintptr_t)p & 7u) ? (8u - ((uintptr_t)p & 7u)) : 0u;
+  p += ((uintptr_t)p & 7u) ? (8u - (size_t)((uintptr_t)p & 7u)) : 0u;
 
   k->n_in = n_in; k->n_hid = n_hid; k->n_out = n_out; k->cap = cap;
 
@@ -509,7 +701,16 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
   #undef IRIS_TAKE
 
   k->ex_id = (int32_t *)p; p += sizeof(int32_t) * (size_t)cap;
-  k->order = (int32_t *)p; p += sizeof(int32_t) * (size_t)cap;
+  k->order = (int32_t *)p;
+  /* FILL IT. This was a pointer into memory nobody had written, and the
+     trainer's shuffle both reads and writes through it. Recording a
+     demonstration during a sliced training run made the shuffle reach one slot
+     past what iris_train_begin had filled: a crash on a dirty arena, and on a
+     zeroed one -- which is what a global array on a microcontroller is -- a
+     silent read of index 0 instead of the new demonstration.
+     Filling the whole capacity with the identity also means a demonstration
+     added mid-run lands on a valid, correct index. */
+  for (int i = 0; i < cap; ++i) k->order[i] = i;
 
   k->n_ex = 0; k->next_id = 1;
   k->lr = 0.10f; k->momentum = 0.85f; k->l2 = 0.0f;
@@ -552,7 +753,7 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
 
    Retained internally for tests/audit.c's Weka-parity check, which sets
    Weka's own 0.3/0.2 pair. See docs/KNOB-AUDIT.md. */
-IRIS_API void iris__set_learning(iris *k, float lr, float momentum) {
+IRIS_API void iris__set_learning(iris *k, float lr, float momentum) { if (!k) return;
   k->lr = iris_clampf(lr, 0.0001f, 2.0f);   /* range kept for Weka parity */
   k->momentum = iris_clampf(momentum, 0.0f, 0.99f);
 }
@@ -596,10 +797,10 @@ IRIS_API void iris__set_learning(iris *k, float lr, float momentum) {
 
    Applied as decoupled decay on the weights only, never the biases: penalising
    a bias just shifts the function for no capacity benefit. */
-IRIS_API void iris__set_l2(iris *k, float l2) {
+IRIS_API void iris__set_l2(iris *k, float l2) { if (!k) return;
   k->l2 = iris_clampf(l2, 0.0f, 0.3f);   /* 0.3, not 1.0 — see smoothing */
 }
-IRIS_API float iris_get_l2(const iris *k) { return k->l2; }
+IRIS_API float iris_get_l2(const iris *k) { if (!k) return 0.0f; return k->l2; }
 
 /* SMOOTHING — the one quality knob, in the musician's own terms.
 
@@ -629,10 +830,10 @@ IRIS_API float iris_get_l2(const iris *k) { return k->l2; }
 
    Default is 0 — stick to the demonstrations — because a musician who has not
    asked for smoothing should get exactly what they showed it. */
-IRIS_API void iris_set_smoothing(iris *k, float amount) {
+IRIS_API void iris_set_smoothing(iris *k, float amount) { if (!k) return;
   iris__set_l2(k, iris_clampf(amount, 0.0f, 1.0f) * 0.3f);
 }
-IRIS_API float iris_get_smoothing(const iris *k) { return k->l2 / 0.3f; }
+IRIS_API float iris_get_smoothing(const iris *k) { if (!k) return 0.0f; return k->l2 / 0.3f; }
 
 /* ==========================================================================
    PART 4 — THE EXAMPLE STORE
@@ -643,11 +844,11 @@ IRIS_API float iris_get_smoothing(const iris *k) { return k->l2 / 0.3f; }
    twenty minutes of work.
    ========================================================================== */
 
-IRIS_API int iris_count(const iris *k) { return k->n_ex; }
-IRIS_API int iris_capacity(const iris *k) { return k->cap; }
+IRIS_API int iris_count(const iris *k) { if (!k) return 0; return k->n_ex; }
+IRIS_API int iris_capacity(const iris *k) { if (!k) return 0; return k->cap; }
 
-IRIS_API int iris_record(iris *k, const float *in, const float *out) {
-  if (k->n_ex >= k->cap) return -1;                 /* full — say so, loudly */
+IRIS_API int iris_record(iris *k, const float *in, const float *out) { if (!k) return 0;
+  if (k->n_ex >= k->cap) return 0;                  /* full — say so, loudly */
 
 #ifndef IRIS_NO_GUARDS
   /* REFUSE A POISONED DEMONSTRATION AT THE DOOR. A NaN or Inf from a glitched
@@ -662,12 +863,10 @@ IRIS_API int iris_record(iris *k, const float *in, const float *out) {
      immediately. The trainer's pre-scan stays as defence in depth — it also
      covers examples that arrived through iris_load. Added 2026-08-27 (gap B4). */
   {
-    const int st = k->n_in + k->n_out;
     for (int i = 0; i < k->n_in;  ++i)
-      if (iris_isbad(in[i]))  { k->status = IRIS_NAN_TRAPPED; return -1; }
+      if (iris_isbad(in[i]))  { k->status = IRIS_NAN_TRAPPED; return 0; }
     for (int i = 0; i < k->n_out; ++i)
-      if (iris_isbad(out[i])) { k->status = IRIS_NAN_TRAPPED; return -1; }
-    (void)st;
+      if (iris_isbad(out[i])) { k->status = IRIS_NAN_TRAPPED; return 0; }
   }
 #endif
 
@@ -681,17 +880,17 @@ IRIS_API int iris_record(iris *k, const float *in, const float *out) {
   return k->ex_id[k->n_ex - 1];
 }
 
-IRIS_API int iris_index_of(const iris *k, int id) {
+IRIS_API int iris_index_of(const iris *k, int id) { if (!k) return -1;
   for (int i = 0; i < k->n_ex; ++i) if (k->ex_id[i] == id) return i;
   return -1;
 }
 
 /* The stable id at a position, without copying the row out. */
-IRIS_API int iris_id_at(const iris *k, int idx) {
+IRIS_API int iris_id_at(const iris *k, int idx) { if (!k) return -1;
   return (idx < 0 || idx >= k->n_ex) ? -1 : k->ex_id[idx];
 }
 
-IRIS_API int iris_get(const iris *k, int idx, float *in, float *out) {
+IRIS_API int iris_get(const iris *k, int idx, float *in, float *out) { if (!k) return 0;
   if (idx < 0 || idx >= k->n_ex) return 0;
   const int stride = k->n_in + k->n_out;
   const float *row = k->ex + (size_t)idx * stride;
@@ -700,7 +899,7 @@ IRIS_API int iris_get(const iris *k, int idx, float *in, float *out) {
   return k->ex_id[idx];
 }
 
-IRIS_API int iris_delete_index(iris *k, int idx) {
+IRIS_API int iris_delete_index(iris *k, int idx) { if (!k) return 0;
   if (idx < 0 || idx >= k->n_ex) return 0;
   const int stride = k->n_in + k->n_out;
   for (int r = idx; r < k->n_ex - 1; ++r) {
@@ -714,13 +913,13 @@ IRIS_API int iris_delete_index(iris *k, int idx) {
   return 1;
 }
 
-IRIS_API int iris_delete_id(iris *k, int id) { return iris_delete_index(k, iris_index_of(k, id)); }
-IRIS_API int iris_delete_last(iris *k) { return iris_delete_index(k, k->n_ex - 1); }
+IRIS_API int iris_delete_id(iris *k, int id) { if (!k) return 0; return iris_delete_index(k, iris_index_of(k, id)); }
+IRIS_API int iris_delete_last(iris *k) { if (!k) return 0; return iris_delete_index(k, k->n_ex - 1); }
 
 /* Delete whichever example is closest to where you are standing right now.
    On a device with three buttons this is how you say "not THAT one" without
    needing to read a list. */
-IRIS_API int iris_delete_nearest(iris *k, const float *in) {
+IRIS_API int iris_delete_nearest(iris *k, const float *in) { if (!k) return 0;
   int best = -1; float best_d = 1e30f;
   const int stride = k->n_in + k->n_out;
   for (int r = 0; r < k->n_ex; ++r) {
@@ -732,7 +931,19 @@ IRIS_API int iris_delete_nearest(iris *k, const float *in) {
   return iris_delete_index(k, best);
 }
 
-IRIS_API void iris_clear(iris *k) { k->n_ex = 0; k->trained = 0; k->fitted = 0; }
+IRIS_API void iris_clear(iris *k) {
+  if (!k) return;
+  k->n_ex = 0; k->trained = 0; k->fitted = 0;
+  /* End any run in flight. Without this, iris_train_slice kept reporting
+     "there is more to do" for ever: the trainer returns immediately when there
+     are no demonstrations, so tr_done never advances and tr_running is never
+     cleared, and the documented loop
+         while (iris_train_slice(k, 500)) { draw(); poll(); }
+     never terminates. Both Arduino sketches wire iris_clear to a button and
+     the library recommends training in slices, so those two are one press
+     apart. */
+  k->tr_running = 0; k->tr_done = 0; k->tr_n_ex = 0; k->tr_ref = 0.0f;
+}
 
 /* ==========================================================================
    PART 5 — NORMALISATION
@@ -741,7 +952,10 @@ IRIS_API void iris_clear(iris *k) { k->n_ex = 0; k->trained = 0; k->fitted = 0; 
    everything into a common scale before training.
 
    Outputs go to 0.1–0.9 rather than 0–1 on purpose. The output layer uses a
-   sigmoid, which can only *approach* 0 and 1 and never reach them. Asking it
+   sigmoid. A true logistic only APPROACHES 0 and 1; this one is built on a
+   clamped rational function and reaches them exactly — iris_sigmoid(6.0f) is
+   1.0f on the nose. The decision stands on the measurement below, not on the
+   asymptote argument written here first, which is false of this code. Asking it
    to hit exactly 1.0 means pushing a weight toward infinity forever. Leaving
    headroom at both ends means the network can actually arrive.
    ========================================================================== */
@@ -749,7 +963,7 @@ IRIS_API void iris_clear(iris *k) { k->n_ex = 0; k->trained = 0; k->fitted = 0; 
 #define IRIS_OUT_LO 0.1f
 #define IRIS_OUT_HI 0.9f
 
-IRIS_API void iris_fit_ranges(iris *k) {
+IRIS_API void iris_fit_ranges(iris *k) { if (!k) return;
   const int stride = k->n_in + k->n_out;
   if (k->n_ex == 0) return;
   for (int i = 0; i < k->n_in;  ++i) { k->in_lo[i]  =  1e30f; k->in_hi[i]  = -1e30f; }
@@ -768,15 +982,29 @@ IRIS_API void iris_fit_ranges(iris *k) {
   }
   /* A dimension where every example is identical has zero range. Dividing by
      that is how you get NaN into an audio buffer. Give it a floor. */
-  for (int i = 0; i < k->n_in;  ++i) if (k->in_hi[i]  - k->in_lo[i]  < 1e-6f) k->in_hi[i]  = k->in_lo[i]  + 1e-6f;
-  for (int i = 0; i < k->n_out; ++i) if (k->out_hi[i] - k->out_lo[i] < 1e-6f) k->out_hi[i] = k->out_lo[i] + 1e-6f;
+  /* The floor has to be RELATIVE. Adding an absolute 1e-6 to a value above 32
+     changes nothing at all in 32-bit floating point -- the gap between
+     representable numbers there is already wider than 1e-6 -- so the range
+     stayed exactly zero, the normalisation divided zero by zero, and every
+     prediction became not-a-number, which the guards then replaced with the
+     middle of the range. A light sensor reads 0..4095 and a distance sensor
+     reads millimetres, so ANY of those channels sitting still killed the whole
+     instrument silently. Measured: worked to 31.77, dead from 32.72. */
+  for (int i = 0; i < k->n_in;  ++i) {
+    float w = iris_absf(k->in_lo[i]) * 1e-5f;  if (w < 1e-6f) w = 1e-6f;
+    if (k->in_hi[i]  - k->in_lo[i]  < w) k->in_hi[i]  = k->in_lo[i]  + w;
+  }
+  for (int i = 0; i < k->n_out; ++i) {
+    float w = iris_absf(k->out_lo[i]) * 1e-5f; if (w < 1e-6f) w = 1e-6f;
+    if (k->out_hi[i] - k->out_lo[i] < w) k->out_hi[i] = k->out_lo[i] + w;
+  }
 }
 
 /* THE INPUT SCALING. Two of them, chosen per instrument by k->in_center,
    which iris_load sets from the file version. See the field's comment in
    struct iris for the measurement and the citation; see PART 9 for what
    happens to a saved instrument if the [0,1] branch is ever deleted. */
-IRIS_API float iris_norm_in (const iris *k, int i, float v) {
+IRIS_API float iris_norm_in (const iris *k, int i, float v) { if (!k || i < 0 || i >= k->n_in) return 0.0f;
   const float t = (v - k->in_lo[i]) / (k->in_hi[i] - k->in_lo[i]);
   return k->in_center ? (2.0f * t - 1.0f) : t;
 }
@@ -791,18 +1019,18 @@ IRIS_API float iris_norm_in (const iris *k, int i, float v) {
 
    Nothing else should call it: changing the scaling under trained weights
    changes what those weights mean. */
-IRIS_API void iris__set_legacy_norm(iris *k, int legacy) { k->in_center = legacy ? 0 : 1; }
+IRIS_API void iris__set_legacy_norm(iris *k, int legacy) { if (!k) return; k->in_center = legacy ? 0 : 1; }
 
 /* WHICH SCALING IS THIS INSTRUMENT ON. 0 = the legacy [0,1] of v1/v2 files,
    1 = the centred [-1,+1] of v3. A UI needs this to tell the musician why an
    instrument restored from an old file did not get the better fit, and to
    offer iris_migrate_scaling. */
-IRIS_API int iris_input_scaling(const iris *k) { return k->in_center ? 1 : 0; }
-IRIS_API float iris_norm_out(const iris *k, int i, float v) {
+IRIS_API int iris_input_scaling(const iris *k) { if (!k) return 0; return k->in_center ? 1 : 0; }
+IRIS_API float iris_norm_out(const iris *k, int i, float v) { if (!k || i < 0 || i >= k->n_out) return 0.0f;
   float t = (v - k->out_lo[i]) / (k->out_hi[i] - k->out_lo[i]);
   return IRIS_OUT_LO + t * (IRIS_OUT_HI - IRIS_OUT_LO);
 }
-IRIS_API float iris_denorm_out(const iris *k, int i, float y) {
+IRIS_API float iris_denorm_out(const iris *k, int i, float y) { if (!k || i < 0 || i >= k->n_out) return 0.0f;
   float t = (y - IRIS_OUT_LO) / (IRIS_OUT_HI - IRIS_OUT_LO);
   return k->out_lo[i] + t * (k->out_hi[i] - k->out_lo[i]);
 }
@@ -819,7 +1047,7 @@ IRIS_API float iris_denorm_out(const iris *k, int i, float y) {
    learning costs anything.
    ========================================================================== */
 
-IRIS_API void iris_forward_norm(const iris *k, const float *x_norm) {
+IRIS_API void iris_forward_norm(const iris *k, const float *x_norm) { if (!k) return;
   for (int h = 0; h < k->n_hid; ++h) {
     const float *w = k->w1 + (size_t)h * k->n_in;
     float s = k->b1[h];
@@ -834,7 +1062,7 @@ IRIS_API void iris_forward_norm(const iris *k, const float *x_norm) {
   }
 }
 
-IRIS_API void iris_predict(const iris *k, const float *in, float *out) {
+IRIS_API void iris_predict(const iris *k, const float *in, float *out) { if (!k) return;
   float x[IRIS_MAX_IN];
 
 #ifndef IRIS_NO_GUARDS
@@ -895,7 +1123,7 @@ IRIS_API void iris_predict(const iris *k, const float *in, float *out) {
    has done this, and it is four lines.
    ========================================================================== */
 
-IRIS_API float iris_novelty(const iris *k, const float *in) {
+IRIS_API float iris_novelty(const iris *k, const float *in) { if (!k) return 0.0f;
   if (k->n_ex == 0) return 1.0f;
   const int stride = k->n_in + k->n_out;
   float best = 1e30f;
@@ -943,7 +1171,7 @@ IRIS_API float iris_novelty(const iris *k, const float *in) {
    Cost is one pass over the weights per EPOCH; the backprop pass over the
    weights runs once per EXAMPLE, so this is < 1/n_ex relative overhead.     */
 #ifndef IRIS_NO_GUARDS
-IRIS_API int iris__check_weights(iris *k) {
+IRIS_API int iris__check_weights(iris *k) { if (!k) return 0;
   const int nw = k->n_hid * k->n_in + k->n_hid + k->n_out * k->n_hid + k->n_out;
   /* w1,b1,w2,b2 are carved consecutively from the arena; walk them as one */
   float *w = k->w1;
@@ -1036,8 +1264,17 @@ typedef int (*iris_progress_fn)(void *user, int done, int ceiling, float err);
    L-BFGS trainer (now experimental/iris_lbfgs.h) already returned -1.0f for
    the same situation. Two conventions, one library. Fixed 2026-08-26. */
 IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
-                           iris_progress_fn cb, void *user) {
-  if (k->n_ex == 0) return -1.0f;
+                           iris_progress_fn cb, void *user) { if (!k) return -1.0f;
+  if (k->n_ex == 0) {
+    /* A run with nothing left to train on is over, however it got that way.
+       iris_clear was taught to end a run; the four delete functions were not,
+       and they reach the same state. Ending it HERE covers every caller,
+       present and future, instead of every caller having to remember. Without
+       it the documented slice loop spins for ever with the progress bar
+       frozen -- five million iterations and counting, measured. */
+    k->tr_running = 0; k->tr_n_ex = 0;
+    return -1.0f;
+  }
 
 #ifndef IRIS_NO_GUARDS
   /* THE DIVERGENCE TRAP, AND WHY THIS REFUSAL EXISTS.
@@ -1105,10 +1342,28 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
 
   if (!resume) {
     for (int i = 0; i < k->n_ex; ++i) k->order[i] = i;
+    k->tr_n_ex = k->n_ex;
     for (int i = 0; i < k->cap;  ++i) k->ex_res[i] = 0.0f;
     k->res_epochs = 0;
     k->tr_done = 0;
     k->tr_ref = 0.0f;
+  } else if (k->tr_n_ex != k->n_ex) {
+    /* The data changed under a running slice -- a record or a delete between
+       two calls. The shuffle covers a fixed count, so the permutation no
+       longer describes the data: rebuild it, or the new demonstration is never
+       visited and a deleted one still is.
+
+       Also restart the plateau window. The stopping test asks whether the
+       error fell since last window, and new data makes the error JUMP UP, so
+       a stale reference reads that rise as a plateau and ends the run on the
+       exact epoch the student added something.
+
+       Deliberately NOT reset: tr_done. The epoch budget stays monotonic, so a
+       caller who records between every slice still reaches the ceiling instead
+       of training for ever. */
+    for (int i = 0; i < k->n_ex; ++i) k->order[i] = i;
+    k->tr_n_ex = k->n_ex;
+    k->tr_ref  = 0.0f;
   }
 
   for (int ep = 0; ep < epochs; ++ep) {
@@ -1135,9 +1390,7 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
          of the TRUE logistic function. Our forward pass does not use the true
          logistic: iris_sigmoid is built from iris_tanh, which is a Padé
          rational approximant (PART 1). So the backward pass is not the
-         derivative of the forward pass. An earlier version of this comment said
-         "sigmoid'(z) is conveniently y*(1-y)" — that is false of THIS
-         implementation and contradicted PART 1 twenty lines above it.
+         derivative of the forward pass.         implementation and contradicted PART 1 twenty lines above it.
 
          HOW WRONG, MEASURED. Ratio of the derivative used to the exact
          derivative of the function actually evaluated, verified numerically
@@ -1323,7 +1576,7 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
    -O3 — never about Weka. Audit check 12 hashes the weights this produces.
    Do not "improve" it; iris_train_converge is where improvements go.
    Full audit: research/prior-art/CORE-AUDIT-vs-wekinator.md */
-IRIS_API float iris_train_epochs(iris *k, int epochs) {
+IRIS_API float iris_train_epochs(iris *k, int epochs) { if (!k) return -1.0f;
   k->tr_ceiling = epochs > 0 ? epochs : 0;
   k->tr_running = 0;
   return iris__train_run(k, epochs, 0, 0, 0, 0);
@@ -1331,7 +1584,7 @@ IRIS_API float iris_train_epochs(iris *k, int epochs) {
 
 /* Train until the training error plateaus. ceiling <= 0 takes
    IRIS_CONV_CEILING. cb may be NULL. Returns the final mean squared error. */
-IRIS_API float iris_train_converge(iris *k, int ceiling, iris_progress_fn cb, void *user) {
+IRIS_API float iris_train_converge(iris *k, int ceiling, iris_progress_fn cb, void *user) { if (!k) return -1.0f;
   const int ceil_ = ceiling > 0 ? ceiling : IRIS_CONV_CEILING;
   k->tr_ceiling = ceil_;
   k->tr_running = 1;
@@ -1342,17 +1595,53 @@ IRIS_API float iris_train_converge(iris *k, int ceiling, iris_progress_fn cb, vo
   }
 }
 
+/* TRAIN. This is the one to call.
+
+   It runs until the error stops improving, which is what you want and what the
+   other trainers are for tuning. No epoch count to guess, no callback, no
+   ceiling: those live on iris_train_converge for the rare caller who needs
+   them, and every one of them has a good default here.
+
+   Returns 1 if it trained, 0 if it refused -- no demonstrations, a poisoned
+   one, or a null instrument. If you want to know HOW WELL it fits, that is a
+   separate question with a separate answer: iris_last_error(k). */
+IRIS_API int iris_train(iris *k) {
+  if (!k) return 0;
+  /* FIT FROM A DEFINED START, always.
+
+     This used to continue from whatever weights were already there, and that
+     quietly broke the loop this library exists for. Record a bad take, delete
+     it, retrain -- the documented repair -- and the deleted take's crater
+     stayed in the instrument, because the weights it had bent were the weights
+     training resumed from. Measured over 40 seeds: the places you did NOT
+     demonstrate came back 215 times further from the mapping you showed it,
+     in every single run, while iris_last_error moved the other way and the
+     status reported perfect health. The one number a screen can show said the
+     instrument had improved.
+
+     Warm-starting is still right, and the argument for it above iris_correct
+     is still correct: continuing from the current fit is how you adjust one
+     region without rewriting the mapping everywhere, which is how a musician
+     keeps technique. But that is what iris_correct is FOR. This function is
+     called train, a caller expects it to fit the demonstrations it has now,
+     and the two must not be the same act. */
+  iris_reseed(k, k->seed);
+  return iris_train_converge(k, 0, 0, 0) >= 0.0f ? 1 : 0;
+}
+
+
 /* The same run, in slices, for a UI that must keep drawing.
      iris_train_begin(k, ceiling);
      while (iris_train_slice(k, 500)) { draw(iris_train_progress(k)); poll(); }
    Bit-identical to iris_train_converge with the same ceiling: the shuffle
    buffer is initialised once, here, and carried across every slice. */
-IRIS_API int iris_train_begin(iris *k, int ceiling) {
+IRIS_API int iris_train_begin(iris *k, int ceiling) { if (!k) return 0;
   if (k->n_ex == 0) return 0;
   k->tr_ceiling = ceiling > 0 ? ceiling : IRIS_CONV_CEILING;
   k->tr_done = 0;
   k->tr_ref = 0.0f;
   k->tr_running = 1;
+  k->tr_n_ex = k->n_ex;
   for (int i = 0; i < k->n_ex; ++i) k->order[i] = i;
   for (int i = 0; i < k->cap;  ++i) k->ex_res[i] = 0.0f;
   k->res_epochs = 0;
@@ -1361,7 +1650,7 @@ IRIS_API int iris_train_begin(iris *k, int ceiling) {
 
 /* Runs at most `epochs` more. Returns 1 if there is more to do, 0 when the
    run has finished (plateau, ceiling, early stop, or a guard). */
-IRIS_API int iris_train_slice(iris *k, int epochs) {
+IRIS_API int iris_train_slice(iris *k, int epochs) { if (!k) return 0;
   if (!k->tr_running) return 0;
   {
     int left = k->tr_ceiling - k->tr_done;
@@ -1378,7 +1667,7 @@ IRIS_API int iris_train_slice(iris *k, int epochs) {
    still going this is epochs-spent / ceiling, which is a LOWER bound — the
    run will usually stop early — so the bar never goes backwards and never
    claims to be further along than it is. */
-IRIS_API float iris_train_progress(const iris *k) {
+IRIS_API float iris_train_progress(const iris *k) { if (!k) return 0.0f;
   if (!k->tr_running) return 1.0f;
   if (k->tr_ceiling <= 0) return 1.0f;
   {
@@ -1386,7 +1675,7 @@ IRIS_API float iris_train_progress(const iris *k) {
     return f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f);
   }
 }
-IRIS_API int iris_train_busy(const iris *k) { return k->tr_running; }
+IRIS_API int iris_train_busy(const iris *k) { if (!k) return 0; return k->tr_running; }
 
 /* How many epochs the last run ACTUALLY did. Compare against what you asked
    for: fewer means it stopped early, and there are four rules that can do
@@ -1395,12 +1684,18 @@ IRIS_API int iris_train_busy(const iris *k) { return k->tr_running; }
    this distinguishes "ran to completion" from "stopped for a good reason",
    which iris_train_progress() deliberately cannot, because it reports 1.0 for
    any finished run. Added 2026-08-26 — before this there was no way to tell. */
-IRIS_API int iris_train_epochs_done(const iris *k) { return k->tr_done; }
+IRIS_API int iris_train_epochs_done(const iris *k) { if (!k) return 0; return k->tr_done; }
 
 /* Train and immediately reroll from a fresh random start. This is the
    "give me a different instrument from the same examples" button — the thing
    a deterministic model fundamentally cannot offer. */
-IRIS_API float iris_retrain_new(iris *k, uint32_t seed, int epochs) {
+IRIS_API float iris_retrain_new(iris *k, uint32_t seed, int epochs) { if (!k) return -1.0f;
+  /* Check what the trainer will refuse BEFORE throwing the weights away.
+     iris_reseed destroys the instrument; iris_train_epochs then declined a
+     zero budget and returned -1.0, so the caller saw a refusal and had
+     nevertheless lost their instrument. Refuse first, destroy nothing. */
+  if (epochs <= 0)  return -1.0f;
+  if (k->n_ex == 0) return -1.0f;
   iris_reseed(k, seed);
   return iris_train_epochs(k, epochs);
 }
@@ -1459,7 +1754,7 @@ IRIS_API float iris_retrain_new(iris *k, uint32_t seed, int epochs) {
    THE INSTRUMENT IS LEFT REFITTED ON ALL EXAMPLES, from that same seed, so it
    is valid to play afterwards — but it is NOT the instrument you had before you
    called this, because it has been retrained. Save first if that matters. */
-IRIS_API float iris_loo_error(iris *k, int epochs) {
+IRIS_API float iris_loo_error(iris *k, int epochs) { if (!k) return -1.0f;
   if (k->n_ex < 3) return -1.0f;
   const int n = k->n_ex, ni = k->n_in, no = k->n_out, stride = ni + no;
   const uint32_t seed0 = k->seed;
@@ -1519,20 +1814,63 @@ IRIS_API float iris_loo_error(iris *k, int epochs) {
    oracle would have gained at realistic noise levels. Treat the number as a
    suggestion to audition, not an answer — and if you like where you land, pin
    it in your code rather than re-deriving it, so your instrument stays put. */
-IRIS_API float iris_suggest_smoothing(iris *k) {
-  const float ladder[5] = { 0.0f, 0.05f, 0.15f, 0.5f, 1.0f };
-  const float keep = iris_get_smoothing(k);
-  float best_v = 0.0f, best_e = -1.0f;
-  int i;
-  for (i = 0; i < 5; ++i) {
-    iris_set_smoothing(k, ladder[i]);
+/* Forward declarations: the save/load functions are defined further down the
+   file, and this one needs them to protect the caller's instrument. */
+IRIS_API size_t iris_save_size(const iris *k);
+IRIS_API size_t iris_save(const iris *k, void *buf, size_t cap);
+IRIS_API int    iris_load(iris *k, const void *buf, size_t bytes);
+
+/* ASKING FOR ADVICE MUST NOT COST YOU YOUR INSTRUMENT.
+
+   This runs a leave-one-out sweep across five smoothing settings, and each
+   one refits the network from scratch, once per demonstration. It used to
+   restore only the SETTING, so a performer who called it to ask a question got
+   their answer and, silently, a different instrument: whatever the last rung
+   of the ladder left behind at a 600-epoch budget, in place of the one they
+   had trained to a plateau. Measured drift on one output: 0.14 of full scale,
+   which on a filter cutoff is plainly audible.
+
+   So it now saves the instrument first and puts it back afterwards, which is
+   why it needs scratch space: the arena is exactly sized and has nowhere to
+   keep a copy. Give it iris_save_size(k) bytes. It refuses rather than
+   proceeding if you do not -- refusing an answer is recoverable, and quietly
+   replacing someone's instrument is not.
+
+   It still suggests; it still does not decide. Applying the number is yours. */
+IRIS_API float iris_suggest_smoothing(iris *k, void *scratch, size_t scratch_bytes) {
+  if (!k) return -1.0f;
+  if (!scratch || scratch_bytes < iris_save_size(k)) return -1.0f;
+  {
+    const size_t saved = iris_save(k, scratch, scratch_bytes);
+    if (saved == 0) return -1.0f;
     {
-      float e = iris_loo_error(k, 0);
-      if (e >= 0.0f && (best_e < 0.0f || e < best_e)) { best_e = e; best_v = ladder[i]; }
+      const float ladder[5] = { 0.0f, 0.05f, 0.15f, 0.5f, 1.0f };
+      const float keep        = iris_get_smoothing(k);
+      const int32_t keep_done = k->tr_done;
+      const float keep_err    = k->last_error;
+      const int32_t keep_status = k->status;
+      float best_v = 0.0f, best_e = -1.0f;
+      int i;
+      for (i = 0; i < 5; ++i) {
+        iris_set_smoothing(k, ladder[i]);
+        {
+          float e = iris_loo_error(k, 0);
+          if (e >= 0.0f && (best_e < 0.0f || e < best_e)) { best_e = e; best_v = ladder[i]; }
+        }
+      }
+      /* Put the performer's instrument back, exactly. The file carries the
+         weights, the demonstrations and the smoothing setting -- but not what
+         the instrument REPORTS about its own training, so a caller watching
+         iris_train_epochs_done saw it fall to zero after asking a question.
+         Snapshot those fields and restore them on top of the load. */
+      iris_load(k, scratch, saved);
+      iris_set_smoothing(k, keep);
+      k->tr_done   = keep_done;
+      k->last_error = keep_err;
+      k->status    = keep_status;
+      return best_e < 0.0f ? -1.0f : best_v;
     }
   }
-  iris_set_smoothing(k, keep);      /* we suggest; we do not decide */
-  return best_e < 0.0f ? -1.0f : best_v;
 }
 
 
@@ -1623,7 +1961,7 @@ IRIS_API float iris_suggest_smoothing(iris *k) {
    RANKING, and it is meaningful at any example count — it is only the
    decision to speak that needs a crowd. 0.0f before any training, or for an
    index out of range. */
-IRIS_API float iris_example_stress(const iris *k, int idx) {
+IRIS_API float iris_example_stress(const iris *k, int idx) { if (!k) return 0.0f;
   if (idx < 0 || idx >= k->n_ex || k->res_epochs == 0 || k->n_ex == 0) return 0.0f;
   {
     float sum = 0.0f;
@@ -1657,7 +1995,7 @@ IRIS_API float iris_example_stress(const iris *k, int idx) {
    real and a UI may want to show it quietly (a dimmer mark, say) without
    accusing anything. Ties go to the earliest-recorded example, the same rule
    as iris_knn_predict. */
-IRIS_API int iris_worst_example(const iris *k, float *margin) {
+IRIS_API int iris_worst_example(const iris *k, float *margin) { if (!k) return -1;
   if (margin) *margin = 0.0f;
   if (k->n_ex < IRIS_STRESS_MIN_EX || k->res_epochs == 0) return -1;
   {
@@ -1675,7 +2013,7 @@ IRIS_API int iris_worst_example(const iris *k, float *margin) {
 
 /* The stable id of that example — what a UI should say out loud, because ids
    survive deletions and indices do not. -1 when there is nothing to say. */
-IRIS_API int iris_worst_example_id(const iris *k, float *margin) {
+IRIS_API int iris_worst_example_id(const iris *k, float *margin) { if (!k) return -1;
   int i = iris_worst_example(k, margin);
   return i < 0 ? -1 : k->ex_id[i];
 }
@@ -1720,7 +2058,7 @@ IRIS_API int iris_worst_example_id(const iris *k, float *margin) {
    every correction metric identical to 4 decimals.
    ========================================================================== */
 
-IRIS_API void iris_zero_velocity(iris *k) {
+IRIS_API void iris_zero_velocity(iris *k) { if (!k) return;
   for (int i = 0; i < k->n_hid * k->n_in;  ++i) k->v_w1[i] = 0.0f;
   for (int i = 0; i < k->n_hid;            ++i) k->v_b1[i] = 0.0f;
   for (int i = 0; i < k->n_out * k->n_hid; ++i) k->v_w2[i] = 0.0f;
@@ -1732,14 +2070,14 @@ IRIS_API void iris_zero_velocity(iris *k) {
    drift under 0.004. There is deliberately no "present the new example
    extra times" parameter: measured, every boost k >= 1 slows convergence
    and k >= 2 oscillates on contradictory corrections. */
-IRIS_API float iris_correct(iris *k, int epochs) {
+IRIS_API float iris_correct(iris *k, int epochs) { if (!k) return -1.0f;
   iris_zero_velocity(k);
   return iris_train_epochs(k, epochs > 0 ? epochs : 20);
 }
 
-IRIS_API int   iris_is_trained(const iris *k) { return k->trained; }
-IRIS_API float iris_last_error(const iris *k) { return k->last_error; }
-IRIS_API uint32_t iris_seed(const iris *k)    { return k->seed; }
+IRIS_API int   iris_is_trained(const iris *k) { if (!k) return 0; return k->trained; }
+IRIS_API float iris_last_error(const iris *k) { if (!k) return 0.0f; return k->last_error; }
+IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->seed; }
 
 /* ==========================================================================
    PART 8d — THE INSTANT TRAINER  (ELM: freeze the randomness, solve the rest)
@@ -1848,7 +2186,7 @@ IRIS_API float iris_logit(float t) { return 2.0f * iris_artanh(2.0f * t - 1.0f);
    if > 0), or -1 refusing: nh < 8, no examples, scratch too small, or a
    poisoned (NaN/Inf) example — weights untouched on every refusal. */
 IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
-                           void *scratch, size_t scratch_bytes) {
+                           void *scratch, size_t scratch_bytes) { if (!k) return -1;
   if (!k || !scratch || k->n_ex == 0) return -1;
   const int NI_ = k->n_in, NH_ = k->n_hid, NO_ = k->n_out, K = NH_ + 1;
   if (NH_ < 8) return -1;              /* below the measured reroll floor */
@@ -1998,12 +2336,57 @@ IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
   k->trained = 1;
   k->fitted  = 1;                    /* a closed-form solve IS a fit */
   if (doublings > 0) k->status = IRIS_RIDGE_ESCALATED;
+
+#ifndef IRIS_NO_GUARDS
+  /* DID IT ACTUALLY LEARN A MAPPING? A large enough lam0 -- or a zero gain --
+     drives every weight toward nothing, and the solve then maps every gesture
+     to the same sound. That is not a failed solve by any numerical test: the
+     residual is small, no value is bad, and this returned success with a
+     healthy status while the instrument had become a constant.
+     So ask the only question that matters to a musician: does it still tell
+     two different gestures apart? Sweep the corners of the demonstrated input
+     range and measure how far the outputs move. */
+  { float lo_o[IRIS_MAX_OUT], hi_o[IRIS_MAX_OUT], probe[IRIS_MAX_IN];
+    for (int o = 0; o < NO_; ++o) { lo_o[o] = 1e30f; hi_o[o] = -1e30f; }
+    for (int c = 0; c < 4; ++c) {
+      for (int i = 0; i < NI_; ++i)
+        probe[i] = ((c >> (i & 1)) & 1) ? k->in_hi[i] : k->in_lo[i];
+      iris_forward_norm(k, probe);
+      /* Measure in NORMALISED output space, where the band is always
+         [0.1,0.9] whatever the demonstrations looked like. Comparing against
+         the raw demonstrated range instead would make a single 1e6 outlier
+         shrink every honest ratio to nothing and report a healthy solve as
+         collapsed -- which is a different defect, and not this one's to
+         report. */
+      for (int o = 0; o < NO_; ++o) {
+        float y = k->out[o];
+        if (y < lo_o[o]) lo_o[o] = y;
+        if (y > hi_o[o]) hi_o[o] = y;
+      }
+    }
+    float widest = 0.0f;
+    for (int o = 0; o < NO_; ++o) { float w = hi_o[o] - lo_o[o]; if (w > widest) widest = w; }
+
+    /* Only ask the question when there was a mapping to learn. If every
+       demonstration carried the same sound, a constant IS the right answer and
+       flagging it would be reporting correct behaviour as a fault.
+       iris_fit_ranges floors a degenerate range at 1e-6, so anything at or
+       near that floor means the targets never moved. */
+    int something_to_learn = 0;
+    for (int o = 0; o < NO_; ++o)
+      if (k->out_hi[o] - k->out_lo[o] > 1e-5f) something_to_learn = 1;
+
+    /* The normalised band is 0.8 wide. Moving less than half a percent of it
+       across the whole input range is a constant with rounding on it. */
+    if (something_to_learn && widest < 0.004f) k->status = IRIS_DIVERGED_STUCK;
+  }
+#endif
   return doublings;
 }
 
 /* The instant trainer with the measured-default gains: 2/sqrt(n_in) for
    weights AND biases. lam0 = 1e-4 is the nh=12 default; 1e-3 at nh=48. */
-IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_bytes) {
+IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_bytes) { if (!k) return -1;
   const float g = 2.0f / iris_sqrt((float)(k->n_in > 0 ? k->n_in : 1));
   return iris_train_elm_ex(k, lam0, g, g, scratch, scratch_bytes);
 }
@@ -2012,7 +2395,7 @@ IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_b
    refit exactly. This is the deliberate new-instrument gesture, so it also
    resets the rng stream, exactly as iris_retrain_new does. */
 IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
-                              void *scratch, size_t scratch_bytes) {
+                              void *scratch, size_t scratch_bytes) { if (!k) return -1;
   k->seed = seed ? seed : 1u;
   k->rng.s = k->seed;
   return iris_train_elm(k, lam0, scratch, scratch_bytes);
@@ -2067,7 +2450,23 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
    ========================================================================== */
 
 #define IRIS_MAGIC 0x4B455745u  /* "EWEK" */
-#define IRIS_FORMAT 4u          /* what iris_save writes: v3 layout + a CRC32    */
+/* WHICH OF YOUR FILES ARE PROTECTED, AND WHICH ARE NOT.
+
+   Formats 4 and 5 carry a checksum: every single-bit change anywhere in the
+   file is detected and the load is refused. Formats 1, 2 and 3 predate it and
+   never will, because adding one would break the promise that an old
+   instrument keeps loading for ever.
+
+   That has a consequence worth stating plainly rather than leaving for someone
+   to discover. An instrument restored from a v1 or v2 file keeps the legacy
+   [0,1] input scaling for life -- its weights mean nothing else -- and so it
+   saves itself as v2, which has no checksum. From then on THAT instrument's
+   files have no corruption detection, permanently, and nothing announces it.
+
+   iris_input_scaling(k) reports the same bit: 0 means legacy [0,1], which
+   means its files are unchecksummed. A caller that cares should ask. */
+#define IRIS_FORMAT 5u          /* what iris_save writes: v4 + the smoothing word */
+#define IRIS_FORMAT_V4 4u       /* v3 layout + a CRC32, no smoothing. Forever.  */
 #define IRIS_FORMAT_V3 3u       /* v3 without the CRC. Readable forever.        */
 #define IRIS_FORMAT_V2 2u       /* v1 + the rng word; inputs in [0,1]. Forever. */
 #define IRIS_FORMAT_V1 1u       /* the original; inputs in [0,1]. Forever.      */
@@ -2094,20 +2493,27 @@ IRIS_API uint32_t iris_crc32(const void *buf, size_t n) {
   return c ^ 0xFFFFFFFFu;
 }
 
-IRIS_API size_t iris_save_size(const iris *k) {
+IRIS_API size_t iris_save_size(const iris *k) { if (!k) return 0;
   return sizeof(uint32_t) * 9                      /* v2/v3: 8 header + rng.s */
        + sizeof(float) * (size_t)( k->n_hid*k->n_in + k->n_hid
                                  + k->n_out*k->n_hid + k->n_out
                                  + 2*(k->n_in + k->n_out)
                                  + (size_t)k->n_ex * (k->n_in + k->n_out) )
        + sizeof(int32_t) * (size_t)k->n_ex
+       /* v5 adds one float: the smoothing setting. docs/FREEZE.md called this
+          "cheap today and impossible tomorrow" -- the weights round-trip
+          perfectly without it, so nothing sounds wrong until the musician
+          retrains a loaded instrument and gets a different one for a reason
+          the file never recorded. Legacy [0,1] instruments still save as v2
+          and carry neither this nor the checksum. */
+       + (k->in_center ? sizeof(float) : 0u)
        /* The trailing CRC32, on v4 only. A legacy [0,1] instrument saves as v2,
           byte-for-byte as it always did — that promise is the reason the old
           formats exist at all, and a checksum is not worth breaking it for. */
        + (size_t)(k->in_center ? sizeof(uint32_t) : 0);
 }
 
-IRIS_API size_t iris_save(const iris *k, void *buf, size_t cap) {
+IRIS_API size_t iris_save(const iris *k, void *buf, size_t cap) { if (!k) return 0;
   size_t need = iris_save_size(k);
   if (!buf || cap < need) return 0;
   uint32_t *h = (uint32_t *)buf;
@@ -2147,27 +2553,39 @@ IRIS_API size_t iris_save(const iris *k, void *buf, size_t cap) {
   {
     /* CRC over everything written so far. v2 files (legacy [0,1] instruments)
        carry no CRC and never will — they are preserved exactly as they were. */
-    uint32_t *tail = (uint32_t *)(ids + k->n_ex);
-    *tail = (h[1] == IRIS_FORMAT)
-          ? iris_crc32(buf, need - sizeof(uint32_t))
-          : 0u;
+    /* Write a tail ONLY when iris_save_size budgeted for one. It used to write
+       four bytes unconditionally while iris_save_size added them only for the
+       new input scaling -- so a legacy instrument, the kind restored from a v1
+       or v2 file and which the format promise says keeps that scaling for
+       life, overran the caller's buffer by four bytes. A heap overflow through
+       the public interface, silent on a chip with no memory protection, and
+       made likelier by iris_suggest_smoothing asking the caller for exactly
+       this size. v2 carries neither the smoothing word nor the checksum. */
+    if (h[1] == IRIS_FORMAT) {
+      uint32_t *tail = (uint32_t *)(ids + k->n_ex);
+      float *sm = (float *)tail;
+      *sm = k->l2;
+      tail = (uint32_t *)(sm + 1);
+      *tail = iris_crc32(buf, need - sizeof(uint32_t));
+    }
   }
   return need;
 }
 
-IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
+IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 0;
   if (!buf || bytes < sizeof(uint32_t) * 8) return 0;
   const uint32_t *h = (const uint32_t *)buf;
   if (h[0] != IRIS_MAGIC) return 0;
   if (h[1] != IRIS_FORMAT_V1 && h[1] != IRIS_FORMAT_V2 &&
-      h[1] != IRIS_FORMAT_V3 && h[1] != IRIS_FORMAT) return 0;
+      h[1] != IRIS_FORMAT_V3 && h[1] != IRIS_FORMAT_V4 &&
+      h[1] != IRIS_FORMAT) return 0;
 
   /* VERIFY THE CHECKSUM before trusting a single weight. Only v4 carries one;
      v1/v2/v3 predate it and load unchecked, which is the price of the promise
      that an old instrument keeps working forever. A mismatch means the file is
      damaged — refuse it rather than play weights that will be subtly wrong with
      nothing reporting anything. */
-  if (h[1] == IRIS_FORMAT) {
+  if (h[1] == IRIS_FORMAT || h[1] == IRIS_FORMAT_V4) {
     if (bytes < sizeof(uint32_t)) return 0;
     {
       const unsigned char *b8 = (const unsigned char *)buf;
@@ -2198,7 +2616,8 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
                                         + (size_t)k->n_out*k->n_hid + k->n_out
                                         + 2u*((size_t)k->n_in + k->n_out)
                                         + nex * ((size_t)k->n_in + k->n_out) )
-                      + sizeof(int32_t) * nex;
+                      + sizeof(int32_t) * nex
+                      + (h[1] == IRIS_FORMAT ? sizeof(float) : 0u);
     if (bytes < hdr + body) return 0;
   }
   k->n_ex = (int32_t)h[5]; k->seed = h[6]; k->next_id = (int32_t)h[7];
@@ -2220,9 +2639,60 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
   #undef IRIS_GET
   const int32_t *ids = (const int32_t *)f;
   for (int i = 0; i < k->n_ex; ++i) k->ex_id[i] = ids[i];
+
+  /* THE RANGES COME OUT OF THE FILE UNCHECKED. iris_fit_ranges floors a
+     degenerate range so that dividing by its width cannot produce
+     not-a-number, but that floor only ran when ranges were FITTED. A file can
+     carry a zero-width range -- written by an older build, or corrupted within
+     a valid checksum, or saved from an instrument whose sensor never moved --
+     and the loaded instrument then divided by zero on every prediction and
+     played the middle of its range for ever. Same floor, same reason, at the
+     other door. */
+  for (int i = 0; i < k->n_in; ++i) {
+    float w = iris_absf(k->in_lo[i]) * 1e-5f;  if (w < 1e-6f) w = 1e-6f;
+    if (k->in_hi[i]  - k->in_lo[i]  < w) k->in_hi[i]  = k->in_lo[i]  + w;
+  }
+  for (int i = 0; i < k->n_out; ++i) {
+    float w = iris_absf(k->out_lo[i]) * 1e-5f; if (w < 1e-6f) w = 1e-6f;
+    if (k->out_hi[i] - k->out_lo[i] < w) k->out_hi[i] = k->out_lo[i] + w;
+  }
+
+  /* THE SMOOTHING SETTING TRAVELS WITH THE FILE, from v5 onward. Older formats
+     never recorded it, so an instrument restored from one gets the default of
+     0 -- which is what it always got, and is the honest answer: the file does
+     not know. Its weights are unaffected either way; the setting only matters
+     the moment somebody retrains. */
+  if (h[1] == IRIS_FORMAT) {
+    const float *sm = (const float *)(ids + k->n_ex);
+    k->l2 = iris_clampf(*sm, 0.0f, 0.3f);
+  } else {
+    k->l2 = 0.0f;
+  }
+
   k->trained = 1;
   k->fitted  = 1;             /* the weights in the file came from a real fit */
   k->status = IRIS_STATUS_OK;   /* a freshly loaded instrument carries no stale error */
+
+  /* MEASURE the loaded instrument's error instead of leaving whatever the
+     destination happened to hold -- which for a fresh one is 1.0, the WORST
+     possible value, so a user interface showing "training error" read 1.0 for
+     a perfectly good instrument. The error is not in the file (that would be a
+     format change), but the demonstrations are, so it can simply be computed:
+     one forward pass per demonstration, once, at load. */
+  { const int st_ = k->n_in + k->n_out;
+    float e_ = 0.0f;
+    for (int r = 0; r < k->n_ex; ++r) {
+      const float *row = k->ex + (size_t)r * st_;
+      float xn[IRIS_MAX_IN];
+      for (int i = 0; i < k->n_in; ++i) xn[i] = iris_norm_in(k, i, row[i]);
+      iris_forward_norm(k, xn);
+      for (int o = 0; o < k->n_out; ++o) {
+        float d = k->out[o] - iris_norm_out(k, o, row[k->n_in + o]);
+        e_ += d * d;
+      }
+    }
+    k->last_error = (k->n_ex > 0) ? e_ / (float)(k->n_ex * k->n_out) : 0.0f;
+  }
   /* The residual ledger belongs to a training run, not to a file: a loaded
      instrument has not been trained in this process, so it has no opinion
      about which demonstration is fighting the others until it is. */
@@ -2264,7 +2734,7 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
 
    Returns 1 if the instrument was migrated, 0 if there was nothing to do
    (already centred, or no demonstrations to re-fit from). */
-IRIS_API int iris_migrate_scaling(iris *k) {
+IRIS_API int iris_migrate_scaling(iris *k) { if (!k) return 0;
   if (k->in_center) return 0;          /* already on the new scaling */
   if (k->n_ex <= 0) return 0;          /* nothing to re-fit from */
   k->in_center = 1;
@@ -2332,7 +2802,7 @@ IRIS_API int iris_migrate_scaling(iris *k) {
    precision; between demonstrations the nearest k blend. Conflicting
    duplicates average finitely (the guard keeps zero-distance weights
    finite). O(n_ex * n_in) per call, division-free scan, no state touched. */
-IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int kk) {
+IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int kk) { if (!k) return;
   const int NIn = k->n_in, NOut = k->n_out;
   if (k->n_ex == 0) { for (int o = 0; o < NOut; ++o) out[o] = 0.0f; return; }
   if (kk < 1) kk = 1;
@@ -2405,13 +2875,13 @@ IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int k
    out[0]; this is then exactly desktop Wekinator's shipping default for
    discrete outputs (Weka IBk, k=1, min-max normalised Euclidean distance,
    first-recorded wins ties). */
-IRIS_API int iris_classify_1nn(const iris *k, const float *in, float *out) {
+IRIS_API int iris_classify_1nn(const iris *k, const float *in, float *out) { if (!k) return -1;
   const int NIn = k->n_in, NOut = k->n_out;
   if (k->n_ex == 0) return -1;
   float inv[IRIS_MAX_IN];
   for (int i = 0; i < NIn; ++i) inv[i] = 1.0f / (k->in_hi[i] - k->in_lo[i]);
   const int stride = NIn + NOut;
-  int best = 0; float best_d = 1e30f;
+  int best = -1; float best_d = 1e30f;
   for (int r = 0; r < k->n_ex; ++r) {
     const float *row = k->ex + (size_t)r * stride;
     float d = 0.0f;
@@ -2421,6 +2891,22 @@ IRIS_API int iris_classify_1nn(const iris *k, const float *in, float *out) {
     }
     if (d < best_d) { best_d = d; best = r; }
   }
+#ifndef IRIS_NO_GUARDS
+  /* A non-finite query makes every comparison false, so nothing is ever
+     chosen. `best` used to start at 0, which meant a disconnected sensor
+     reliably returned the FIRST demonstration and its identifier as though
+     they were a real answer, with a healthy status — for a classifier, that
+     is a confident wrong class every time. Starting at -1 and refusing here
+     matches iris_knn_predict, which has always guarded this case. */
+  if (best < 0) {
+    if (out) for (int o = 0; o < NOut; ++o)
+      out[o] = 0.5f * (k->out_lo[o] + k->out_hi[o]);
+    ((iris *)k)->status = IRIS_NAN_TRAPPED;
+    return -1;
+  }
+#else
+  if (best < 0) best = 0;
+#endif
   if (out) {
     const float *row = k->ex + (size_t)best * stride;
     for (int o = 0; o < NOut; ++o) out[o] = row[NIn + o];
@@ -2439,4 +2925,4 @@ IRIS_API int iris_classify_1nn(const iris *k, const float *in, float *out) {
   return k->ex_id[best];
 }
 
-#endif /* EMBWEK_H */
+#endif /* IRIS_H */

@@ -2,7 +2,7 @@
    Copyright (c) 2026 Kyle Smith */
 /* ============================================================================
    iris_source.h  —  where the feature vector comes from
-   v0.2.0 · C99 · no dependencies · no malloc · no libc · no hardware
+   v0.1.0 · C99 · no dependencies · no malloc · no libc · no hardware
 
    One type, one function pointer. It shares its error vocabulary, its iris_desc
    and its [0,1] contract with iris_sink.h, which is why it includes it; see
@@ -25,8 +25,8 @@
    for free. A mux would be a type whose only job is to lose information.
    ============================================================================ */
 
-#ifndef EMBWEK_SOURCE_H
-#define EMBWEK_SOURCE_H
+#ifndef IRIS_SOURCE_H
+#define IRIS_SOURCE_H
 
 #include "iris_sink.h"
 
@@ -91,4 +91,4 @@ IRIS_MUST_CHECK IRIS_IO_API int iris_source_measure(iris_source *s, uint32_t wor
   return iris_budget_measure(&s->budget, worst_us, p99_us, samples, blocking);
 }
 
-#endif /* EMBWEK_SOURCE_H */
+#endif /* IRIS_SOURCE_H */

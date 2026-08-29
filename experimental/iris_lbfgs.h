@@ -65,8 +65,8 @@
    Usage: include this INSTEAD of iris.h; it includes the core itself.
    ============================================================================ */
 
-#ifndef EMBWEK_LBFGS_H
-#define EMBWEK_LBFGS_H
+#ifndef IRIS_LBFGS_H
+#define IRIS_LBFGS_H
 
 #include "../iris.h"
 
@@ -355,4 +355,4 @@ IRIS_API float iris_train_lbfgs(iris *k, int max_iters, void *work, size_t work_
 }
 
 
-#endif  /* EMBWEK_LBFGS_H */
+#endif  /* IRIS_LBFGS_H */

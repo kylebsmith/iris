@@ -2,7 +2,7 @@
    Copyright (c) 2026 Kyle Smith */
 /* ============================================================================
    iris_sink.h  —  where the parameter vector goes
-   v0.2.0 · C99 · no dependencies · no malloc · no libc · no hardware
+   v0.1.0 · C99 · no dependencies · no malloc · no libc · no hardware
 
    iris.h is float[] in, float[] out and knows nothing else. This file and
    its companion iris_source.h are the only things in the system that know
@@ -58,12 +58,8 @@
    discipline: every wrapper and every init below is warn_unused_result.
    ============================================================================ */
 
-#ifndef EMBWEK_SINK_H
-#define EMBWEK_SINK_H
-
-#ifdef EMBWEK_IO_H
-#error "iris_sink.h and the older iris_io.h are two generations of the same boundary and define the same names. Include one."
-#endif
+#ifndef IRIS_SINK_H
+#define IRIS_SINK_H
 
 /* The core defines the widest vector this boundary can carry. Including it
    rather than restating the number is the only way the two cannot drift: an
@@ -289,4 +285,4 @@ IRIS_MUST_CHECK IRIS_IO_API int iris_sink_measure(iris_sink *s, uint32_t worst_u
   return iris_budget_measure(&s->budget, worst_us, p99_us, samples, blocking);
 }
 
-#endif /* EMBWEK_SINK_H */
+#endif /* IRIS_SINK_H */
