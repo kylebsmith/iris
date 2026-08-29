@@ -33,7 +33,7 @@ int main(void) {
     { {1.0f, 1.0f}, {0.95f, 0.80f, 0.90f} },   /* bright */
   };
   for (int i = 0; i < 3; ++i)
-    if (iris_record(k, demos[i].in, demos[i].out) < 0)
+    if (!iris_record(k, demos[i].in, demos[i].out))
       { printf("refused example %d\n", i); return 1; }
 
   /* TRAIN. No epoch count to guess: it stops when it stops improving. */

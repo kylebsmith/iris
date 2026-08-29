@@ -55,14 +55,14 @@ int main(void) {
     printf("  glitched frame -> id %d, status %d, still %d examples\n\n",
            id, (int)iris_get_status(k), iris_count(k)); }
 
-  iris_train_converge(k, 0, 0, 0);
+  iris_train(k);
   play(k, "trained on 14 good demos:");
 
   /* 4. NOW THE MISTAKE. A seventh demonstration that contradicts the others —
         the take where your hand slipped. */
   { float in[2] = { 0.60f, 0.40f }, out[3] = { 0.05f, 0.95f, 0.05f };
     iris_record(k, in, out); }
-  iris_train_converge(k, 0, 0, 0);
+  iris_train(k);
   play(k, "after the bad take:");
 
   /* 5. THE LIBRARY TELLS YOU WHICH ONE IS WRONG. It ranks every demonstration
@@ -82,9 +82,9 @@ int main(void) {
           So the library refuses, with a status you can act on, instead of
           quietly doing nothing. */
     iris_delete_id(k, id);
-    float rc = iris_train_converge(k, 0, 0, 0);
+    int ok = iris_train(k);
     printf("  deleted id %d, %d examples remain\n", id, iris_count(k));
-    printf("  re-fit returned %.1f, status %d%s\n\n", rc, (int)iris_get_status(k),
+    printf("  re-fit %s, status %d%s\n\n", ok ? "worked" : "was REFUSED", (int)iris_get_status(k),
            iris_get_status(k) == IRIS_DIVERGED_STUCK
              ? "  <- IRIS_DIVERGED_STUCK: reroll to recover" : ""); }
 

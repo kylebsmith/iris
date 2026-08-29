@@ -48,7 +48,7 @@ int main(void) {
   for (int i = 0; i < 4; ++i)
     iris_record(k, demo[i], &demo[i][2]);
 
-  iris_train_converge(k, 0, 0, 0);
+  iris_train(k);
   printf("\n  4 demonstrations, %d epochs. 231 points shown, 4 were specified.\n\n",
          iris_train_epochs_done(k));
   render(k, "seed 7");
