@@ -14,7 +14,7 @@ static unsigned char memory[IRIS_ARENA(2, 12, 3, 64)];   /* fixed, no malloc */
 iris *k = iris_init(memory, sizeof memory, 2, 12, 3, 64, /*seed=*/1234);
 
 iris_record(k, gesture, sound);        /* do this a few times */
-iris_train_converge(k, 0, 0, 0);       /* stops when it stops improving */
+iris_train(k);                         /* stops when it stops improving */
 iris_predict(k, gesture, sound);       /* now play it */
 ```
 
@@ -67,15 +67,20 @@ nice-to-have. It is the whole product.
 
 ## What it is
 
-`iris.h` is a single header — 2,442 lines, 1,002 of them code — implementing the
+`iris.h` is a single header — 2,928 lines, 1,126 of them code — implementing the
 interactive machine learning loop that Wekinator made standard in 2009, rebuilt
 for targets that have no operating system.
 
 - **No dependencies.** Compiles `-ffreestanding -nostdlib` and links with zero
-  undefined symbols (with `-fno-stack-protector`; on a default macOS clang
-  invocation the compiler injects two stack-guard symbols of its own — a
-  toolchain default, not a call this source makes). No libc, no `math.h`, no
-  `printf`. The transcendental functions are in the file.
+  undefined symbols. No libc, no `math.h`, no `printf` — the transcendental
+  functions are in the file. Three compiler flags are needed to hold that
+  literally, none of which changes a single output bit, and all three are
+  verified by `build.sh claims` on every compiler it can find:
+  `-fno-stack-protector` (clang injects two stack-guard symbols by default),
+  and on GNU compilers `-fno-math-errno` (otherwise a call to `sqrtf` is
+  emitted for a negative input that never occurs) and
+  `-fno-tree-loop-distribute-patterns` (otherwise `iris_reseed`'s zeroing loop
+  is recognised and replaced with a call to `memset`).
 - **No heap.** You hand it one block of memory and it never asks for more.
   `IRIS_ARENA()` computes the size at compile time. Measured zero allocator
   calls across record / train / 100,000 predictions / delete / retrain.
@@ -94,10 +99,35 @@ for targets that have no operating system.
   actually repair these models — Fiebrink's 2011 study found composers never
   once used cross-validation; they deleted the bad take and recorded it again.
 
+## Threading
+
+**Never touch the same instrument from two places at once.** That is the whole
+contract.
+
+There is no mutable state outside the instrument you passed in — no globals, no
+static buffers — so two instruments cannot interact, on any number of cores.
+Verified: four instruments trained interleaved, 8,000 interleaved predictions,
+zero cross-talk.
+
+So this is fine: any number of instruments on one core called one after
+another; one instrument per thread across many cores; one instrument living
+only inside an interrupt. There is no per-core limit, and a single-core chip
+runs one thing at a time anyway.
+
+This is not: the *same* instrument from an interrupt and from the main loop.
+`iris_predict` writes its working values inside the instrument, so an interrupt
+landing mid-call leaves both answers wrong. Give the interrupt its own
+instrument.
+
+For audio: one prediction is 7.4–7.8 µs on an ESP32-S3 against a 20.8 µs sample
+period at 48 kHz, so it fits inside a sample. Training does not — 571 ms for 800
+epochs over 20 demonstrations on the same board. Train in slices from the main
+loop, never from an interrupt.
+
 ## Run the tests
 
 ```sh
-sh build.sh audit     # 40 correctness checks, including the golden hashes
+sh build.sh audit     # 41 correctness checks, including the golden hashes
 sh build.sh mpe       # the MPE encoder, byte level
 sh build.sh sinks     # the CC and OSC output ports
 ```
@@ -205,7 +235,10 @@ to your demonstrations; `1` smooths confidently between them. On clean
 demonstrations 0 is best; on noisy ones 1 is **2.6× better**. Monotone across
 its whole range, zero divergences at any value.
 
-`iris_suggest_smoothing()` will run a leave-one-out sweep and hand you a number.
+`iris_suggest_smoothing(k, scratch, bytes)` will run a leave-one-out sweep and
+hand you a number. It wants `iris_save_size(k)` bytes of scratch, because the
+sweep refits the network many times and it puts your instrument back exactly as
+it found it — asking a question should not cost you what you trained.
 It does not apply it, and it is not automatic — tested as an automatic default
 it returned 2.36 different values from one dataset across 16 rerolls, and an
 instrument whose character changes when you reroll is worse than one that is

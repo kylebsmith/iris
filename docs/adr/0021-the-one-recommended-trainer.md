@@ -1,5 +1,9 @@
 # Which trainer iris recommends
 
+> **Historical record.** Written against the pre-rename tree, where the
+> header lived at `firmware/library/iris.h`. It is now `iris.h` at the repo
+> root. Line numbers and counts describe the file on this record's date.
+
 > ## ⚠️ PROVISIONAL — DO NOT TREAT AS SETTLED
 >
 > **Status: provisional, 2026-08-26.** The recommendation below (`iris_train_converge`,

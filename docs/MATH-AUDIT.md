@@ -1,5 +1,10 @@
 # The Mathematical Audit of `iris`
 
+> **Historical record.** This audit was performed on the file as it stood on
+> its date, at the version named below. Its line numbers, counts and version
+> string describe *that* file, not the current one, and are deliberately left
+> unchanged. For what is true now, read the source and `build.sh claims`.
+
 **Target:** `iris.h`, v0.4.0, 2050 lines.
 **Regime under audit throughout:** `n_in = 2`, `n_hid = 12`, `n_out = 3–8`, ~75 trainable parameters, `n_ex ≈ 5–50` (`cap` up to 4096), IEEE binary32, no libc, ESP32-S3 class target, and a hard bit-determinism requirement.
 

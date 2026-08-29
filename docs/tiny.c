@@ -138,6 +138,6 @@ int main(void) {
     putchar('\n');
   }
   printf("\n   mean |tiny - iris| over the surface: %.4f\n", acc / (double)n);
-  printf("   tiny.c is %d lines. iris.h is 2442.\n\n", 100);
+  printf("   tiny.c is 123 lines of code. iris.h is 2835 lines.\n\n");
   return 0;
 }

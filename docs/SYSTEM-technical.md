@@ -1,6 +1,8 @@
 # iris: a single-header C99 library for interactive supervised learning on embedded hardware
 
-**Version 0.4.0.** BSD 3-Clause, `Copyright (c) 2026, Kyle Smith`. One header, 2,042 lines, 912 of them non-blank non-comment (`wc -l` and an awk classification run 2026-08-27; several in-tree documents state 1,982/895, 1,932/853 and 2,087 — those are stale, and this document quotes the measurement). No build system: `cc -std=c99 -O2 -I. -o hello examples/01_hello.c -lm`. One git commit, no remote; the repository is not publicly disclosed.
+**Version 0.1.0.** BSD 3-Clause, `Copyright (c) 2026, Kyle Smith`. One header, no build system: `cc -std=c99 -O2 -I. -o hello examples/01_hello.c -lm`.
+
+*(This document deliberately does not restate the header's line count. It was wrong here by 750 lines for a fortnight, because it was a second copy of a number nothing compared against reality. The count lives in `README.md`, where `build.sh claims` fails the build if it drifts. One number, one place, one check.)*
 
 ## 1. System
 

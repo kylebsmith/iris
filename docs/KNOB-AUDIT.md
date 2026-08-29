@@ -1,3 +1,6 @@
+> **Historical record.** Measurements and line numbers refer to the file as it
+> stood on its date.
+
 ---
 
 # THE KNOB AUDIT — `iris.h` v0.4.0
