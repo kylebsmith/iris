@@ -76,7 +76,7 @@
 /* ============================================================================
    THE WHOLE INTERFACE, ON ONE SCREEN
 
-   Ten functions. Everything else in this file is detail you can reach for
+   Eleven functions. Everything else in this file is detail you can reach for
    later. `k` is the instrument. `in` and `out` are plain float arrays you own.
 
      iris *iris_init(mem, sizeof mem, n_in, n_hid, n_out, cap, seed)
@@ -94,6 +94,14 @@
          Fits the demonstrations you have now, from a defined start.
          Returns 1, or 0 if it refused. How WELL it fits is a separate
          question: iris_last_error(k).
+
+     int   iris_is_trained(k)          did the last fit actually happen?
+         1 if this instrument is fitted, 0 if it is not. Correct after EVERY
+         trainer in this file -- which matters, because `if (iris_train_elm(...))`
+         is FALSE on its best outcome and `if (iris_train_converge(...))` is
+         TRUE on refusal. See "HOW EVERY FUNCTION REPORTS FAILURE" for the
+         measured table. If you only ever ask one question about training,
+         ask this one.
 
      void  iris_predict(k, in, out)    READS n_in, WRITES n_out floats
          The playing call. It writes exactly n_out floats into `out`; if your
@@ -604,6 +612,43 @@ struct iris {
 
 /* HOW EVERY FUNCTION IN THIS FILE REPORTS FAILURE — two rules, and only two.
 
+   BEFORE THE RULES, THE ONE LINE THAT ANSWERS "DID IT TRAIN?"
+
+       trainer_of_your_choice(k);
+       if (!iris_is_trained(k)) { ...it did not fit... }
+
+   Use that, and stop reading here if that is all you need. It is correct after
+   EVERY trainer in this file, and no other test is.
+
+   Here is why it has to exist. The two rules below are each individually sound,
+   but they meet badly in C, and `if (trainer(...))` is wrong in BOTH directions
+   depending on which trainer you called. Measured, all six on the same data:
+
+     on a fit that WORKED        return   if(return)   iris_is_trained
+       iris_train                 1.0000    true            1
+       iris_train_epochs          0.0002    true            1
+       iris_train_converge        0.0000    true            1
+       iris_train_elm             0.0000    FALSE           1   <-- best case
+       iris_correct               0.0004    true            1
+       iris_retrain_new           0.0003    true            1
+
+     on a fit that REFUSED
+       iris_train                 0.0000    false           0
+       iris_train_epochs         -1.0000    TRUE            0   <-- -1 is truthy
+       iris_train_converge       -1.0000    TRUE            0
+       iris_train_elm            -1.0000    TRUE            0
+       iris_correct              -1.0000    TRUE            0
+       iris_retrain_new          -1.0000    TRUE            0
+
+   iris_train_elm returns the number of ridge escalations, so 0 is its BEST
+   outcome and reads as false. The rest return a measurement, and -1 is a
+   perfectly ordinary non-zero float, so a refusal reads as true. Neither is a
+   bug in the rules; it is what happens when "did it work" is asked of a number
+   that was never meant to answer it.
+
+   iris_is_trained reads one flag that every trainer sets on success and no
+   trainer sets on refusal. It is the same answer whichever door you came in.
+
    RULE 1, for a call that either works or does not:
        0 means the call did nothing. Non-zero means it worked.
    That covers iris_record, iris_train, the delete functions, iris_load,
@@ -663,17 +708,12 @@ static size_t iris_internal_bytes(int n_in, int n_hid, int n_out, int cap) {
      shapes that do not fit. Returning 0 for "cannot be sized on this machine"
      is what iris_size already promises its callers; before this it returned a
      small wrong number instead, and every bound built on it was inert. */
-  unsigned long total =
-        (unsigned long)sizeof(iris)
-      + (unsigned long)sizeof(float)
-          * ( 2UL*((unsigned long)n_in*n_hid + n_hid
-                   + (unsigned long)n_hid*n_out + n_out)
-            + n_hid + n_out + n_hid + n_out
-            + 2UL*(n_in + n_out)
-            + (unsigned long)cap
-            + (unsigned long)cap * (n_in + n_out) )
-      + (unsigned long)sizeof(int32_t) * (unsigned long)cap * 2
-      + 64UL;
+  /* THE MACRO IS THE DEFINITION; THIS CALLS IT RATHER THAN RESTATING IT.
+     These were two hand-kept copies of the same arithmetic that had to agree
+     or iris_init's bound would compare a need against an unrelated number.
+     Now they agree by construction, and the wide-arithmetic note above the
+     macro covers both. */
+  unsigned long total = IRIS_ARENA(n_in, n_hid, n_out, cap);
   if (total > (unsigned long)(size_t)-1) return 0;   /* will not fit a pointer */
   return (size_t)total;
 }
