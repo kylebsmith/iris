@@ -2831,8 +2831,16 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
      Since a v1/v2/v3 file can never be verified, the only way to close this is
      to refuse the ambiguity itself. Any shape with n_in + n_out > 2 is
      unaffected, which is every shape anyone has actually saved. */
-  if ((h[1] == IRIS_FORMAT_V1 || h[1] == IRIS_FORMAT_V2 || h[1] == IRIS_FORMAT_V3)
-      && (k->n_in + k->n_out) == 2) {
+  /* v1 ONLY. The first version of this refused v2 and v3 as well, and that was
+     over-broad in a way that broke the format promise: a v5 file is 208+12E
+     bytes at this shape and a v1 file is 196+12E', which collide at E'=E+1 --
+     but v2 and v3 are 200+12E', needing 12(E'-E)==8, which has no integer
+     solution at any shape or count. They could never be confused with a v5
+     file, so refusing them closed nothing and cost something real: a 1x1
+     instrument on the legacy scaling saves as v2, and THE SAME BUILD COULD NOT
+     LOAD WHAT IT HAD JUST WRITTEN (measured: 260 bytes out, iris_load 0).
+     That is the population adr/0006's promise exists for. */
+  if (h[1] == IRIS_FORMAT_V1 && (k->n_in + k->n_out) == 2) {
     k->status = IRIS_NAN_TRAPPED;
     return 0;
   }
