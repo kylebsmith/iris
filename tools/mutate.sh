@@ -33,8 +33,18 @@ run_mutation() {
   if cmp -s "$ROOT/iris.h" "$WORK/m/iris.h"; then
     printf "  SKIP    %-52s (pattern did not match)\n" "$label"; SKIPPED=$((SKIPPED+1)); return
   fi
-  out=$( cd "$WORK/m" && sh build.sh audit 2>&1; sh build.sh regressions 2>&1; sh build.sh claims 2>&1 )
-  if printf '%s' "$out" | grep -qE "FAIL|SOME CHECKS|failing|CLAIMS CHECK FAILED|error:"; then
+  # EXIT CODES, NOT GREP. This grepped its own output for "failing" -- and
+  # tests/regressions.c prints "0 of 16 failing" on every run, pass or fail. So
+  # the word was always present, every mutation was recorded as killed, and the
+  # 100% score was decoration. Proved by mutating a WORD INSIDE A COMMENT, which
+  # cannot change behaviour: reported "killed". Every mutation score this
+  # project has published was produced this way and none of them meant anything.
+  #
+  # Greping output for a word that appears in both the pass and the fail message
+  # is the same defect this harness exists to catch, in the harness.
+  ( cd "$WORK/m" && sh build.sh audit && sh build.sh regressions && sh build.sh claims ) \
+      >/dev/null 2>&1 && rc=0 || rc=1
+  if [ "$rc" != "0" ]; then
     printf "  killed  %-52s\n" "$label"; KILLED=$((KILLED+1))
   else
     printf "  SURVIVED %-51s <-- nothing detected this\n" "$label"

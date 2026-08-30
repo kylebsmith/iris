@@ -1,4 +1,16 @@
 #!/bin/sh
+# A FAILED COMPILE MUST FAIL THE TARGET.
+#
+# Every arm here was written as `cc ... && ./build/thing`. When cc failed the &&
+# short-circuited, the script carried on to the next line, and the arm exited 0
+# with none of its checks having run. `sh build.sh audit` returned success with
+# all 41 checks silently absent -- measured. Nine arms shared the shape.
+#
+# set -e makes any failing command end the run, which is the behaviour every
+# caller already assumed: CI, tools/mutate.sh, and every "exit 0" this project
+# has ever quoted as evidence.
+set -e
+
 # iris — build everything three ways from one core.
 #   ./build.sh audit        run the correctness checks (40 at 0.4.0)
 #   ./build.sh claims       verify the docs still match the code
@@ -30,7 +42,8 @@ case "${1:-audit}" in
     sh tools/check-claims.sh
     ;;
   audit)
-    cc $CFLAGS -o build/audit tests/audit.c -lm && ./build/audit
+    cc $CFLAGS -o build/audit tests/audit.c -lm
+    ./build/audit
     # Guards are inert on healthy runs — provable only across two builds:
     # core with guards vs core with -DIRIS_NO_GUARDS, same recipe, same bits.
     cc $CFLAGS -o build/guards_ab tests/guards_ab.c -lm
@@ -67,8 +80,10 @@ case "${1:-audit}" in
     # Same idiom as `mpe`, same reason: these ports have no USB, no board and
     # no serial port in them, so every byte they will ever emit is asserted
     # here, on a laptop, with a transport that can be told to refuse.
-    cc $CFLAGS -I. -o build/cc_test  extras/tests/cc_test.c  extras/ports/cc/iris_cc.c   -lm && ./build/cc_test
-    cc $CFLAGS -I. -o build/osc_test extras/tests/osc_test.c extras/ports/osc/iris_osc.c -lm && ./build/osc_test
+    cc $CFLAGS -I. -o build/cc_test  extras/tests/cc_test.c  extras/ports/cc/iris_cc.c   -lm
+    ./build/cc_test
+    cc $CFLAGS -I. -o build/osc_test extras/tests/osc_test.c extras/ports/osc/iris_osc.c -lm
+    ./build/osc_test
     # The 32-bit struct sizes the ports claim, asserted on a real 32-bit
     # target rather than halved by hand from this 64-bit host. The template
     # sink is compiled too: the file students copy must never be broken.
@@ -76,7 +91,8 @@ case "${1:-audit}" in
       && clang --target=wasm32 -std=c99 -I. -fsyntax-only extras/ports/osc/iris_osc.c \
       && clang --target=wasm32 -std=c99 -I. -fsyntax-only extras/ports/template/iris_yoursink.c \
       && echo "PASS  32-bit sizes: cc_cfg 28, cc 224, osc_cfg 20, osc 480; template builds" ;;
-  experiment) cc $CFLAGS -o build/experiment tests/experiment.c -lm && ./build/experiment ;;
+  experiment) cc $CFLAGS -o build/experiment tests/experiment.c -lm
+              ./build/experiment ;;
   bench)
     clang --target=wasm32 -O2 -nostdlib -ffreestanding \
       -Wl,--no-entry -Wl,--export-dynamic -Wl,--allow-undefined \
@@ -106,7 +122,8 @@ open('build/bench.html','w').write(open('extras/bench/page.html').read().replace
     cc $CFLAGS -o build/make_golden tests/golden/make_golden.c -lm \
       && ./build/make_golden ;;
   clean)      rm -rf build ;;
-  tiny)       cc $CFLAGS -o build/tiny docs/tiny.c -lm && ./build/tiny ;;
+  tiny)       cc $CFLAGS -o build/tiny docs/tiny.c -lm
+              ./build/tiny ;;
   regressions)
               # One test per reviewed defect, each written before its fix and
               # watched to fail. Non-zero exit if any regresses.

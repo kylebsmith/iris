@@ -29,6 +29,19 @@ CODE=$(awk '/^[[:space:]]*$/{next}
 TOTAL=$(wc -l < "$H" | tr -d ' ')
 BLANK=$(grep -c '^[[:space:]]*$' "$H" || true)
 COMMENT=$((TOTAL - CODE - BLANK))
+# ABSOLUTE COMMENT LINES, NOT A RATIO.
+#
+# This measured COMMENT/CODE, and that ratchet pointed the wrong way: deleting a
+# line of dead code RAISES the ratio, so a pure code deletion could never pass.
+# To remove c lines of code you had to remove 1.42*c lines of comment in the
+# same commit. The one tool built to fight accretion structurally forbade the
+# cheapest subtraction there is, and an auditor found it by deleting one dead
+# line and watching the check fail.
+#
+# Absolute counts have no such coupling: deleting code lowers `total`, deleting
+# comments lowers `comment`, and neither can push the other up. The ratio is
+# still printed because it is the number worth watching -- it is just not a
+# thing you can fail on.
 RATIO=$(awk -v c="$COMMENT" -v k="$CODE" 'BEGIN{printf "%.3f", c/k}')
 
 # --- 2. how much prose sits in blocks of 25+ lines -------------------------
@@ -72,15 +85,15 @@ fi
 
 # --- 4. total size ---------------------------------------------------------
 if [ "${IRIS_REBASELINE:-}" = "yes" ]; then
-  printf 'ratio %s\nlongprose %s\norphans %s\ntotal %s\n' \
-         "$RATIO" "$LONGP" "$ORPHAN" "$TOTAL" > "$BASE"
-  echo "recorded: ratio $RATIO, long prose $LONGP lines, $ORPHAN orphans, $TOTAL total"
+  printf 'comment %s\nlongprose %s\norphans %s\ntotal %s\n' \
+         "$COMMENT" "$LONGP" "$ORPHAN" "$TOTAL" > "$BASE"
+  echo "recorded: $COMMENT comment lines, $LONGP in long blocks, $ORPHAN orphans, $TOTAL total (ratio $RATIO)"
   exit 0
 fi
 [ -f "$BASE" ] || { echo "no baseline; run: IRIS_REBASELINE=yes sh tools/bloat.sh"; exit 1; }
 
 get() { awk -v k="$1" '$1==k{print $2}' "$BASE"; }
-BR=$(get ratio); BL=$(get longprose); BO=$(get orphans); BT=$(get total)
+BC=$(get comment); BL=$(get longprose); BO=$(get orphans); BT=$(get total)
 fail=0
 row() { # name current baseline  (numeric, lower is better)
   if awk -v a="$2" -v b="$3" 'BEGIN{exit !(a>b)}'; then
@@ -93,8 +106,9 @@ row() { # name current baseline  (numeric, lower is better)
 }
 echo
 echo "  accretion check -- lower is better on every line"
+echo "  (comment:code ratio is $RATIO -- shown, not enforced: see the note in this file)"
 echo
-row "comment:code ratio"   "$RATIO"  "$BR"
+row "comment lines"        "$COMMENT" "$BC"
 row "lines in 25+ blocks"  "$LONGP"  "$BL"
 row "uncalled public fns"  "$ORPHAN" "$BO"
 row "total lines"          "$TOTAL"  "$BT"

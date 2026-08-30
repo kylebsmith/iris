@@ -286,7 +286,89 @@ int main(void){
              acc,(long)(bits*(bits-1)/2));
     check("P no two-bit corruption survives on a 1-in/1-out file", acc==0, d); }
 
+  /* Q-U — five properties the mutation harness proved had NO working check.
+     The harness itself was broken (it grepped its own output for "failing", a
+     word this file printed unconditionally), so its 100% score was decoration.
+     Fixed, the honest score was 70%: six survivors. Five are below. The sixth,
+     "ignore an unsizeable shape in iris_init", is UNREACHABLE on a 64-bit host
+     by construction -- iris_init validates every dimension against its maximum
+     before calling iris_internal_bytes, so the product cannot overflow a 64-bit
+     size_t and `need` is never 0. It fires only where size_t is 16 bits. Not
+     writing a test that cannot fail. */
+
+  /* Q — the arena bound. An arena one byte short must be refused. */
+  { size_t need = iris_size(1,12,1,32);
+    iris *small = iris_init(B, need - 1, 1,12,1,32, 1u);
+    iris *exact = iris_init(B, need,     1,12,1,32, 1u);
+    snprintf(d,sizeof d,"need %u: one byte short %s, exact %s",
+             (unsigned)need, small?"ACCEPTED":"refused", exact?"accepted":"REFUSED");
+    check("Q an arena one byte short is refused", !small && exact, d); }
+
+  /* R — the hidden-width floor of 8. The width is frozen into the file. */
+  { iris *lo = iris_init(B,sizeof B,1,4,1,32,1u);
+    iris *ok = iris_init(B,sizeof B,1,8,1,32,1u);
+    snprintf(d,sizeof d,"n_hid 4 %s, n_hid 8 %s",
+             lo?"ACCEPTED":"refused", ok?"accepted":"REFUSED");
+    check("R the hidden-width floor of 8 holds", !lo && ok, d); }
+
+  /* S — the shuffle buffer must be filled at init. It indexes the examples;
+     left unset it reads whatever the caller's memory held, so this hands it
+     memory that is deliberately not zero and compares against a clean run. */
+  { memset(B, 0xA5, sizeof B);
+    iris *k1 = iris_init(B,sizeof B,1,12,1,32,4242u);
+    for(int i=0;i<8;i++){ float in=i/7.0f,o=(float)((i*3)%5)/5.0f; iris_record(k1,&in,&o); }
+    iris_train(k1);
+    float q=0.42f, a1; iris_predict(k1,&q,&a1);
+    memset(C, 0x00, sizeof C);
+    iris *k2 = iris_init(C,sizeof C,1,12,1,32,4242u);
+    for(int i=0;i<8;i++){ float in=i/7.0f,o=(float)((i*3)%5)/5.0f; iris_record(k2,&in,&o); }
+    iris_train(k2);
+    float a2; iris_predict(k2,&q,&a2);
+    snprintf(d,sizeof d,"dirty arena %.7f, clean arena %.7f",(double)a1,(double)a2);
+    check("S init does not inherit the caller's memory", a1==a2, d); }
+
+  /* T — the smoothing setting must survive a save and load. */
+  { iris *k1=iris_init(B,sizeof B,1,12,1,32,1u);
+    for(int i=0;i<6;i++){ float in=i/5.0f,o=i/5.0f; iris_record(k1,&in,&o); }
+    iris_train(k1);
+    iris_set_smoothing(k1, 0.7f);
+    static unsigned char blob[512];
+    size_t n=iris_save(k1,blob,sizeof blob);
+    iris *k2=iris_init(C,sizeof C,1,12,1,32,9u);
+    int ok = n && iris_load(k2,blob,n);
+    float got = ok ? iris_get_smoothing(k2) : -1.0f;
+    snprintf(d,sizeof d,"set 0.700, read back %.3f",(double)got);
+    check("T smoothing survives save and load", ok && got > 0.69f && got < 0.71f, d); }
+
+  /* U — iris_train must report the trainer's refusal, not its own optimism.
+     iris_record will not store a not-a-number, so this builds the file a buggy
+     writer would have produced: structurally perfect, correctly checksummed,
+     and holding one impossible value. That is a real shape a file can have. */
+  { iris *k1=iris_init(B,sizeof B,1,12,1,32,1u);
+    for(int i=0;i<6;i++){ float in=i/5.0f,o=i/5.0f; iris_record(k1,&in,&o); }
+    iris_train(k1);
+    static unsigned char blob[512];
+    size_t n=iris_save(k1,blob,sizeof blob);
+    float nan_v = 0.0f/0.0f; int patched = 0;
+    for (size_t off = 32; off + 4 <= n - 4 && !patched; off += 4) {
+      float probe; memcpy(&probe, blob + off, sizeof probe);
+      if (probe > 0.39f && probe < 0.41f) { memcpy(blob+off,&nan_v,sizeof nan_v); patched = 1; }
+    }
+    uint32_t crc = iris_crc32(blob, n - 4);
+    for (int i=0;i<4;i++) blob[n-4+i] = (unsigned char)((crc >> (8*i)) & 0xFF);
+    iris *k2=iris_init(C,sizeof C,1,12,1,32,9u);
+    int loaded = iris_load(k2, blob, n);
+    int trained = loaded ? iris_train(k2) : -1;
+    snprintf(d,sizeof d,"patched %d, loaded %d, iris_train returned %d",
+             patched, loaded, trained);
+    check("U iris_train reports the trainer's refusal",
+          patched && loaded && trained == 0, d); }
+
 done:
-  printf("\n  %d of 16 failing\n", fails);
+  /* Do not print the word "failing" when nothing failed. Any tool that reads
+     this output -- tools/mutate.sh did -- cannot tell the two apart otherwise.
+     The exit code below is the real answer; this line is for humans. */
+  if (fails) printf("\n  %d of 21 FAILING\n", fails);
+  else       printf("\n  all 21 pass\n");
   return fails ? 1 : 0;
 }
