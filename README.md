@@ -28,6 +28,13 @@ everything else is detail.
 
 ---
 
+## The hardware half
+
+`iris-esp32-starter/` beside this repository is what a student receives: ten
+Arduino sketches, a getting-started walkthrough, and a Processing sketch that
+draws the learned mapping so you can see it rather than only hear it. Start
+there if you have a board; start with `examples/` here if you do not.
+
 ## Why this exists
 
 An instrument you cannot rely on is not an instrument.
@@ -67,7 +74,7 @@ nice-to-have. It is the whole product.
 
 ## What it is
 
-`iris.h` is a single header — 3,305 lines, 1,160 of them code — implementing the
+`iris.h` is a single header — 3,315 lines, 1,160 of them code — implementing the
 interactive machine learning loop that Wekinator made standard in 2009, rebuilt
 for targets that have no operating system.
 

@@ -27,6 +27,9 @@ CHECKS=$(sh build.sh audit 2>/dev/null | grep -c '^PASS' || true)
 want "iris.h total lines"      "$(grep -oE '[0-9,]+ lines' README.md | head -1 | tr -d ' lines,')" "$LINES"
 want "iris.h code lines"       "$(grep -oE '[0-9,]+ of them code' README.md | head -1 | grep -oE '^[0-9,]+' | tr -d ,)" "$CODE"
 want "audit check count"       "$(grep -oE '# [0-9]+ correctness checks' README.md | grep -oE '[0-9]+')" "$CHECKS"
+# CONTRIBUTING.md states the same number and was NOT policed, so it went stale at 40
+# while README stayed right. Any document that states the count is now checked.
+want "audit count in CONTRIBUTING.md" "$(grep -oE '# [0-9]+ correctness checks' CONTRIBUTING.md | grep -oE '[0-9]+')" "$CHECKS"
 
 # --- the dependency claim, actually tested --------------------------------
 cat > /tmp/_claim_probe.c <<'PROBE'

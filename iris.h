@@ -1292,10 +1292,20 @@ IRIS_API float iris_denorm_out(const iris *k, int i, float y) { if (!k || i < 0 
 /* ==========================================================================
    PART 6 — FORWARD PASS  (this is "playing the instrument")
 
-     hidden_h = tanh( sum_i w1[h][i] * input_i + b1[h] )
+     hidden_h = tanh( sum_i w1[h][i] * x_i + b1[h] )
      output_o = sigmoid( sum_h w2[o][h] * hidden_h + b2[o] )
 
-   That is the entire model. Two matrix multiplies with a squashing function
+   That is the network. It is NOT the whole of what iris_predict does, and this
+   line used to say it was -- someone following it got a wrong number. The full
+   chain, which is what plays:
+
+     x_i     = iris_norm_in(k, i, your_reading)     scale the sensor in
+     ...the two lines above...
+     out_o   = iris_denorm_out(k, o, output_o)      scale the sound out
+     out_o   = iris_clampf(out_o, out_lo[o], out_hi[o])   and hold it in range
+
+   Four steps, two of them arithmetic on ranges the instrument measured for
+   itself. Two matrix multiplies with a squashing function
    after each one. For 2 inputs, 12 hidden and 3 outputs that is 60
    multiply-adds — about one microsecond on the S3. Playing is free; only
    learning costs anything.
