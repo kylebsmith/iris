@@ -2817,6 +2817,26 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
       if (iris_crc32(buf, bytes - sizeof(uint32_t)) != stored) return 0;
     }
   }
+  /* THE ONE HOLE THE LENGTH CHECK BELOW CANNOT CLOSE ON ITS OWN.
+     A v5 file has 8 bytes of trailing overhead a v1 file does not (the
+     smoothing word and the checksum), and each extra example costs
+     (n_in + n_out + 1) floats. So a v5 file with E examples is the same LENGTH
+     as a v1 file with E+d examples exactly when 4*d*(n_in+n_out+1) == 8, i.e.
+     d == 1 and n_in + n_out == 2. On a 1-input/1-output instrument -- the
+     smallest legal shape, and a plausible first one -- flipping the format word
+     from 5 to 1 and incrementing n_ex is TWO bits, and it opts the file out of
+     its own checksum with a length that still adds up. Found by exhaustive
+     search: exactly 1 accepted pair out of 2,507,680.
+
+     Since a v1/v2/v3 file can never be verified, the only way to close this is
+     to refuse the ambiguity itself. Any shape with n_in + n_out > 2 is
+     unaffected, which is every shape anyone has actually saved. */
+  if ((h[1] == IRIS_FORMAT_V1 || h[1] == IRIS_FORMAT_V2 || h[1] == IRIS_FORMAT_V3)
+      && (k->n_in + k->n_out) == 2) {
+    k->status = IRIS_NAN_TRAPPED;
+    return 0;
+  }
+
   {
     const int has_rng = (h[1] != IRIS_FORMAT_V1);
     if (has_rng && bytes < sizeof(uint32_t) * 9) return 0;

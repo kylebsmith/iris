@@ -30,6 +30,7 @@ static void check(const char *name, int ok, const char *detail) {
 }
 static unsigned char A[IRIS_ARENA(2,16,3,64)];   /* widest shape any test uses */
 static unsigned char B[IRIS_ARENA(1,12,1,32)];
+static unsigned char C[IRIS_ARENA(1,12,1,32)];   /* second arena for test P */
 static void demos(iris *k,int n){ for(int i=0;i<n;i++){
   float in[2]={i/(float)(n-1),(i%3)/2.0f}, o[3]={0.2f+i*0.02f,0.5f,0.8f-i*0.02f};
   iris_record(k,in,o);} }
@@ -262,7 +263,30 @@ int main(void){
     snprintf(d,sizeof d,"iris_train on an emptied instrument returned %d", r);
     check("O training nothing reports failure", r==0, d); }
 
+  /* P — the D1 residual, found by exhaustive two-bit search after the
+     single-bit hole was closed. On a 1-in/1-out instrument a v5 file with E
+     examples is the same LENGTH as a v1 file with E+1, so two flipped bits
+     (format 5->1, n_ex 6->7) opted a file out of its own checksum and played a
+     different instrument with the status reading healthy. Exactly 1 accepted
+     pair out of 2,507,680 before the fix; this asserts 0. */
+  { iris *k=iris_init(B,sizeof B,1,12,1,32,1234u);
+    for(int i=0;i<6;i++){ float in=i*0.15f,o=(float)((i*3)%5)/5.0f; iris_record(k,&in,&o); }
+    iris_train(k);
+    static unsigned char blob[512], sc[512];
+    size_t n=iris_save(k,blob,sizeof blob);
+    long acc=0;
+    size_t bits=n*8;
+    for(size_t x=0;x<bits;++x) for(size_t y=x+1;y<bits;++y){
+      memcpy(sc,blob,n);
+      sc[x/8]^=(unsigned char)(1u<<(x%8));
+      sc[y/8]^=(unsigned char)(1u<<(y%8));
+      iris *c=iris_init(C,sizeof C,1,12,1,32,7u);
+      if(c && iris_load(c,sc,n)) acc++; }
+    snprintf(d,sizeof d,"%ld of %ld two-bit corruptions accepted",
+             acc,(long)(bits*(bits-1)/2));
+    check("P no two-bit corruption survives on a 1-in/1-out file", acc==0, d); }
+
 done:
-  printf("\n  %d of 15 failing\n", fails);
+  printf("\n  %d of 16 failing\n", fails);
   return fails ? 1 : 0;
 }
