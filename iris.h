@@ -429,8 +429,14 @@ IRIS_API int iris_isbad(float x) {
    property of a chosen nonlinearity, and it can be revisited any time it earns
    its 1.4% without changing what a saved instrument means.
 
-   The +/-1e9 test only keeps x*(27+x^2) finite; it is not the saturation point
-   and never fires — pre-activations are bounded by IRIS_W_LIMIT.
+   The +/-1e9 test only keeps x*(27+x^2) finite; it is not the saturation point.
+   It was documented here as never firing, on the reasoning that pre-activations
+   are bounded by IRIS_W_LIMIT. That is wrong, and the guard is load-bearing:
+   iris_predict does NOT clamp its input, iris_norm_in scales it, so a reading
+   of 1e20 arrives at iris_tanh as 2e20. There x*(27+x^2) overflows to inf and
+   27+9x^2 overflows to inf, and inf/inf is a not-a-number -- every hidden unit
+   would be NaN. Measured: with the test, iris_predict(1e20) returns 1.000000;
+   the bare ratio at that argument is nan.
    Full workings: docs/FREEZE.md, docs/negative-results/. */
 IRIS_API float iris_tanh(float x) {
   if (x >  1.0e9f) return  1.0f;
@@ -603,10 +609,16 @@ struct iris {
      lands mid-call leaves both answers wrong. Give the interrupt its own
      instrument, or keep prediction on one side of the fence.
 
-   TIMING, for the audio case. One prediction measured 7.4-7.8 microseconds on
-   an ESP32-S3; one audio sample period at 48 kHz is 20.8. So a prediction fits
-   inside a sample, with room but not vast room. TRAINING does not: 571 ms for
-   800 epochs over 20 demonstrations, measured on the same board. Train in
+   TIMING, for the audio case. One prediction is 14.9 microseconds on an
+   ESP32-S3; one audio sample period at 48 kHz is 20.8. That is 1.4x of margin
+   -- enough to run per-sample, not enough to also do anything expensive in the
+   same callback. This line said 7.4-7.8 until 2026-08-30; that figure was a
+   host measurement multiplied by an estimated 270 and printed as if taken on
+   the part. The number above is measured on the part: 20,000 predictions in
+   298,915 microseconds, reproduced within 0.001 us across runs and across two
+   different boards (device_torture.ino test 9, 2 in / 12 hidden / 3 out,
+   240 MHz). TRAINING does not fit and is not close: 595 ms at 4
+   demonstrations, 2.7-3.0 s at 8 to 20, same boards. Train in
    slices from the main loop -- see iris_train_slice -- and never from an
    interrupt.                                                                */
 
@@ -1785,8 +1797,7 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
    Every "bit-identical" claim in this file is a claim about THIS FILE's
    self-consistency — sliced vs unsliced runs, save/load round trips, -O0 vs
    -O3 — never about Weka. Audit check 12 hashes the weights this produces.
-   Do not "improve" it; iris_train_converge is where improvements go.
-   Full audit: research/prior-art/CORE-AUDIT-vs-wekinator.md */
+   Do not "improve" it; iris_train_converge is where improvements go. */
 IRIS_API float iris_train_epochs(iris *k, int epochs) { if (!k) return -1.0f;
   k->tr_ceiling = epochs > 0 ? epochs : 0;
   k->tr_running = 0;
@@ -2232,13 +2243,10 @@ IRIS_API float iris_example_stress(const iris *k, int idx) { if (!k) return 0.0f
        if (id >= 0 && m >= IRIS_STRESS_FLAG)  say("example %d is fighting the
                                                  others", id);
 
-   USE iris_worst_example_id, NOT iris_worst_example + iris_id_at. The _id form
-   returns the stable example ID directly and is what the one production
-   consumer calls (firmware/app/core/surface.c:385). This comment previously
-   prescribed the index form composed with iris_id_at; that idiom has no caller
-   anywhere, and iris_id_at's only appearance in the tree is inside this very
-   comment. Both remain public API for callers who want the positional index,
-   but they are not the recommended path.
+   USE iris_worst_example_id, NOT iris_worst_example + iris_id_at: it returns
+   the stable example ID directly, and ids survive deletions where indices do
+   not. Both stay public for callers who want the positional index, but they
+   are not the recommended path.
 
    The index is returned even below the flag because the ranking is still
    real and a UI may want to show it quietly (a dimmer mark, say) without
@@ -2284,14 +2292,12 @@ IRIS_API int iris_worst_example_id(const iris *k, float *margin) { if (!k) retur
    same instrument, fixed. An explicit reroll gesture calls iris_retrain_new —
    deliberately a NEW instrument. Nothing else reseeds.
 
-   ⚠️ THE FIRMWARE DOES NOT DO THIS, AND HAS NOT SINCE 22 AUG 2026. D11.3
-   (admin/DECISIONS.md:181) dropped iris_correct from the device; the firmware's
-   record and delete paths both go to the ELM solve instead. Grep confirms zero
-   uses of iris_correct anywhere under firmware/app. This banner previously
-   claimed the policy was "also the firmware's" — it was not. adr/0005 (still
-   marked accepted), firmware/library/README.md and RELEASE-v1.0.md carry the
-   same stale claim. iris_correct is a library facility with no production
-   caller. Treat it as such until D11.3 is revisited.
+   ⚠️ NOTHING SHIPPED CALLS THIS. iris_correct has no caller in this
+   repository outside the tests, and the instrument application it was written
+   for stopped using it in August 2026 in favour of the ELM solve. ADR 0005 is
+   still marked accepted and still describes it as the policy. It is a working,
+   measured library facility with no production consumer; treat it as such
+   until that decision is revisited.
 
    Determinism becomes event-sourced: replaying the identical operation
    history (records / corrections / deletes, in order) reproduces the
@@ -2534,9 +2540,12 @@ IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
     lam *= 2.0f;
   }
   if (doublings < 0) {
-    /* Unreachable by construction (SPD after enough ridge; measured zero
-       failures across the whole campaign). If it ever fires, the Gram
-       accumulation overflowed to non-finite — recover to a finite,
+    /* REACHABLE, despite what this comment said until 2026-08-30. It claimed
+       "unreachable by construction (measured zero failures across the whole
+       campaign)". The campaign used the shipped defaults; lam0 is a public
+       argument. Measured: iris_train_elm(k, 0.0f, ...) on 256 identical
+       demonstrations returns -1 with status 2. So this is an ordinary failure
+       path, not an impossible one — recover to a finite,
        deterministic instrument and SAY SO, never sit on broken weights
        (the hidden layer above was already overwritten). */
     iris_reseed(k, k->seed);
@@ -2864,7 +2873,9 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
      damaged — refuse it rather than play weights that will be subtly wrong with
      nothing reporting anything. */
   if (h[1] == IRIS_FORMAT || h[1] == IRIS_FORMAT_V4) {
-    if (bytes < sizeof(uint32_t)) return 0;
+    /* No bounds test here: the function refuses anything under 8 words at
+       entry, so bytes >= 32 and the 4-byte trailer is always present. cppcheck
+       and an independent audit both flagged the removed test as dead. */
     {
       const unsigned char *b8 = (const unsigned char *)buf;
       uint32_t stored;
@@ -3039,13 +3050,10 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
    same thing under either scaling, which is why the re-fit is legitimate.
    What comes out is a v3 instrument that saves as v3.
 
-   ⚠️ NO PRODUCTION CALLER. This comment used to claim "the schema-migration
-   path in the app already relies on it." It does not: firmware/app/core/
-   schema.c does iris_clear -> replay -> iris_retrain_elm_new, and the token
-   in_center does not appear anywhere under firmware/app. The only callers are
-   tests/audit.c. This is 21 lines of documentation for 8 lines of code that
-   nothing ships. Keep it — a v1/v2 file in the wild will need it — but do not
-   cite an app dependency that does not exist.
+   ⚠️ NO PRODUCTION CALLER. This comment used to claim an application already
+   depended on it. Nothing does: the only callers are tests/audit.c. Keep the
+   function -- a v1 or v2 file in the wild will need it -- but do not cite a
+   dependency that does not exist.
 
    It is a NEW FIT, not a conversion: predictions move by about the fit error
    (measured 0.0447 worst-case on the audit's reference instrument, check 30).
