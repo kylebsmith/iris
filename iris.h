@@ -194,7 +194,7 @@
    1. -ffast-math tripwire. fast-math implies contract=fast AND removes the
       NaN semantics the guards below depend on. Refuse to compile.          */
 #if defined(__FAST_MATH__)
-#error "iris: -ffast-math / -Ofast breaks same-seed bit-determinism and disables NaN trapping. Build without it."
+#error "iris: -ffast-math / -Ofast breaks same-seed bit-determinism and disables NaN trapping. If you did not pass this yourself, your board package did: check compiler.optimization_flag in its platform.txt (Adafruit nRF52 sets -Ofast there). Build without it."
 #endif
 /* -ffinite-math-only is one of the flags -ffast-math turns on, but on its own
    it does NOT set __FAST_MATH__, so this tripwire used to stay silent while
