@@ -37,6 +37,19 @@ case "${1:-audit}" in
               sh tools/mutate.sh "${2:-}" ;;
   bloat)      # Is the file getting harder to read? A ratchet, not a report.
               sh tools/bloat.sh ;;
+  sketches)   # Do the students' copies of iris.h still match this one?
+              # Each sketch folder carries its own copy so a student needs no
+              # install step, and those copies drift. All ten were once a
+              # version behind while every suite here was green -- the students'
+              # code was missing a fix this repository had already made. A
+              # commit message promised to wire this in and did not; that is
+              # what this arm is.
+              ST=${IRIS_STARTER:-../iris-esp32-starter}
+              if [ -f "$ST/sync-iris.sh" ]; then
+                ( cd "$ST" && sh sync-iris.sh )
+              else
+                echo "  SKIP  no starter repo at $ST (set IRIS_STARTER)"
+              fi ;;
   target)     # The zero-dependency claim, on the CHIP's compiler, not the host.
               sh tools/freestanding-esp32.sh ;;
   coverage)   # The refusal paths. Every case asks a function to say no.
