@@ -964,13 +964,20 @@ IRIS_API int iris_record(iris *k, const float *in, const float *out) { if (!k) r
 
   /* This call just disproved the two complaints this call can raise, so clear
      them. The header tells you to read `if (iris_get_status(k))` as "is
-     something wrong?", and without this one bad sensor reading answered yes
-     for the rest of the instrument's life -- long after the wiring was fixed
-     and hundreds of good demonstrations had been accepted. Nothing else is
-     touched: a diverged or stuck FIT is not disproved by storing a number,
-     and only training may clear those. iris_train and iris_load already
-     clear on success; this makes iris_record keep the same promise. */
-  if (k->status == IRIS_NAN_TRAPPED || k->status == IRIS_STORE_FULL)
+     something wrong?", and without it one full store answered yes for the rest
+     of the instrument's life.
+
+     ONLY IRIS_STORE_FULL, and that is deliberate. An earlier version cleared
+     IRIS_NAN_TRAPPED here too, which was over-broad: iris_record is one of
+     five paths that raise it -- training, predicting and loading raise it as
+     well -- and storing one good number does not disprove a not-a-number that
+     TRAINING trapped. Only iris_record can raise IRIS_STORE_FULL, so only
+     iris_record can retract it; that is the whole rule.
+     A bad reading therefore does not alarm for ever either: iris_train clears
+     the status on success, and every sketch here trains straight after
+     recording, so the flag lifts at the point the instrument is actually
+     known to be well again. */
+  if (k->status == IRIS_STORE_FULL)
     k->status = IRIS_STATUS_OK;
 
   return k->ex_id[k->n_ex - 1];
@@ -2552,8 +2559,19 @@ IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
   { float lo_o[IRIS_MAX_OUT], hi_o[IRIS_MAX_OUT], probe[IRIS_MAX_IN];
     for (int o = 0; o < NO_; ++o) { lo_o[o] = 1e30f; hi_o[o] = -1e30f; }
     for (int c = 0; c < 4; ++c) {
+      /* NORMALISE THE CORNER BEFORE FEEDING IT FORWARD. in_lo and in_hi hold
+         RAW sensor values; iris_forward_norm's parameter is named x_norm and
+         every other call site normalises first. Handing it raw values made
+         this guard's verdict depend on the caller's UNITS: the same instrument
+         learning the same mapping reported a healthy solve when the sensor
+         spanned 0..1 or 0..4095, and IRIS_DIVERGED_STUCK when it spanned
+         0..0.001 -- a false fault telling the musician to reroll an instrument
+         that was fine. The header tells callers to feed raw readings and not to
+         scale anything (see "Units: none" in PART 1), so the units are the
+         caller's business and must not change a verdict. */
       for (int i = 0; i < NI_; ++i)
-        probe[i] = ((c >> (i & 1)) & 1) ? k->in_hi[i] : k->in_lo[i];
+        probe[i] = iris_norm_in(k, i, ((c >> (i & 1)) & 1) ? k->in_hi[i]
+                                                           : k->in_lo[i]);
       iris_forward_norm(k, probe);
       /* Measure in NORMALISED output space, where the band is always
          [0.1,0.9] whatever the demonstrations looked like. Comparing against
