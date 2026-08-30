@@ -217,6 +217,36 @@ int main(void) {
              iris_input_scaling(k), (double)iris_get_smoothing(k));
     check("every accessor answers correctly on a live instrument", ok, d); }
 
+  /* ---- the NaN-through-a-clamp class ------------------------------------
+     iris_clampf is a ternary on two comparisons and every comparison with NaN
+     is false, so a NaN passes straight through a clamp. docs/FREEZE.md named
+     this mechanism and prescribed one iris_isbad at the top of the setters;
+     three instances were fixed and the setters were not. Before the fix:
+     iris_set_smoothing(NaN) left l2 = NaN with status 0, and iris_train then
+     returned 1 -- "it worked" -- with iris_is_trained 0. */
+  { float nan_v = 0.0f/0.0f, inf_v = 1.0f/0.0f;
+    iris *k = filled(A, sizeof A, 6);
+    iris_set_smoothing(k, nan_v);
+    int poisoned_nan = iris_isbad(iris_get_smoothing(k)) || iris_isbad(iris_get_l2(k));
+    iris *k2 = filled(B, sizeof B, 6);
+    iris_set_smoothing(k2, inf_v);
+    int poisoned_inf = iris_isbad(iris_get_smoothing(k2)) || iris_isbad(iris_get_l2(k2));
+    /* and a good value must still get through */
+    iris_set_smoothing(k, 0.5f);
+    int good = iris_get_smoothing(k) > 0.49f && iris_get_smoothing(k) < 0.51f;
+    snprintf(d, sizeof d, "NaN poisoned %d, Inf poisoned %d, 0.5 accepted %d",
+             poisoned_nan, poisoned_inf, good);
+    check("a not-a-number cannot pass through a clamp into a setter",
+          !poisoned_nan && !poisoned_inf && good, d); }
+
+  /* iris_train must not say it worked when the instrument is not fitted. */
+  { iris *k = filled(A, sizeof A, 6);
+    int r = iris_train(k);
+    int consistent = (r != 0) == (iris_is_trained(k) != 0);
+    snprintf(d, sizeof d, "iris_train returned %d, iris_is_trained %d",
+             r, iris_is_trained(k));
+    check("iris_train's answer agrees with iris_is_trained", consistent, d); }
+
   printf(fails ? "\n  %d FAILING\n\n" : "\n  all pass\n\n", fails);
   return fails ? 1 : 0;
 }

@@ -962,6 +962,12 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
    Retained internally for tests/audit.c's Weka-parity check, which sets
    Weka's own 0.3/0.2 pair. See docs/KNOB-AUDIT.md. */
 IRIS_API void iris_internal_set_learning(iris *k, float lr, float momentum) { if (!k) return;
+  /* REFUSE A NOT-A-NUMBER BEFORE CLAMPING IT. iris_clampf is a ternary on two
+     comparisons, and every comparison with NaN is false, so a NaN falls
+     straight through the clamp and into the instrument. docs/FREEZE.md named
+     this mechanism and prescribed exactly this guard; it was applied to three
+     places and not to the setters. */
+  if (iris_isbad(lr) || iris_isbad(momentum)) { k->status = IRIS_NAN_TRAPPED; return; }
   k->lr = iris_clampf(lr, 0.0001f, 2.0f);   /* range kept for Weka parity */
   k->momentum = iris_clampf(momentum, 0.0f, 0.99f);
 }
@@ -1006,6 +1012,8 @@ IRIS_API void iris_internal_set_learning(iris *k, float lr, float momentum) { if
    Applied as decoupled decay on the weights only, never the biases: penalising
    a bias just shifts the function for no capacity benefit. */
 IRIS_API void iris_internal_set_l2(iris *k, float l2) { if (!k) return;
+  /* See iris_internal_set_learning: a NaN passes straight through a clamp. */
+  if (iris_isbad(l2)) { k->status = IRIS_NAN_TRAPPED; return; }
   k->l2 = iris_clampf(l2, 0.0f, 0.3f);   /* 0.3, not 1.0 — see smoothing */
 }
 IRIS_API float iris_get_l2(const iris *k) { if (!k) return 0.0f; return k->l2; }
@@ -1039,6 +1047,9 @@ IRIS_API float iris_get_l2(const iris *k) { if (!k) return 0.0f; return k->l2; }
    Default is 0 — stick to the demonstrations — because a musician who has not
    asked for smoothing should get exactly what they showed it. */
 IRIS_API void iris_set_smoothing(iris *k, float amount) { if (!k) return;
+  /* Guard here too: multiplying a NaN by 0.3 is still a NaN, so the inner
+     guard would see it but this one gives the caller the earlier refusal. */
+  if (iris_isbad(amount)) { k->status = IRIS_NAN_TRAPPED; return; }
   iris_internal_set_l2(k, iris_clampf(amount, 0.0f, 1.0f) * 0.3f);
 }
 IRIS_API float iris_get_smoothing(const iris *k) { if (!k) return 0.0f; return k->l2 / 0.3f; }
@@ -1947,7 +1958,14 @@ IRIS_API int iris_train(iris *k) {
      is a real choice with a real cost, which is why it is written down here
      rather than made for you. */
   iris_reseed(k, k->seed);
-  return iris_train_converge(k, 0, 0, 0) >= 0.0f ? 1 : 0;
+  /* ASK THE FLAG, NOT THE SIGN. This tested only that the returned error was
+     non-negative, and a run that trapped a not-a-number partway leaves a
+     non-negative error behind while never fitting: measured, iris_train
+     returned 1 with iris_is_trained 0 and status 2, which is exactly what
+     Rule 1 promises cannot happen. k->trained is set by the run itself and is
+     the same answer iris_is_trained gives every other caller. */
+  { float e = iris_train_converge(k, 0, 0, 0);
+    return (e >= 0.0f && k->trained) ? 1 : 0; }
 }
 
 
