@@ -2621,7 +2621,25 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
    files have no corruption detection, permanently, and nothing announces it.
 
    iris_input_scaling(k) reports the same bit: 0 means legacy [0,1], which
-   means its files are unchecksummed. A caller that cares should ask. */
+   means its files are unchecksummed. A caller that cares should ask.
+
+   AND ONE THING THE CHECKSUM CANNOT DO, WHICH IS WORTH SAYING HERE RATHER THAN
+   LEAVING TO BE DISCOVERED. iris_save copies every field into your buffer and
+   computes the checksum over the buffer AFTERWARDS. So the checksum certifies
+   the bytes that were written -- not that they all came from the same instant.
+   If the instrument changes while the copy is running (a second thread, an
+   interrupt, the sliced trainer driven from a timer) the buffer holds a
+   mixture of two instruments, and the checksum is computed over the mixture
+   and therefore matches. By construction, always. A reviewer raced saves
+   against training and got 4,096 of 4,096 torn files loading clean, 32 of them
+   badly wrong while reporting healthy.
+
+   This is already out of contract -- see the threading note in PART 1: one
+   instrument belongs to one thread. It is called out again here because this
+   is the one corruption the guard rail specifically cannot catch, and a
+   checksum that passes is exactly the evidence that would persuade you the
+   file is fine. Do not save an instrument that something else may be touching.
+   There is no allocation and no lock in this library to do it for you. */
 #define IRIS_FORMAT 5u          /* what iris_save writes: v4 + the smoothing word */
 #define IRIS_FORMAT_V4 4u       /* v3 layout + a CRC32, no smoothing. Forever.  */
 #define IRIS_FORMAT_V3 3u       /* v3 without the CRC. Readable forever.        */
