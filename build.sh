@@ -37,6 +37,8 @@ case "${1:-audit}" in
               sh tools/mutate.sh "${2:-}" ;;
   bloat)      # Is the file getting harder to read? A ratchet, not a report.
               sh tools/bloat.sh ;;
+  target)     # The zero-dependency claim, on the CHIP's compiler, not the host.
+              sh tools/freestanding-esp32.sh ;;
   coverage)   # The refusal paths. Every case asks a function to say no.
               cc $CFLAGS -o build/coverage tests/coverage.c -lm
               ./build/coverage ;;

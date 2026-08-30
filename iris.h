@@ -15,20 +15,43 @@
    THE ZERO-DEPENDENCY CLAIM, STATED EXACTLY. A translation unit exercising
    the whole public API compiles under -std=c99 -ffreestanding -nostdlib at
    -O0/-O2/-Os and links with ZERO undefined symbols — but only with
-   -fno-stack-protector. On a default macOS/clang invocation the compiler
-   injects ___stack_chk_fail and ___stack_chk_guard. Those are a toolchain
-   default, not a call this source makes, but the unqualified sentence
-   "zero undefined symbols" is FALSE as literally stated on a default
-   invocation. Say it with the flag, or say "no libc calls in the source".
-   Verified 2026-08-27, Apple clang 17, arm64. xtensa-gcc UNVERIFIED.
+   -fno-stack-protector, ON A HOST. Verified 2026-08-27, Apple clang 17, arm64.
+
+   AND ON THE CHIP IT IS ACTUALLY FOR, IT IS NOT ZERO. Measured 2026-08-30 with
+   the ESP32-S3's own compiler (xtensa-esp32s3-elf-gcc, -Os -ffreestanding
+   -fno-stack-protector), which this line previously marked UNVERIFIED:
+
+     the playing path        __divsf3, memset, sqrtf
+     + iris_loo_error        + __adddf3 __divdf3 __extendsfdf2 __floatsidf
+                               __muldf3 __subdf3 __truncdfsf2
+     + iris_suggest_smoothing  the same, plus memcpy
+     + iris_train_elm        adds nothing
+
+   __divsf3 is single-precision DIVISION: the S3's floating-point unit has no
+   divide instruction, so every float division is a libgcc call. memset and
+   sqrtf are the compiler's and libm's. None of this is a call this source
+   writes, and all of it is present on every Arduino build anyway -- but the
+   sentence "zero undefined symbols" is FALSE on the target, and it is now
+   stated with the compiler, the flags and the list rather than as a claim.
+
+   THE DOUBLES ARE REAL AND THEY ARE ONE FUNCTION. The __*df3 routines above
+   are 64-bit soft float, which rule 3 below says this library does not use.
+   iris_loo_error accumulates its error sum in double on purpose (iris.h, PART
+   8c) and iris_suggest_smoothing calls it. That is a deliberate numerical
+   choice in a diagnostic that is not on the playing path, and it is the ONLY
+   exception -- the playing path has no doubles anywhere. Rule 3 is restated
+   below with that exception named, because a rule with a silent exception is
+   worse than no rule.
 
    THE THREE RULES THIS FILE OBEYS
      1. No malloc.  You give it one block of memory; it never asks for more.
         You always know exactly how much RAM the instrument uses.
      2. No libc.    No printf, no math.h. Everything it needs is in here.
-     3. No doubles. The ESP32-S3 does 32-bit float in hardware and 64-bit
-        float in slow software emulation. Doubles would cost ~30x for no
-        audible benefit.
+     3. No doubles ON THE PLAYING PATH. The ESP32-S3 does 32-bit float in
+        hardware and 64-bit float in slow software emulation. The one
+        exception is iris_loo_error (and iris_suggest_smoothing, which calls
+        it), a diagnostic that accumulates in double deliberately; measured
+        above.
 
    USAGE
      static unsigned char mem[IRIS_ARENA(2, 12, 3, 64)];
