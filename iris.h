@@ -1540,7 +1540,7 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
   iris_fit_ranges(k);
 
   const int stride = k->n_in + k->n_out;
-  const int NI = k->n_in, NH = k->n_hid, NO = k->n_out;
+  const int NI = k->n_in, NH = k->n_hid, NOUT = k->n_out;
   float x[IRIS_MAX_IN], t[IRIS_MAX_OUT];
   float err = 0.0f;
 
@@ -1582,7 +1582,7 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
       const int row_ix = k->order[s];
       const float *row = k->ex + (size_t)row_ix * stride;
       for (int i = 0; i < NI; ++i) x[i] = iris_norm_in (k, i, row[i]);
-      for (int o = 0; o < NO; ++o) t[o] = iris_norm_out(k, o, row[NI + o]);
+      for (int o = 0; o < NOUT; ++o) t[o] = iris_norm_out(k, o, row[NI + o]);
 
       iris_forward_norm(k, x);
 
@@ -1625,7 +1625,7 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
 
          See docs/MATH-FIXES.md defect 3 and docs/MATH-AUDIT.md section 5. */
       float rse = 0.0f;
-      for (int o = 0; o < NO; ++o) {
+      for (int o = 0; o < NOUT; ++o) {
         float y = k->out[o];
         float e = y - t[o];
         err += e * e;
@@ -1644,7 +1644,7 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
          is ((x*x - 9) / (3*(3 + x*x)))^2, and it is not what this uses. */
       for (int h = 0; h < NH; ++h) {
         float acc = 0.0f;
-        for (int o = 0; o < NO; ++o) acc += k->w2[(size_t)o * NH + h] * k->d_out[o];
+        for (int o = 0; o < NOUT; ++o) acc += k->w2[(size_t)o * NH + h] * k->d_out[o];
         float a = k->hid[h];
         k->d_hid[h] = acc * (1.0f - a * a);
       }
@@ -1663,7 +1663,7 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
          that alpha means the same thing regardless of how many demonstrations
          you have, matching scikit-learn's penalty-to-data ratio. */
       const float wd = k->l2 * k->lr / (float)k->n_ex;
-      for (int o = 0; o < NO; ++o) {
+      for (int o = 0; o < NOUT; ++o) {
         float g = k->d_out[o];
         float *w = k->w2 + (size_t)o * NH, *v = k->v_w2 + (size_t)o * NH;
         for (int h = 0; h < NH; ++h) {
@@ -1686,7 +1686,7 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
         k->b1[h]  += k->v_b1[h];      /* biases are not decayed */
       }
     }
-    err /= (float)(k->n_ex * NO);
+    err /= (float)(k->n_ex * NOUT);
     k->res_epochs++;
     k->tr_done++;
 

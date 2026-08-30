@@ -89,7 +89,8 @@ case "${1:-audit}" in
     # port. It emits complete MIDI messages into a caller-supplied iris_bytes,
     # so every byte it will ever put on the wire can be asserted here.
     cc $CFLAGS -I. -o build/mpe_test extras/tests/mpe_test.c \
-       extras/ports/mpe/iris_mpe.c extras/ports/mpe/iris_mpe_wire.c -lm && ./build/mpe_test
+       extras/ports/mpe/iris_mpe.c extras/ports/mpe/iris_mpe_wire.c -lm
+    ./build/mpe_test
     # The 32-bit struct sizes the port claims, asserted on a real 32-bit
     # target rather than halved by hand from this 64-bit host.
     clang --target=wasm32 -I. -fsyntax-only extras/ports/mpe/iris_mpe_wire.c \
@@ -137,19 +138,19 @@ open('build/bench.html','w').write(open('extras/bench/page.html').read().replace
       echo "Commit first, so 'git checkout -- tests/golden' can undo it."
       exit 1
     fi
-    cc $CFLAGS -o build/make_golden tests/golden/make_golden.c -lm \
-      && ./build/make_golden ;;
+    cc $CFLAGS -o build/make_golden tests/golden/make_golden.c -lm
+      ./build/make_golden ;;
   clean)      rm -rf build ;;
   tiny)       cc $CFLAGS -o build/tiny docs/tiny.c -lm
               ./build/tiny ;;
   regressions)
               # One test per reviewed defect, each written before its fix and
               # watched to fail. Non-zero exit if any regresses.
-              cc $CFLAGS -I. -o build/regressions tests/regressions.c -lm \
-                && ./build/regressions ;;
+              cc $CFLAGS -I. -o build/regressions tests/regressions.c -lm
+                ./build/regressions ;;
   fuzz)       # Oracle-free: the sanitizers decide, not our assertions.
               cc -std=c99 -O1 -g -fsanitize=address,undefined \
-                 -fno-sanitize-recover=all -I. -o build/fuzz tests/fuzz.c -lm \
-                && ./build/fuzz "${2:-400}" ;;
+                 -fno-sanitize-recover=all -I. -o build/fuzz tests/fuzz.c -lm
+                ./build/fuzz "${2:-400}" ;;
   *)          echo "usage: ./build.sh [audit|mpe|sinks|claims|fuzz|regressions|mutate|experiment|tiny|bench|golden|clean]"; exit 1 ;;
 esac
