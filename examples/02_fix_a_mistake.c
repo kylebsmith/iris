@@ -88,11 +88,19 @@ int main(void) {
            iris_get_status(k) == IRIS_DIVERGED_STUCK
              ? "  <- IRIS_DIVERGED_STUCK: reroll to recover" : ""); }
 
-  /* 7. THE CURE. Re-fit the same demonstrations from a fresh random start.
-        Your examples are untouched; only the damaged weights are discarded. */
+  /* 7. THE CURE.
+        Ordinarily deleting the bad take is the whole cure: iris_train fits the
+        demonstrations you have now, from a defined start, so the deleted take
+        leaves nothing behind. That is the path this run takes.
+
+        If the bad take damaged the weights badly enough to stop training
+        outright, the instrument says so and the cure is the same act made
+        explicit -- a fresh start over the same examples. Note there is no
+        epoch count to invent: reseed, then train to the plateau. */
   if (iris_get_status(k) == IRIS_DIVERGED_STUCK) {
-    iris_retrain_new(k, 1234, 600);
-    play(k, "after iris_retrain_new:");
+    iris_reseed(k, 1234);
+    iris_train(k);
+    play(k, "after a fresh start:");
   } else {
     play(k, "after deleting it:");
   }

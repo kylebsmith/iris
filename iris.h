@@ -179,7 +179,20 @@
 
 #define IRIS_MAX_IN   32   /* sensor features in  */
 #define IRIS_MAX_OUT  16   /* sound parameters out */
-#define IRIS_MAX_EX   4096 /* demonstrations. THE BOUND EXISTS TO STOP AN
+/* THE CAP HAS TO FIT THE MACHINE'S SIZE TYPE.
+
+   4,096 demonstrations is the right ceiling on a 32-bit or 64-bit target: it
+   is the point where the arena arithmetic would start to overflow. On a 16-bit
+   size type -- every Arduino AVR board -- overflow arrives far sooner, and it
+   arrives IDENTICALLY in IRIS_ARENA and in iris_size, so the arena bound wraps
+   to the same wrong number and cannot see the problem it was written to catch.
+   Compiled for a Mega, IRIS_ARENA(8,8,8,894) came out around 4,000 bytes
+   instead of 69,672 and the build succeeded.
+
+   So the cap scales with the machine rather than assuming one. 255 keeps the
+   largest legal arena comfortably inside a 16-bit size type, and 255 takes is
+   already far more than anyone records by hand. */
+#define IRIS_MAX_EX   ((int)(sizeof(size_t) >= 4 ? 4096 : 255)) /* demonstrations. THE BOUND EXISTS TO STOP AN
                             OVERFLOW, not because 4096 is musically special.
                             iris_size multiplies cap by (n_in+n_out) and by
                             sizeof(float); on a 32-bit target (the ESP32-S3)
@@ -906,8 +919,18 @@ IRIS_API int iris_delete_index(iris *k, int idx) { if (!k) return 0;
     float *dst = k->ex + (size_t)r * stride;
     const float *src = k->ex + (size_t)(r + 1) * stride;
     for (int c = 0; c < stride; ++c) dst[c] = src[c];
-    k->ex_id[r] = k->ex_id[r + 1];
+    k->ex_id[r]  = k->ex_id[r + 1];
+    /* The residual ledger is indexed by POSITION, so it has to move with the
+       rows. It did not, so after any delete every "which take is fighting the
+       others" answer pointed at the wrong demonstration -- 200 times out of
+       200, always naming an innocent one, until the next training run. The
+       margin usually collapsed below the threshold the header tells a screen
+       to require, so the accusation went quiet rather than wrong; but the same
+       header invites a screen to show it dimly below that threshold, and that
+       mark was on the wrong take every time. */
+    k->ex_res[r] = k->ex_res[r + 1];
   }
+  k->ex_res[k->n_ex - 1] = 0.0f;
   k->n_ex--;
   k->trained = 0;
   return 1;
@@ -1113,9 +1136,28 @@ IRIS_API void iris_predict(const iris *k, const float *in, float *out) { if (!k)
 /* ==========================================================================
    PART 7 — HOW LOST AM I?
 
-   Distance from the current gesture to the nearest thing you demonstrated,
-   scaled so that 0 means "exactly on an example" and 1 means "as far away as
-   the examples are from each other".
+   Distance from the current gesture to the nearest thing you demonstrated.
+   0 means "exactly on an example".
+
+   WHAT 1 MEANS, precisely, because the obvious reading is wrong. The scale is
+   sqrt(n_in)/2 -- a constant that depends only on how many sensors you have,
+   NOT on how far apart your demonstrations are. So 1 means "half the diagonal
+   of the normalised input box away from the nearest example", and that is a
+   fixed distance, not a relative one.
+
+   The consequence is worth knowing before you map this to anything. With four
+   corner demonstrations -- which is examples/00_minimal.c -- 60.3% of the
+   gesture square reads exactly 1.0, including the middle of the demonstrated
+   space; it reports the same value for "between your four takes" and "ten
+   times outside them". With twenty-five demonstrations it never exceeds 0.48.
+   The usable range of the control therefore depends on how many takes you
+   recorded, and two instruments are not comparable.
+
+   Making the scale relative to the examples' own spacing would fix that and is
+   what this comment used to promise. It is deliberately NOT done here: the
+   audit uses novelty to sort probes into near and far bands, so changing the
+   scale moves measured thresholds elsewhere, and that deserves its own
+   measurement rather than a quiet edit.
 
    This costs one pass over the examples — nothing. But it lets the instrument
    know when it is improvising rather than recalling, which you can map to
@@ -1297,13 +1339,28 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
      rather than pretending to train. Recovery is iris_retrain_new(). We do NOT
      reseed automatically: that would silently hand the performer a different
      instrument, which is the failure mode Fiebrink & Sonami describe. */
-  if (!resume && k->status == IRIS_TRAINING_DIVERGED) {
+  /* Not `!resume`. iris_train_slice enters with resume = 1, so a diverged
+     instrument that iris_train refuses to touch used to be trained anyway if
+     you drove it in slices -- and the header calls those two paths
+     bit-identical. They must refuse identically too. */
+  if (k->status == IRIS_TRAINING_DIVERGED) {
     int pinned = 0, i;
     const float lim = IRIS_W_LIMIT - 0.01f;
+    /* All FOUR arrays, not two. iris__check_weights clamps the biases as well
+       as the weights and walks them as one block; this check scanned only w1
+       and w2, so a clamp that landed on a bias left the instrument stuck with
+       nothing noticing -- exactly the silent state the note above says this
+       exists to prevent. Unreachable at the shipped defaults (0 of 400), but
+       reachable through iris__set_learning at its permitted maximum, where it
+       happened 60 times out of 60. */
     for (i = 0; i < k->n_hid * k->n_in;  ++i)
       if (k->w1[i] >= lim || k->w1[i] <= -lim) pinned = 1;
     for (i = 0; i < k->n_out * k->n_hid; ++i)
       if (k->w2[i] >= lim || k->w2[i] <= -lim) pinned = 1;
+    for (i = 0; i < k->n_hid;  ++i)
+      if (k->b1[i] >= lim || k->b1[i] <= -lim) pinned = 1;
+    for (i = 0; i < k->n_out;  ++i)
+      if (k->b2[i] >= lim || k->b2[i] <= -lim) pinned = 1;
     if (pinned) { k->status = IRIS_DIVERGED_STUCK; k->tr_running = 0; return -1.0f; }
   }
 #endif
@@ -2578,7 +2635,7 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
   if (h[0] != IRIS_MAGIC) return 0;
   if (h[1] != IRIS_FORMAT_V1 && h[1] != IRIS_FORMAT_V2 &&
       h[1] != IRIS_FORMAT_V3 && h[1] != IRIS_FORMAT_V4 &&
-      h[1] != IRIS_FORMAT) return 0;
+      h[1] != IRIS_FORMAT) { k->status = IRIS_NAN_TRAPPED; return 0; }
 
   /* VERIFY THE CHECKSUM before trusting a single weight. Only v4 carries one;
      v1/v2/v3 predate it and load unchecked, which is the price of the promise
@@ -2803,6 +2860,13 @@ IRIS_API int iris_migrate_scaling(iris *k) { if (!k) return 0;
    duplicates average finitely (the guard keeps zero-distance weights
    finite). O(n_ex * n_in) per call, division-free scan, no state touched. */
 IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int kk) { if (!k) return;
+  /* The distance measure needs the input ranges, and those are only set by a
+     fit. Called on a recorded-but-never-trained instrument this silently used
+     the default range of 0..1 and gave a quietly wrong answer. Fit them here:
+     it is the same work iris_fit_ranges does, it depends on nothing but the
+     demonstrations, and a caller who has to remember an ordering rule will
+     eventually forget it. */
+  if (!k->fitted && k->n_ex > 0) iris_fit_ranges((iris *)k);
   const int NIn = k->n_in, NOut = k->n_out;
   if (k->n_ex == 0) { for (int o = 0; o < NOut; ++o) out[o] = 0.0f; return; }
   if (kk < 1) kk = 1;
