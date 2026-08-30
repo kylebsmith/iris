@@ -61,6 +61,32 @@
      iris_train_converge(k, 0, 0, 0);    // trains until the error plateaus
      iris_predict(k, gesture, sound);    // now play
 
+   THE WORDS THIS FILE USES, defined once, here, before it uses them. CONTRIBUTING.md
+   asks for no bare acronyms and the audience includes musicians and first-year
+   students, so:
+
+     EPOCH        one pass over every demonstration you have recorded. Training
+                  is thousands of these. "9,000 epochs" means the network saw
+                  each of your takes 9,000 times.
+     ELM          extreme learning machine. A second, instant way to train:
+                  freeze the random middle layer and solve the output layer
+                  exactly, in one step, instead of nudging it thousands of
+                  times. PART 8d.
+     RIDGE        a small number added down the diagonal of a matrix before
+                  solving it, which stops the solve failing when two
+                  demonstrations are nearly identical. PART 8d.
+     SGD          stochastic gradient descent — nudging the weights after each
+                  single demonstration rather than after all of them.
+     ULP          unit in the last place: the smallest change you can make to a
+                  floating-point number. "1 ulp" means one step, the smallest
+                  difference two floats can have.
+     CHOLESKY     a standard, fast way to solve a symmetric system of linear
+                  equations. Used once, in the ELM path.
+     NORMAL MATRIX  the square matrix that least-squares fitting produces and
+                  Cholesky then solves.
+     ODR          the one-definition rule: C and C++ require that a thing is
+                  defined identically everywhere it appears.
+
    ON TRAINING TIME. iris_train_converge runs until the training error stops
    improving, with a hard ceiling — typically 9,000-18,000 epochs, which is
    ~25-45 ms on a laptop and ~1-4 s on an ESP32-S3 at 20-50 examples. That is
@@ -141,8 +167,12 @@
    FAILURE, in two rules and no exceptions:
      A call that either works or does not returns 0 for "did nothing".
      A call that returns a MEASUREMENT returns it, or -1 if it refused.
-   iris_get_status answers a different question -- whether the instrument
-   itself is in trouble -- and 0 is the good news in both.
+   iris_get_status answers a different question -- whether the INSTRUMENT is in
+   trouble. Zero means opposite things in the two places, so do not carry one
+   habit across: a RETURN VALUE of 0 is bad news (the call did nothing), and a
+   STATUS of 0 is good news (IRIS_STATUS_OK, nothing is wrong). Two of these
+   sentences used to say "0 is the good news in both" and "0 is the bad news in
+   both", and neither was right about both.
 
    THREADING: never touch the same instrument from two places at once. That is
    the entire contract; see the note above iris_get_status for why.
@@ -329,10 +359,26 @@
    bytes for an instrument that needs 65,624, and the first loop of iris_reseed
    then wrote 6,048 bytes into those 88. Verified with avr-gcc for atmega328p.
 
-   Computing wide makes the true number appear. On a small machine that number
-   is then too large for an array and the COMPILER refuses the declaration,
-   which is the outcome we want: a build error naming the array, not a running
-   instrument scribbling over the stack. */
+   Computing wide makes the true number appear. In C, that number is then too
+   large for an array and the COMPILER refuses the declaration -- a build error
+   naming the array, which is the outcome we want.
+
+   IN C++ IT IS A RUNTIME REFUSAL INSTEAD, AND ARDUINO COMPILES .ino AS C++.
+   An array declarator's size in C++ converts to std::size_t, 16 bits on AVR, so
+   the bound wraps silently where C errors. Measured with avr-g++ on an
+   atmega328p, all four as compile-time assertions:
+
+     IRIS_ARENA(24,63,16,254)          65624   (wide, correct)
+     sizeof mem                           88   (the ARRAY narrowed)
+     iris_size(24,63,16,254)               0   (cannot be sized here)
+
+   The narrowing threshold and the sizing threshold are the SAME number, so
+   every shape the array silently shrinks is a shape iris_size refuses: the
+   `need == 0` test in iris_init returns 0 and the sketch gets a null pointer,
+   which every example in this repository checks. So the failure is loud, just
+   later than it should be -- a message at run time rather than a build error.
+   Do not read this as memory corruption; an audit reported it as such and the
+   assertions above are why that is wrong. */
 #define IRIS_ARENA(NI, NH, NO, NEX)                                              \
   ( (unsigned long)sizeof(iris)                                                  \
   + (unsigned long)sizeof(float)                                                 \
@@ -707,7 +753,9 @@ struct iris {
    And a separate question, with a separate answer: is the INSTRUMENT in
    trouble? That is iris_get_status, below. A call can succeed on an
    instrument that is unwell, and a call can fail on a perfectly good one.
-   Two questions, two answers, and 0 is the bad news in both.
+   Two questions, two answers -- and zero means the OPPOSITE thing in each. A
+   return value of 0 says the call did nothing; a status of 0 (IRIS_STATUS_OK)
+   says nothing is wrong. See the note in PART 1, which says the same thing.
 
    ---------------------------------------------------------------------- */
 
@@ -1150,10 +1198,20 @@ IRIS_API void iris_clear(iris *k) {
    Outputs go to 0.1–0.9 rather than 0–1 on purpose. The output layer uses a
    sigmoid. A true logistic only APPROACHES 0 and 1; this one is built on a
    clamped rational function and reaches them exactly — iris_sigmoid(6.0f) is
-   1.0f on the nose. The decision stands on the measurement below, not on the
-   asymptote argument written here first, which is false of this code. Asking it
-   to hit exactly 1.0 means pushing a weight toward infinity forever. Leaving
-   headroom at both ends means the network can actually arrive.
+   1.0f on the nose. Asking it to hit exactly 1.0 means pushing a weight toward
+   infinity forever; leaving headroom at both ends means the network can
+   actually arrive.
+
+   WHERE THIS CONSTANT ACTUALLY COMES FROM, stated honestly because this
+   paragraph used to promise "the measurement below" and there is no
+   measurement below -- the block ends here. 0.1/0.9 is a folklore rule of
+   thumb, not a derived value. LeCun's Efficient BackProp section 4.5 derives
+   the principled band from the maximum of the sigmoid's second derivative,
+   which is 0.2113/0.7887, and docs/MATH-AUDIT.md:101 records that the shipped
+   band therefore delivers 1.85x LESS gradient at the targets. It stays because
+   moving it changes every frozen hash and every saved file's output mapping
+   (docs/MATH-AUDIT.md:274 costs that out), not because it was measured to be
+   better. It was not.
    ========================================================================== */
 
 #define IRIS_OUT_LO 0.1f
@@ -1627,8 +1685,14 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
          and changing it would move every golden hash in the audit.
 
          HOW WRONG. Exact only at zero, and under-scaling by up to 2x across
-         the ordinary operating range before it changes sign entirely. The
-         full ratio table is docs/MATH-AUDIT.md:153.
+         the ordinary operating range. The full ratio table is
+         docs/MATH-AUDIT.md:153, which is computed on the UNCLAMPED rational
+         and does change sign there. THE SHIPPED FUNCTION DOES NOT: the clamp
+         bounds a to [-1,1], so 1-a*a is never negative. Measured over
+         66,368,438 finite float bit patterns: 0 negatives, with a positive
+         control on the unclamped form finding 3,970,919 of 16,527,549. This
+         line used to claim the shipped code changes sign, contradicting the
+         "never wrong-signed" statement in PART 1; PART 1 was the correct one.
 
          WHY IT STAYS. The textbook objection is that y*(1-y) collapses the
          gradient exactly when a unit is confidently wrong. Instrumented for
