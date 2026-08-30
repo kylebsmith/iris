@@ -67,7 +67,7 @@ nice-to-have. It is the whole product.
 
 ## What it is
 
-`iris.h` is a single header — 3,140 lines, 1,153 of them code — implementing the
+`iris.h` is a single header — 3,186 lines, 1,161 of them code — implementing the
 interactive machine learning loop that Wekinator made standard in 2009, rebuilt
 for targets that have no operating system.
 
@@ -119,10 +119,22 @@ This is not: the *same* instrument from an interrupt and from the main loop.
 landing mid-call leaves both answers wrong. Give the interrupt its own
 instrument.
 
-For audio: one prediction is 7.4–7.8 µs on an ESP32-S3 against a 20.8 µs sample
-period at 48 kHz, so it fits inside a sample. Training does not — 571 ms for 800
-epochs over 20 demonstrations on the same board. Train in slices from the main
-loop, never from an interrupt.
+For audio: one prediction is **14.9 µs** on an ESP32-S3 against a 20.8 µs sample
+period at 48 kHz. It fits inside a sample, but with about 1.4x of margin, not the
+comfortable multiple an earlier version of this line claimed — that figure was
+7.4–7.8 µs, which was a host measurement scaled by an estimated ratio and
+presented as if it had been taken on the part. Measured on the board:
+`device_torture.ino` test 9, 20,000 predictions in 298,915 µs on an ESP32-S3 at
+240 MHz, 2 inputs / 12 hidden / 3 outputs. Reproduced within 0.001 µs across
+runs and across two different boards.
+
+Treat 1.4x as the real budget. It is enough to run per-sample, and it is not
+enough to also do anything expensive in the same callback.
+
+Training does not fit and is not close — measured on the same boards:
+595 ms at 4 demonstrations, and 2.7-3.0 seconds at 8 to 20. Train in slices from
+the main loop with iris_train_begin / iris_train_slice, which is bit-identical to
+the blocking call, and never from an interrupt.
 
 ## Run the tests
 

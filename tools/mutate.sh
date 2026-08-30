@@ -56,7 +56,8 @@ run_mutation "backward slope 1-a^2 -> 1-a^2 scaled 0.99"    's/acc \* \(1\.0f - 
 
 echo
 echo "-- the safety properties --"
-run_mutation "drop the arena bound in iris_init"            's/if \(bytes < iris_internal_bytes\(n_in, n_hid, n_out, cap\)\) return 0;/;/'
+run_mutation "drop the arena bound in iris_init"            's/if \(bytes < need\) return 0;/;/'
+run_mutation "ignore an unsizeable shape in iris_init"     's/if \(need == 0\) return 0;/;/'
 run_mutation "drop the not-a-number door check"             's/if \(iris_isbad\(in\[i\]\)\)/if (0)/'
 run_mutation "iris_isbad always says healthy"               's/return \(c\.u & 0x7F800000u\) == 0x7F800000u;/return 0;/'
 run_mutation "stop filling the shuffle buffer at init"      's/for \(int i = 0; i < cap; \+\+i\) k->order\[i\] = i;/;/'

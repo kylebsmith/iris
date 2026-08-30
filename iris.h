@@ -260,15 +260,30 @@
    between "I know this fits" and "I hope this fits".
    -------------------------------------------------------------------------- */
 
+/* EVERY PRODUCT IS COMPUTED IN unsigned long, WHICH C GUARANTEES IS AT LEAST
+   32 BITS, AND NOT IN size_t.
+
+   On a 16-bit size_t target -- every Arduino AVR board -- these products wrap.
+   That on its own would be survivable if anything noticed, but iris_size wrapped
+   IDENTICALLY, so iris_init compared a wrapped need against an equally wrapped
+   array size and could not refuse: IRIS_ARENA(24,63,16,254) came out as 88
+   bytes for an instrument that needs 65,624, and the first loop of iris_reseed
+   then wrote 6,048 bytes into those 88. Verified with avr-gcc for atmega328p.
+
+   Computing wide makes the true number appear. On a small machine that number
+   is then too large for an array and the COMPILER refuses the declaration,
+   which is the outcome we want: a build error naming the array, not a running
+   instrument scribbling over the stack. */
 #define IRIS_ARENA(NI, NH, NO, NEX)                                              \
-  ( sizeof(iris)                                                                 \
-  + sizeof(float) * ( 2*((NI)*(NH) + (NH) + (NH)*(NO) + (NO))  /* w + velocity */\
-                    + (NH) + (NO) + (NH) + (NO)                /* acts + deltas */\
-                    + 2*((NI) + (NO))                          /* norm ranges   */\
-                    + (size_t)(NEX)                            /* residual ledger*/\
-                    + (size_t)(NEX) * ((NI) + (NO)) )          /* examples      */\
-  + sizeof(int32_t) * (size_t)(NEX) * 2                        /* ids + shuffle */\
-  + 64 )                                                       /* alignment pad */
+  ( (unsigned long)sizeof(iris)                                                  \
+  + (unsigned long)sizeof(float)                                                 \
+      * ( 2UL*((unsigned long)(NI)*(NH) + (NH) + (unsigned long)(NH)*(NO) + (NO))\
+        + (NH) + (NO) + (NH) + (NO)                            /* acts + deltas */\
+        + 2UL*((NI) + (NO))                                    /* norm ranges   */\
+        + (unsigned long)(NEX)                                 /* residual ledger*/\
+        + (unsigned long)(NEX) * ((NI) + (NO)) )               /* examples      */\
+  + (unsigned long)sizeof(int32_t) * (unsigned long)(NEX) * 2  /* ids + shuffle */\
+  + 64UL )                                                     /* alignment pad */
 
 typedef struct iris iris;
 
@@ -643,14 +658,24 @@ IRIS_API iris_status iris_get_status(const iris *k) {
    unsigned types, and the arena bound silently ceased to exist. A size
    function that can refuse is not a size function. */
 static size_t iris_internal_bytes(int n_in, int n_hid, int n_out, int cap) {
-  return sizeof(iris)
-       + sizeof(float) * (size_t)( 2*(n_in*n_hid + n_hid + n_hid*n_out + n_out)
-                                 + n_hid + n_out + n_hid + n_out
-                                 + 2*(n_in + n_out)
-                                 + (size_t)cap
-                                 + (size_t)cap * (n_in + n_out) )
-       + sizeof(int32_t) * (size_t)cap * 2
-       + 64;
+  /* Wide arithmetic, then a range check -- see the note on IRIS_ARENA. This is
+     the runtime twin of that macro and it has to agree with it, including about
+     shapes that do not fit. Returning 0 for "cannot be sized on this machine"
+     is what iris_size already promises its callers; before this it returned a
+     small wrong number instead, and every bound built on it was inert. */
+  unsigned long total =
+        (unsigned long)sizeof(iris)
+      + (unsigned long)sizeof(float)
+          * ( 2UL*((unsigned long)n_in*n_hid + n_hid
+                   + (unsigned long)n_hid*n_out + n_out)
+            + n_hid + n_out + n_hid + n_out
+            + 2UL*(n_in + n_out)
+            + (unsigned long)cap
+            + (unsigned long)cap * (n_in + n_out) )
+      + (unsigned long)sizeof(int32_t) * (unsigned long)cap * 2
+      + 64UL;
+  if (total > (unsigned long)(size_t)-1) return 0;   /* will not fit a pointer */
+  return (size_t)total;
 }
 
 IRIS_API size_t iris_size(int n_in, int n_hid, int n_out, int cap) {
@@ -721,7 +746,14 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
      The bound below therefore goes through iris_internal_bytes, which is arithmetic
      with no opinion, rather than through iris_size, which has one. A size
      function that can refuse cannot also be a bound. */
-  if (bytes < iris_internal_bytes(n_in, n_hid, n_out, cap)) return 0;
+  { size_t need = iris_internal_bytes(n_in, n_hid, n_out, cap);
+    /* need == 0 means the shape cannot be sized on this machine at all. Test it
+       FIRST: size_t is unsigned, so `bytes < 0` is false for every arena and the
+       bound would wave the impossible shape straight through -- the exact
+       sentinel trap the note above iris_size warns about, which this line was
+       previously walking into. */
+    if (need == 0) return 0;
+    if (bytes < need) return 0; }
 
   unsigned char *p = (unsigned char *)mem;
   /* Align BEFORE placing the structure, not after. The caller's arena is only
@@ -1343,7 +1375,21 @@ IRIS_API int iris_internal_check_weights(iris *k) { if (!k) return 0;
 
 #define IRIS_CONV_WINDOW  2000    /* epochs between plateau tests (measured)   */
 #define IRIS_CONV_TOL     0.10f   /* stop when a window buys < 10% of the error */
-#define IRIS_CONV_CEILING 60000   /* hard stop; ~150 ms host / ~4.8 s S3 at 20 ex */
+/* THE CEILING HAS TO FIT THE MACHINE'S int, BECAUSE IT IS PASSED AS ONE.
+
+   iris_train_converge does `const int ceil_ = ceiling > 0 ? ceiling : ...` and
+   hands that to iris_internal_train_run(int epochs). Where int is 16 bits --
+   every Arduino AVR board -- 60000 truncates to -5536, the trainer's
+   `epochs <= 0` guard correctly refuses, iris_train correctly returns 0, and
+   the instrument is never fitted. The library was honest about it; every sketch
+   that ignored the return value was not. Confirmed with avr-gcc for atmega328p:
+   (int)60000 == -5536.
+
+   30000 is the largest round number that fits a signed 16-bit int. It is not a
+   compromise in practice: an 8-bit AVR at 16 MHz does not reach 30,000 epochs
+   in a time anyone will wait for, so the ceiling is not the binding constraint
+   there -- being positive is. */
+#define IRIS_CONV_CEILING ((int)(sizeof(int) >= 4 ? 60000 : 30000))
 
 /* Called every IRIS_CONV_WINDOW epochs. Return 0 to abort the run. */
 typedef int (*iris_progress_fn)(void *user, int done, int ceiling, float err);
