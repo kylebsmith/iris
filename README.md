@@ -67,7 +67,7 @@ nice-to-have. It is the whole product.
 
 ## What it is
 
-`iris.h` is a single header — 3,232 lines, 1,166 of them code — implementing the
+`iris.h` is a single header — 3,231 lines, 1,165 of them code — implementing the
 interactive machine learning loop that Wekinator made standard in 2009, rebuilt
 for targets that have no operating system.
 

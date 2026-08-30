@@ -1857,7 +1857,6 @@ IRIS_API int iris_train_slice(iris *k, int epochs) { if (!k) return 0;
   if (!k->tr_running) return 0;
   {
     int left = k->tr_ceiling - k->tr_done;
-    if (epochs <= 0) epochs = IRIS_CONV_WINDOW;
     if (epochs > left) epochs = left;
     if (epochs <= 0) { k->tr_running = 0; return 0; }
     iris_internal_train_run(k, epochs, 1, 1, 0, 0);
@@ -2397,7 +2396,7 @@ IRIS_API float iris_logit(float t) { return 2.0f * iris_artanh(2.0f * t - 1.0f);
    poisoned (NaN/Inf) example — weights untouched on every refusal. */
 IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
                            void *scratch, size_t scratch_bytes) { if (!k) return -1;
-  if (!k || !scratch || k->n_ex == 0) return -1;
+  if (!scratch || k->n_ex == 0) return -1;
   const int NI_ = k->n_in, NH_ = k->n_hid, NO_ = k->n_out, K = NH_ + 1;
   if (NH_ < 8) return -1;              /* below the measured reroll floor */
   if (scratch_bytes < IRIS_ELM_SCRATCH(NH_, NO_)) return -1;
