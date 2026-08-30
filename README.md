@@ -67,7 +67,7 @@ nice-to-have. It is the whole product.
 
 ## What it is
 
-`iris.h` is a single header — 2,928 lines, 1,126 of them code — implementing the
+`iris.h` is a single header — 2,992 lines, 1,133 of them code — implementing the
 interactive machine learning loop that Wekinator made standard in 2009, rebuilt
 for targets that have no operating system.
 
@@ -137,17 +137,15 @@ One command, no flags, no packages. If `audit` prints `ALL CHECKS PASSED
 frozen.
 
 ## Layout
-
 | Path | What |
 |---|---|
 | `iris.h` | The whole library. Start at the masthead. |
-| `iris_sink.h`, `iris_source.h` | The two port interfaces — where sound goes out and sensors come in |
 | `examples/` | `00_minimal.c` draws the learned space; `01_hello.c` three gestures; `02_fix_a_mistake.c` the repair loop; `03_reroll.c` same demos, different instrument |
-| `ports/` | Output ports: MIDI CC (the default), MPE, OSC, null, a template, a wasm shim |
+| `extras/` | Output ports, the two port interfaces, and the browser benchmark. **Nothing in the library calls any of it.** |
 | `tests/` | The audit suite and the frozen golden fixtures |
 | `experimental/` | L-BFGS. Not in the core, no production callers — read its header before citing it |
 | `docs/` | Design notes, architecture decision records, and negative results |
-| `bench/` | The same core compiled to wasm, running in a browser |
+
 
 ## What it is not
 
