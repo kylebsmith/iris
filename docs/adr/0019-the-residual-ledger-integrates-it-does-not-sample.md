@@ -82,3 +82,48 @@ been checked against a recorded gesture, and the app's own test had to
 app's synthetic per-mark candidates, every mark contradicts every other one
 (settled train MSE 1.4e-2 at forty marks) and the margin sits at 1.15, which
 is the detector correctly declining to accuse anybody.
+
+## Relation to prior work — read this before claiming novelty
+
+Integrating a per-example quantity along the training trajectory, and using it
+to rank examples, is **TracIn**: Pruthi, Liu, Kale & Sundararajan, *Estimating
+Training Data Influence by Tracing Gradient Descent*, NeurIPS 2020,
+arXiv:2002.08484 (`iris-references/papers/pruthi-2020-tracin.pdf`).
+
+This is not adjacent work, it is the same idea. TracIn defines *self-influence*
+— the influence of a training point on its own loss — and evaluates it by "the
+fraction of mislabelled data recovered", which is the metric the table above
+uses under a different name. Their §4.1 and §5 do exactly what this record
+does: corrupt a known fraction of the training set, rank, and count how many
+corrupted points appear at the top.
+
+The related earlier line is Koh & Liang, *Understanding Black-box Predictions
+via Influence Functions*, ICML 2017, arXiv:1703.04730
+(`iris-references/papers/koh-liang-2017-influence-functions.pdf`), which
+estimates the same influence from the converged model rather than the
+trajectory — the "sample the endpoint" approach whose failure this record
+measures.
+
+**So the honest claim is not "we invented this."** It is narrower and still
+worth making:
+
+1. TracIn needs gradients, saved checkpoints, and a separate influence
+   computation. The ledger here is one float32 per example, accumulated inside
+   the loop that was already running (`iris.h` PART 8f), costing no extra
+   arithmetic and no extra pass — it is a scalar approximation of trajectory
+   self-influence that fits on a microcontroller.
+2. Nothing in that literature is run on-device, during an interactive session,
+   to tell a musician which take to delete. TracIn's setting is offline dataset
+   cleaning for large models.
+3. The negative result above — that endpoint residual gets *worse* as the
+   corruption grows, because convergence bends the surface to fit the bad point
+   — is a concrete failure of the endpoint method at n = 20 on this
+   architecture, and it is the reason the integrated form was chosen here.
+
+**Before this is defended, read TracIn.** State the relation in those terms.
+Claiming the mechanism as new would not survive a reviewer who knows it, and
+the narrower claim is both true and sufficient.
+
+**Also still open:** every number in this record comes from smooth synthetic
+data. No human gesture has been tested. That bound belongs in any write-up of
+this result.
