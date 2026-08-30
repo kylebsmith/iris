@@ -390,21 +390,13 @@ IRIS_API int iris_isbad(float x) {
 
    p(x) = x(27+x^2)/(27+9x^2), clamped to tanh's codomain.
 
-   THIS IS NOT A CHEAP STAND-IN FOR tanh THAT WE REGRET. It was tested against
-   a Padé [7/6] approximant that is 245x more accurate (max error 2.2e-05 vs
-   2.4e-02) and against true tanh itself, over 6 target shapes, 2,304 paired
-   runs, scoring held-out error:
-
-       accurate [7/6]   3.8% WORSE held-out, +43% training wall clock,
-                        +23% on the on-stage prediction path
-       true tanh        indistinguishable from [7/6]
-
-   Accuracy is not the objective. The overshoot this approximant carries in the
-   mid-range — up to +0.0235 above tanh at x = 1.566 — makes it a STEEPER
-   sigmoid with a hard floor on gradient flow past |s| = 3, and that is capacity
-   control. It is the same axis that the smoothing study and the hidden-width
-   audit each rediscovered through a different lever. The function is doing
-   useful work, not merely approximating.
+   THIS IS NOT A CHEAP STAND-IN FOR tanh THAT WE REGRET. It was measured
+   against a far more accurate approximant and against true tanh itself, over
+   6 target shapes and 2,304 paired runs, and it WON on held-out error. The
+   reason is that accuracy is not the objective: this function overshoots tanh
+   in the mid-range, which makes it a steeper sigmoid with a hard floor on
+   gradient flow past |s| = 3, and that is capacity control. It is doing useful
+   work, not merely approximating. Design, arms and numbers: docs/FREEZE.md.
 
    Two exact facts make the clamp correct rather than arbitrary:
    p(x) - 1 = (x-3)^3/(27+9x^2), so p(3) = 1 EXACTLY, and
@@ -414,20 +406,12 @@ IRIS_API int iris_isbad(float x) {
    floats in [2.5,3.0] still evaluate above 1.0f). It is also branch-free, so
    its cost does not depend on the data.
 
-   WHAT THIS FIXED, 2026-08-27. The clamp used to sit at |x| > 4.9, letting p
-   reach 1.02822 — outside tanh's codomain — which put a 0.0282 jump into every
-   hidden unit and drove the backward factor (1 - a*a) NEGATIVE, pointing the
-   gradient the wrong way, on 3.4-49.6% of weight updates. That band is now
-   unreachable: at saturation a = +/-1 exactly, so 1 - a*a = 0, which is exactly
-   p'(3).
-
    CONSEQUENCE, STATED PLAINLY AND PERMANENTLY. (1 - a*a) is the derivative of
-   TRUE tanh, not of this function, so the backward pass is a surrogate gradient
-   — under-scaled by 2.4-3.3% in aggregate, never wrong-signed. Making it exact
-   is worth a measured 1.4% (CI [0.977, 0.996]) and costs 2.4x per epoch in the
-   implementation tried. It is not a defect being tolerated; it is a described
-   property of a chosen nonlinearity, and it can be revisited any time it earns
-   its 1.4% without changing what a saved instrument means.
+   TRUE tanh, not of this function, so the backward pass is a surrogate
+   gradient -- under-scaled by 2.4-3.3% in aggregate, never wrong-signed. It is
+   not a defect being tolerated; it is a described property of a chosen
+   nonlinearity, and it can be revisited any time it earns its measured 1.4%
+   without changing what a saved instrument means.
 
    The +/-1e9 test only keeps x*(27+x^2) finite; it is not the saturation point.
    It was documented here as never firing, on the reasoning that pre-activations
@@ -576,51 +560,42 @@ struct iris {
    from an instrument that was never fitted, a closed-form solve that collapsed
    to a constant. Those are the conditions a caller cannot detect for itself.
 
-   It does NOT report an argument mistake. Asking for demonstration 5,000 of
-   twelve, or deleting an index that does not exist, returns a failure through
-   the RETURN VALUE and leaves the status alone. That is deliberate: those
-   calls tell you immediately and locally, whereas a trapped not-a-number is
-   discovered somewhere else entirely, which is why it needs a channel of its
-   own. Making argument errors sticky here would leave a polled user interface
-   showing a fault for ever after one out-of-range query.
+   It does NOT report an argument mistake -- asking for demonstration 5,000 of
+   twelve, say. Those come back through the RETURN VALUE and leave the status
+   alone, deliberately, so that one out-of-range query cannot leave a polled
+   user interface showing a fault for ever. So: check the return value of the
+   call you made, and check this for whether the instrument itself is in
+   trouble. Two questions, two answers. (CHANGELOG.md, 0.1.0.) */
 
-   So: check the return value of the call you made, and check this for whether
-   the instrument itself is in trouble. Two questions, two answers. */
 /* THREADING, IN ONE SENTENCE.
 
        Never touch the same instrument from two places at once.
 
    That is the whole contract, and it is short because there is no mutable
    state anywhere outside the instrument you passed in -- no globals, no static
-   buffers, no shared scratch. Two instruments therefore cannot interact, on
-   any number of cores. Verified: four instruments trained interleaved and
-   8,000 interleaved predictions produced zero cross-talk.
+   buffers, no shared scratch -- so two instruments cannot interact on any
+   number of cores.
 
-   WHAT IS SAFE
-     Any number of instruments on one core, called one after another. There is
-     no limit and no per-core rule -- a single-core chip runs one thing at a
-     time anyway, so nothing can overlap.
-     One instrument per thread, on as many cores as you have.
-     One instrument used only inside an interrupt.
+   SAFE: many instruments on one core, one after another; one instrument per
+   thread across as many cores as you have; one instrument used only inside an
+   interrupt.
 
-   WHAT IS NOT
-     The SAME instrument from an interrupt and the main loop. iris_predict
-     writes its working values inside the instrument, so an interrupt that
-     lands mid-call leaves both answers wrong. Give the interrupt its own
-     instrument, or keep prediction on one side of the fence.
+   NOT SAFE: the SAME instrument from an interrupt and the main loop.
+   iris_predict writes its working values inside the instrument, so an
+   interrupt landing mid-call leaves both answers wrong. Give the interrupt its
+   own instrument. The full table and the cross-talk verification are in
+   README.md under "Threading".
 
    TIMING, for the audio case. One prediction is 14.9 microseconds on an
-   ESP32-S3; one audio sample period at 48 kHz is 20.8. That is 1.4x of margin
-   -- enough to run per-sample, not enough to also do anything expensive in the
-   same callback. This line said 7.4-7.8 until 2026-08-30; that figure was a
-   host measurement multiplied by an estimated 270 and printed as if taken on
-   the part. The number above is measured on the part: 20,000 predictions in
-   298,915 microseconds, reproduced within 0.001 us across runs and across two
-   different boards (device_torture.ino test 9, 2 in / 12 hidden / 3 out,
-   240 MHz). TRAINING does not fit and is not close: 595 ms at 4
-   demonstrations, 2.7-3.0 s at 8 to 20, same boards. Train in
-   slices from the main loop -- see iris_train_slice -- and never from an
-   interrupt.                                                                */
+   ESP32-S3 against a 20.8 microsecond audio sample at 48 kHz -- 1.4x of
+   margin, enough to run per-sample and not enough to also do anything
+   expensive in the same callback. That figure is measured on the part, not
+   scaled: device_torture.ino test 9, two boards. This line said 7.4-7.8 until
+   2026-08-30, which was a host measurement multiplied by an estimated 270 and
+   printed as if taken on the part; the provenance is in README.md and
+   docs/SYSTEM-technical.md. TRAINING does not fit and is not close: 595 ms at
+   4 demonstrations, 2.7-3.0 s at 8 to 20. Train in slices from the main loop
+   -- see iris_train_slice -- and never from an interrupt. */
 
 /* HOW EVERY FUNCTION IN THIS FILE REPORTS FAILURE — two rules, and only two.
 
@@ -1604,55 +1579,38 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
          ⚠️ THIS IS A SURROGATE GRADIENT, NOT THE GRADIENT. Read this before
          citing anything about the trainer.
 
-         d_out = (predicted - target) * y*(1-y). y*(1-y) is the exact derivative
-         of the TRUE logistic function. Our forward pass does not use the true
-         logistic: iris_sigmoid is built from iris_tanh, which is the clamped
+         d_out = (predicted - target) * y*(1-y). y*(1-y) is the exact
+         derivative of the TRUE logistic. Our forward pass does not use the
+         true logistic: iris_sigmoid is built from iris_tanh, the clamped
          rational approximant of PART 1. So the backward pass is not the
-         derivative of the forward pass. It is a surrogate: close enough in
-         shape to point downhill, and deliberately kept because the measured
-         fits are good and changing it would move every golden hash in the
-         audit. Saying so plainly here matters -- an earlier draft of this note
-         described it as the exact derivative, which was wrong about our own
-         implementation and contradicted PART 1 twenty lines above it.
+         derivative of the forward pass. It is a surrogate -- close enough in
+         shape to point downhill, and kept because the measured fits are good
+         and changing it would move every golden hash in the audit.
 
-         HOW WRONG, MEASURED. Ratio of the derivative used to the exact
-         derivative of the function actually evaluated, verified numerically
-         2026-08-27: 1.000 at x=0, 0.889 at x=1, 0.750 at 1.5, 0.555 at 2.0,
-         0.305 at 2.5 — then it changes sign, reaching -1.25 by x=4.5. It is
-         exact only at zero and under-scales by up to 2x across the ordinary
-         operating range, long before the sign flip PART 1 documents.
+         HOW WRONG. Exact only at zero, and under-scaling by up to 2x across
+         the ordinary operating range before it changes sign entirely. The
+         full ratio table is docs/MATH-AUDIT.md:153.
 
-         WHY IT STAYS — the vanishing-gradient objection, answered with a
-         count rather than an argument. The textbook complaint about pairing a
-         logistic output with squared error is that y*(1-y) collapses the
+         WHY IT STAYS. The textbook objection is that y*(1-y) collapses the
          gradient exactly when a unit is confidently wrong. Instrumented for
-         that specific event (y*(1-y) < 0.01 while |y - t| > 0.3):
-
-             0 fires in 48,960,000 output-unit updates,
-             across N in {5,10,20,50}, 32 seeds, 6000 epochs, all deciles.
-
-         It cannot fire at the defaults because targets live in [0.1,0.9], so
-         y*(1-y) >= 0.09 whenever the network is near its target. It takes
-         lr >= 0.5 to make it appear at all (0.735% on a cliff target at N=50)
-         and lr = 1.0 to make it common. The setter is now internal (iris_internal_set_learning); it permitted up to
-         2.0, so THAT is the honest caveat: measured absent at the defaults,
-         measured present above lr 0.5.
-
-         AND THE PROPOSED FIXES ARE WORSE, paired per seed on identical data and
-         identical inits: cross-entropy with rescaled targets is 1.2-2.3x worse
-         held-out at every N; linear output units are 1.06-1.77x worse and
-         triple the pre-clamp overshoot; flooring y*(1-y) is a mathematical
-         no-op, since it never goes below 0.09.
+         that event, it fired ZERO times in 48.96 million output-unit updates
+         -- it cannot fire at the defaults, because targets live in [0.1,0.9]
+         so y*(1-y) >= 0.09 whenever the network is near its target. THE
+         HONEST CAVEAT: that is measured absent at the defaults and measured
+         PRESENT above a learning rate of 0.5, which the internal setter used
+         to permit up to 2.0. Every proposed repair measured worse
+         (docs/MATH-FIXES.md defect 3).
 
          WHAT IS BEING TRADED AWAY, stated plainly rather than buried: one arm
-         does beat this — a cross-entropy gradient with targets left in
+         does beat this -- a cross-entropy gradient with targets left in
          [0.1,0.9], which wins 32/32 seeds at N=20 by ~5%, and ~12% at a tuned
-         lr. It LOSES at N=10 (1.094x), which is the regime a musician actually
-         demonstrates in, and it widens the reroll spread in the undemonstrated
-         gaps by 1.6x. Reroll being a real control rather than a shrug is a
-         stated promise of this library, and y*(1-y) is the brake that keeps it.
-         That is a judgement about the use case sitting on top of a measurement,
-         not a measurement by itself, and it is recorded here as such.
+         learning rate. It LOSES at N=10 (1.094x), which is the regime a
+         musician actually demonstrates in, and it widens the reroll spread in
+         the undemonstrated gaps by 1.6x. Reroll being a real control rather
+         than a shrug is a stated promise of this library, and y*(1-y) is the
+         brake that keeps it. That is a judgement about the use case sitting on
+         top of a measurement, not a measurement by itself, and it is recorded
+         here as such.
 
          See docs/MATH-FIXES.md defect 3 and docs/MATH-AUDIT.md section 5. */
       float rse = 0.0f;
@@ -2139,75 +2097,45 @@ IRIS_API float iris_suggest_smoothing(iris *k, void *scratch, size_t scratch_byt
 
    The trial-and-error trap in interactive ML is that when the instrument
    feels wrong you have no idea WHICH of your twenty demonstrations is wrong,
-   so you re-record at random. This points at one. It costs one float per
-   example slot and one add per example per epoch.
+   so you re-record at random. This points at one.
 
-   THE OBVIOUS THING DOES NOT WORK, AND TRAINING TO CONVERGENCE IS WHY.
-   The obvious thing is the final training residual: after training, ask each
-   example how badly the model still misses it. Corrupt one demonstration of
-   twenty by +mag on one output and count how often it ranks first out of
-   twenty (nh=12, 8 outputs, 20 trials, iris_train_converge):
+   IT IS THE INTEGRAL, NOT THE ENDPOINT, AND THAT IS THE WHOLE IDEA.
+   The obvious detector is the final training residual: after training, ask
+   each example how badly the model still misses it. It gets WORSE as the
+   mistake gets bigger, because given enough epochs the optimiser bends the
+   surface far enough to fit the bad point too, after which it looks like
+   every other point. So this sums each example's squared error over EVERY
+   epoch instead, which measures how long it fought rather than where it
+   ended up. An example that agrees with its neighbours is fitted early and
+   stays fitted; one that contradicts them stays wrong for thousands of
+   epochs. That ranking is stable across training budgets where the endpoint
+   is not.
 
-     corruption                        +0.05  +0.10  +0.20  +0.40
-     ----------------------------------------------------------------
-     final residual                     8/20   5/20   2/20   2/20
-     leave-one-out CV (n retrains)      1/20   1/20  10/20  11/20
-     INTEGRATED residual (this)         6/20  18/20  17/20  17/20
+   WHAT YOU GET BACK IS A MARGIN, NOT A LEVEL, and that is deliberate. The
+   worst-of-n stress score rises with n on clean data with nothing wrong at
+   all, so a user interface wired to a fixed level would be silent on small
+   rigs and cry wolf on large ones. Worst divided by second-worst does not
+   drift. IRIS_STRESS_FLAG is 2.5.
 
-   Read the first row backwards. The final residual gets WORSE as the mistake
-   gets BIGGER — 2/20 at +0.40 is barely above the 1/20 you would get by
-   guessing. Of course it does: give the optimiser enough epochs and it bends
-   the surface far enough to fit the bad point too, after which the bad point
-   looks like every other point. The same measurement at 6,000 epochs scores
-   16/20 at +0.05 and 8/20 at +0.40, which is how a detector measured at one
-   budget and shipped at another becomes a feature that quietly does nothing.
+   BELOW IRIS_STRESS_MIN_EX (12) IT RETURNS -1 AND SAYS NOTHING. An example
+   can only be caught disagreeing with a crowd if there is a crowd; at ten
+   demonstrations the clean margin alone reaches 5.04, which would be a false
+   accusation. That is the situation, not a tuning failure.
 
-   WHAT WORKS IS THE INTEGRAL, NOT THE ENDPOINT. An example that agrees with
-   its neighbours is fitted early and stays fitted. An example that
-   contradicts them stays wrong for thousands of epochs while the optimiser
-   trades it against everything else. Summing each example's squared error
-   over every epoch of the run measures how long it fought, and that is
-   stable across budgets: 5/17/17/18 at 6,000 epochs, 9/17/17/16 at 20,000,
-   11/16/17/15 at 60,000.
+   TWO LIMITS THAT TRAVEL WITH IT. A 5% offset on one of eight outputs is
+   smaller than the spread between two takes of the same human gesture, and
+   nothing here finds it reliably -- this function does not pretend to. And
+   every number behind it comes from a clean offset on a smooth, noiseless
+   truth: real demonstrations are inconsistent in ways that are not one
+   displaced output, and none of this has been checked against a recorded
+   human gesture.
 
-   THE +0.05 COLUMN IS HONEST AND STAYS HONEST. A 5% offset on one of eight
-   outputs is smaller than the spread between two takes of the same human
-   gesture. Nothing in this table finds it reliably and this function does
-   not pretend to.
+   COST. sizeof(float) * cap in the arena -- 512 B at cap 128, 1 KB at cap 256
+   -- and one float add per example per epoch, under 0.1% of the backprop work
+   already being done for that example. Not free; that is the price.
 
-   HOW LOUD TO BE. The stress LEVEL cannot be thresholded, because the worst
-   of n scores rises with n whether or not anything is wrong — measured on
-   clean data with no corrupted example at all, worst-of-n stress runs to
-   1.76 at 5 examples, 2.95 at 20, 6.34 at 50 and 9.23 at 100. A UI wired to
-   a fixed level would be silent on small rigs and would cry wolf on large
-   ones. The MARGIN — worst divided by second-worst — is the statistic that
-   does not drift: on clean data its maximum over 40 trials is 1.44 at 20
-   examples, 2.27 at 50 and 2.06 at 100.
-
-     examples   clean margin (median / max)   with a +0.40 demo (median / max)
-     --------   --------------------------   -------------------------------
-            5        1.12 / 1.55                     1.33 / 5.10
-           10        1.35 / 5.04                     1.24 / 2.35
-           20        1.12 / 1.44                     2.00 / 4.14
-           50        1.43 / 2.27                     5.07 / 30.89
-          100        1.37 / 2.06                    27.95 / 83.47
-
-   BELOW ~12 EXAMPLES THERE IS NOTHING TO SAY AND THIS FUNCTION SAYS NOTHING.
-   Look at the 5 and 10 rows: the corrupted set is indistinguishable from the
-   clean one, and at 10 examples the clean margin reaches 5.04 — a false
-   accusation. That is not a tuning failure, it is the situation: an example
-   can only be caught disagreeing with a crowd if there is a crowd. Under
-   IRIS_STRESS_MIN_EX the call returns -1.
-
-   CAVEAT, the same one that governs everything in this file: the corruption
-   above is a clean offset on a smooth, noiseless truth. Real demonstrations
-   are inconsistent in ways that are not one displaced output, and none of
-   this has been checked against a recorded human gesture.
-
-   COST. sizeof(float) * cap in the arena — 512 B at cap 128, 1 KB at cap 256
-   — and one float add per example per epoch, which is under 0.1% of the
-   backprop work already being done for that example. Not free; that is the
-   price.
+   All the measurements, the detector comparison, the margin table and the
+   relation to TracIn: docs/adr/0019-the-residual-ledger-integrates-it-does-not-sample.md
    ========================================================================== */
 
 /* Fewer demonstrations than this and there is no crowd to disagree with. */
@@ -2351,61 +2279,51 @@ IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->see
    Two findings make it work in float32 on this network:
 
    GAIN. The backprop init (1/sqrt(n_in)) relies on training to grow the
-   weights. Frozen, at that scale, tanh of a [0,1] input barely bends — the
+   weights. Frozen, at that scale, tanh of a [0,1] input barely bends -- the
    random features are nearly collinear and the normal matrix is numerically
    rank-deficient. The frozen layer is drawn at 2/sqrt(n_in) instead, wide
    enough that the features have real capacity.
 
    ⚠️ PROVENANCE OF THE 2/sqrt(n_in): this comment used to cite a "measured
-   optimum of {0.71..4.0}" from a gain sweep. That sweep is not in the tree and
-   cannot be reproduced through the shipped API — iris_train_elm_ex takes
-   separate gain_w and gain_b, but its only caller passes the same value for
-   both, so two of its six parameters are constants in practice and the split
-   the sweep explored is unreachable. Treat 2/sqrt(n_in) as a working default
-   whose superiority over 1/sqrt(n_in) is argued structurally above (collinear
-   features, rank-deficient normal matrix) and is NOT currently backed by a
-   reproducible measurement. Re-running that sweep is on the open list.
+   optimum" from a gain sweep that is not in the tree and cannot be reproduced
+   through the shipped API. Treat 2/sqrt(n_in) as a working default whose
+   superiority over 1/sqrt(n_in) is argued structurally above and is NOT
+   currently backed by a reproducible measurement. Re-running that sweep is on
+   the open list.
 
    RIDGE, MANDATORY. Even with the wider gain, the unridged float32 normal
-   matrix failed Cholesky in EVERY realistic scenario measured — including
-   20 well-spread examples. The ridge is relative (lam0 * trace/(nh+1), so
-   it scales with the data) and escalates deterministically: double lambda
-   on a failed factorisation, at most 8 times, report the count. Measured
-   across six hostile scenarios x five lambdas x three widths: zero
-   unfixable failures, at most 2 doublings ever needed. If escalation was
-   needed the status says IRIS_RIDGE_ESCALATED — the result is valid, the
-   data was harder than usual (256 duplicates, say).
+   matrix failed Cholesky in EVERY realistic scenario measured -- including 20
+   well-spread examples. The ridge is relative (lam0 * trace/(nh+1), so it
+   scales with the data) and escalates deterministically: double lambda on a
+   failed factorisation, at most 8 times, report the count. If escalation was
+   needed the status says IRIS_RIDGE_ESCALATED -- the result is valid, the data
+   was harder than usual. The campaign behind that: docs/adr/0009-ridge-is-mandatory.md.
 
    The solved instrument is an ordinary iris instrument: same w1/b1/w2/b2
-   arrays, same iris_predict, saves and loads as a normal v1/v2 file
-   (bit-identical round trip, verified over 441 probes). The solve targets
-   logit space — the exact inverse of our sigmoid — so the shipping sigmoid
-   forward pass lands on the normalized targets. Stated honestly: that makes
-   it a bounded-output VARIANT of the backprop head, not an equivalent.
+   arrays, same iris_predict, saves and loads as a normal file. The solve
+   targets logit space -- the exact inverse of our sigmoid -- so the shipping
+   forward pass lands on the normalized targets. Stated honestly: that makes it
+   a bounded-output VARIANT of the backprop head, not an equivalent.
 
    THE 4.6e-2 FIGURE, SCOPED. It measures logit-space-sigmoid ELM against
-   linear-head ELM — an internal ablation between two ELM variants, largest
-   near the demos (ADR 0008:51-52). It is NOT the ELM-vs-backprop gap, which
-   is not bounded pointwise anywhere in this repo. Do not cite it as one.
+   linear-head ELM -- an internal ablation between two ELM variants
+   (docs/adr/0008-elm-same-network-better-math.md). It is NOT the
+   ELM-vs-backprop gap, which is not bounded pointwise anywhere in this repo.
+   Do not cite it as one.
 
-   REROLL is the reason to love it: a new seed literally IS a new frozen
-   random layer, undiluted by any training — measurably steadier at the
-   demos (0.016 vs backprop's 0.017) and ~45% livelier in the gaps (0.11 vs
-   0.076) at nh=12. The purest form of "same examples, different instrument"
-   this project has. The lively corner lives at nh >= 8: four frozen random
-   features cannot recall five demos (measured — the near-band fails at
-   every lambda), so ELM refuses nh < 8 outright rather than shipping a
-   config that breaks the reroll promise.
-
-   Defaults that pass every band: lam0 = 1e-4 at nh=12 (equal fit to
-   backprop, 425x). nh=48 with lam0 = 1e-3 fits BETTER than backprop on
-   both recall and generalisation (296x, ~0.9 ms S3 at 50 examples).
+   REROLL is the reason to love it: a new seed literally IS a new frozen random
+   layer, undiluted by any training -- measurably steadier at the demos and
+   livelier in the gaps. The purest form of "same examples, different
+   instrument" this project has. That corner lives at nh >= 8: four frozen
+   random features cannot recall five demos, so ELM refuses nh < 8 outright
+   rather than shipping a config that breaks the reroll promise. Numbers and
+   the recommended lam0 per width: docs/adr/0008-elm-same-network-better-math.md.
 
    Determinism: the hidden layer is redrawn from k->seed by a LOCAL rng
-   (k->rng is never touched — a closed-form solve is not an event in the
-   correction history), accumulation order is fixed by example order, and
-   the escalation schedule is fixed. Same seed + same examples =>
-   bit-identical weights, verified at nh 12/24/48.
+   (k->rng is never touched -- a closed-form solve is not an event in the
+   correction history), accumulation order is fixed by example order, and the
+   escalation schedule is fixed. Same seed + same examples => bit-identical
+   weights, verified at nh 12/24/48.
    ========================================================================== */
 
 #define IRIS_ELM_SCRATCH(NH, NO)                                                 \

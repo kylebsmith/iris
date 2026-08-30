@@ -49,6 +49,21 @@ clean data with nothing wrong at all: 1.76 at 5 examples, 2.95 at 20, 6.34 at
 would cry wolf on large ones. Worst divided by second-worst does not drift:
 clean maximum 1.44 / 2.27 / 2.06 at 20 / 50 / 100. `IRIS_STRESS_FLAG` is 2.5.
 
+The full margin table, moved here from `iris.h` on 2026-08-30 — it existed
+nowhere else, so trimming the header would have destroyed it:
+
+| examples | clean margin (median / max) | with a +0.40 demo (median / max) |
+|---|---|---|
+| 5 | 1.12 / 1.55 | 1.33 / 5.10 |
+| 10 | 1.35 / 5.04 | 1.24 / 2.35 |
+| 20 | 1.12 / 1.44 | 2.00 / 4.14 |
+| 50 | 1.43 / 2.27 | 5.07 / 30.89 |
+| 100 | 1.37 / 2.06 | 27.95 / 83.47 |
+
+Read the last two rows against the first two: the signal is enormous at 50 and
+100 demonstrations and absent at 5 and 10, which is the whole argument for
+`IRIS_STRESS_MIN_EX`.
+
 **Below `IRIS_STRESS_MIN_EX` (12) it returns −1 and says nothing.** At 10
 examples the clean margin reaches 5.04 — a false accusation. An example can
 only be caught disagreeing with a crowd if there is a crowd. That is the
