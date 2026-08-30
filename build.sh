@@ -23,6 +23,8 @@ CFLAGS="-O2 -Wall -Wextra"
 case "${1:-audit}" in
   mutate)     # Does every check actually protect what it claims to? See tools/.
               sh tools/mutate.sh "${2:-}" ;;
+  bloat)      # Is the file getting harder to read? A ratchet, not a report.
+              sh tools/bloat.sh ;;
   claims)
     # Do the documents still tell the truth about the code? See tools/.
     sh tools/check-claims.sh

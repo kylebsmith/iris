@@ -22,6 +22,7 @@ jobs:
           sh build.sh mpe
           sh build.sh sinks
           sh build.sh claims
+          sh build.sh bloat
 
   # The library claims zero external symbols. That claim is checkable in one
   # command, so check it on every push rather than asserting it in a README.
