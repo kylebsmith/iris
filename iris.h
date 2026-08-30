@@ -1352,45 +1352,33 @@ IRIS_API int iris_internal_check_weights(iris *k) { if (!k) return 0;
 /* --------------------------------------------------------------------------
    TRAINING TO CONVERGENCE, AND SAYING SO OUT LOUD
 
-   The masthead used to recommend 600 epochs. Measured on the 8-output
-   reference task, 20 examples, nh=12, mean of 9 seeds, that budget stops the
-   optimiser less than a fifth of the way down:
-
-       epochs      train MSE      recall      grid RMSE     host ms
-          600       7.87e-4       0.0112        0.0158          1.5
-        2 000       2.77e-4       0.0078        0.0136          4.9
-        6 000       2.58e-5       0.0032        0.0094         14.5
-       20 000       8.87e-6       0.0019        0.0086         50.0
-       60 000       3.23e-6       0.0012        0.0083        150.0
-      200 000       2.19e-6       0.0009        0.0083        501.1
-
-   Same code, same seeds, one integer. Recall improves 5.9x and held-out grid
-   error 1.8x for nothing but time, and the project's brief is explicit that
-   time is the cheap thing.
+   The masthead used to recommend 600 epochs. Measured, that budget stops the
+   optimiser less than a fifth of the way down: going to 200,000 improves
+   recall 5.9x and held-out error 1.8x for nothing but time, and time is the
+   cheap thing here. The full epoch table is docs/adr/0017-train-to-the-plateau-not-to-a-constant.md.
 
    So the budget is no longer a number the caller guesses. iris_train_converge
    runs until the training error PLATEAUS: every IRIS_CONV_WINDOW epochs it
    compares the error against the error one window ago and stops when the
    window bought less than IRIS_CONV_TOL of it. Window and tolerance are
-   measured, not guessed — a short window (200-500 epochs) mistakes the
+   measured, not guessed -- a short window (200-500 epochs) mistakes the
    ordinary epoch-to-epoch noise of a shuffled SGD trace for a plateau and
    stops at a quarter of the achievable fit.
 
-   THE ONE PLACE THIS IS NOT FREE. At 50 examples the fixed 200,000-epoch
-   budget is measurably WORSE on held-out grid error than 60,000 (0.0065 vs
-   0.0063) — the point where more convergence starts costing generalisation.
-   A plateau criterion stops before that on its own; a bigger constant would
-   not have. That is the argument for a criterion over a constant.
+   THE ONE PLACE THIS IS NOT FREE. At 50 examples a fixed 200,000-epoch budget
+   is measurably WORSE on held-out error than 60,000 -- the point where more
+   convergence starts costing generalisation. A plateau criterion stops before
+   that on its own; a bigger constant would not have. That is the argument for
+   a criterion over a constant.
 
-   AND THE CAVEAT THAT GOVERNS THE WHOLE TABLE. The truth function these
+   AND THE CAVEAT THAT GOVERNS THE WHOLE TABLE. The truth function those
    numbers come from is smooth and noiseless. "More convergence never hurts"
    is exactly the conclusion most at risk from real sensor noise and human
-   inconsistency, and none of this is verified on hardware or on recorded
-   human gesture. Treat the ceiling as a ceiling.
+   inconsistency, and none of it is verified on hardware or on recorded human
+   gesture. Treat the ceiling as a ceiling.
 
-   HONEST PROGRESS. A converged run at 50 examples is ~4 s on the S3, which
-   is long enough that the glass must show something true. Two ways in, both
-   costing nothing:
+   HONEST PROGRESS. A converged run at 50 examples is seconds on the S3, long
+   enough that the glass must show something true. Two ways in, both free:
 
      - iris_train_converge(k, ceiling, cb, user) calls cb every window with
        (done, ceiling, err); returning 0 from cb aborts, leaving a usable
@@ -1403,8 +1391,8 @@ IRIS_API int iris_internal_check_weights(iris *k) { if (!k) return 0;
        rng draws are the same draws in the same order.
 
    iris_train_epochs IS UNCHANGED AND STAYS UNCHANGED. It is the Wekinator
-   fidelity path — fixed-epoch backprop is what Weka's MultilayerPerceptron
-   does — and audit check 12 pins its output to the bit.
+   fidelity path -- fixed-epoch backprop is what Weka's MultilayerPerceptron
+   does -- and audit check 12 pins its output to the bit.
    -------------------------------------------------------------------------- */
 
 #define IRIS_CONV_WINDOW  2000    /* epochs between plateau tests (measured)   */
@@ -2284,12 +2272,23 @@ IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->see
    rank-deficient. The frozen layer is drawn at 2/sqrt(n_in) instead, wide
    enough that the features have real capacity.
 
-   ⚠️ PROVENANCE OF THE 2/sqrt(n_in): this comment used to cite a "measured
-   optimum" from a gain sweep that is not in the tree and cannot be reproduced
-   through the shipped API. Treat 2/sqrt(n_in) as a working default whose
-   superiority over 1/sqrt(n_in) is argued structurally above and is NOT
-   currently backed by a reproducible measurement. Re-running that sweep is on
-   the open list.
+   PROVENANCE OF THE 2/sqrt(n_in), settled 2026-08-30. This comment used to
+   cite a measured optimum from a sweep that was not in the tree, and then said
+   plainly that the number was unsupported. The sweep IS reachable through the
+   public API -- iris_train_elm_ex takes gain_w and gain_b -- so it was re-run
+   and is now docs/gain-sweep.c, one command to reproduce. Mean held-out error
+   over 4 target shapes x 16 seeds x {8,20,50} demonstrations x nh {12,24,48},
+   gain = M/sqrt(n_in):
+
+       M         0.25   0.50   1.00   1.50   2.00   3.00   4.00   8.00
+       error    .1143  .1025  .0946  .0919  .0905  .0894  .0920  .1087
+
+   The structural argument holds: M=2 beats the backprop init at M=1 by 4.3%.
+   The minimum is BROAD and M=2 sits inside it. Stated honestly, M=3 is
+   marginally better (1.2%) and the optimum drifts upward with width -- best at
+   1.5 for nh=12 and at 3.0 for nh=48 -- so 2 is a good constant rather than
+   the best one, and it stays because moving it would move every frozen hash in
+   the audit for a 1.2% gain.
 
    RIDGE, MANDATORY. Even with the wider gain, the unridged float32 normal
    matrix failed Cholesky in EVERY realistic scenario measured -- including 20
@@ -2600,12 +2599,9 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
    recognised — or politely refused — in 2036.
 
    FORMAT v2 is format v1 plus ONE uint32 — the live rng state — inserted
-   right after the 8-word header. Why: a warm correction (iris_correct)
-   advances rng.s past the seed, and v1's loader resets rng.s = seed, so a
-   corrected instrument saved as v1 and reloaded would take a DIFFERENT
-   shuffle path on its NEXT correction than the in-memory instrument —
-   same weights, quietly diverging futures. v2 persists the stream, so
-   save/load is transparent to the correction chain.
+   right after the 8-word header, so that save/load is transparent to the
+   correction chain rather than quietly forking it.
+   (docs/adr/0006-format-v2-one-word-v1-loader-permanent.md)
 
    FORMAT v3 changes NO BYTES AT ALL. Same header, same nine words, same
    payload, same length. What it changes is the MEANING of the weights: a v3
@@ -2617,19 +2613,16 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
    fresh instrument at v3) and iris_internal_set_legacy_norm (which the audit uses to
    hold the pre-v3 training path against its frozen hash).
 
-   WHAT BREAKS IF SOMEONE DELETES THE v1/v2 PATH. Not a load failure — that
-   would be survivable, because it is loud. What breaks is silent: a v1 or v2
-   file would still load, every field would arrive intact, the instrument
-   would report itself trained and would play — and every prediction would be
-   wrong, because weights fitted against inputs in [0,1] would be fed inputs
-   in [-1,+1]. Every first-layer pre-activation shifts by -sum_i w1[h][i],
-   which for a trained net is an arbitrary, per-hidden-unit constant: the
-   mapping is not degraded, it is a different mapping. The musician would
-   load the instrument they practised for a year, hear something else, and
-   have nothing to point at. That is precisely the failure Fiebrink & Sonami
-   (NIME 2020) describe and precisely what ADR 0006 promised would never
-   happen here. Audit check 11 loads a frozen v1 file and compares the
-   prediction BITS; deleting the branch fails it in one run.
+   WHAT BREAKS IF SOMEONE DELETES THE v1/v2 PATH, and it is not a load
+   failure — that would be survivable, because it is loud. It is SILENT: the
+   file still loads, every field arrives intact, the instrument reports itself
+   trained and plays, and every prediction is wrong, because weights fitted
+   against inputs in [0,1] are being fed inputs in [-1,+1]. The mapping is not
+   degraded, it is a DIFFERENT mapping. The musician loads the instrument they
+   practised for a year, hears something else, and has nothing to point at —
+   the exact failure Fiebrink & Sonami (NIME 2020) describe. Audit check 11
+   loads a frozen v1 file and compares the prediction BITS, so deleting the
+   branch fails in one run.
 
    THE v1 LOADER IS PERMANENT. Old files load byte-identically to the old
    behaviour, forever. Fiebrink & Sonami's users lost technique to
