@@ -174,10 +174,38 @@
 #if defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__
 #error "iris: -ffinite-math-only tells the compiler no NaN or infinity can exist, which deletes every guard in this library. Build without it."
 #endif
+/* THE COMPONENT FLAGS, which -ffast-math turns on and which also work alone.
+   Measured 2026-08-30: -freciprocal-math, -funsafe-math-optimizations and
+   -fassociative-math each change the instrument, with no diagnostic of any
+   kind, exactly like -ffinite-math-only did before the tripwire above. GCC
+   announces them and clang does not, so this catches them on GCC only -- which
+   is the compiler for every ESP32, AVR and RP2040 build, and is where it
+   matters most. Say so rather than pretend it is complete.
+   No Arduino core passes any of these: checked platform.txt for arduino:avr,
+   esp32:esp32, rp2040:rp2040 and STMicroelectronics:stm32. Reaching this
+   #error takes a deliberate flag.
+
+   WHAT THIS DOES NOT CATCH, stated so the coverage is not overstated:
+   -freciprocal-math and -funsafe-math-optimizations are caught on GCC (the
+   latter defines all four macros). -fassociative-math passed DIRECTLY defines
+   no macro at all on gcc-15 -- measured with -dM -E -- so it is undetectable
+   here and it does change the instrument. And on clang no component flag is
+   detectable, because clang defines none of these macros. */
+#if defined(__RECIPROCAL_MATH__) && __RECIPROCAL_MATH__
+#error "iris: -freciprocal-math rewrites division as multiplication by a reciprocal and changes the instrument. Build without it."
+#endif
+#if defined(__ASSOCIATIVE_MATH__) && __ASSOCIATIVE_MATH__
+#error "iris: -fassociative-math / -funsafe-math-optimizations reorders floating-point arithmetic and changes the instrument. Build without it."
+#endif
 /* 2. Forbid contraction at the source level. Clang honours this pragma at
       default and -ffp-contract=on (measured: blob becomes bit-identical to
-      a -ffp-contract=off build); clang IGNORES it under -ffp-contract=fast,
-      and GCC (incl. xtensa-esp32s3) ignores it always — those builds must
+      a -ffp-contract=off build); clang IGNORES it under -ffp-contract=fast.
+      THIS LINE USED TO SAY GCC IGNORES IT ALWAYS. That is wrong, and wrong in
+      the direction that undersold our own defence: measured 2026-08-30 with
+      gcc-15 -O2 -ffp-contract=fast, the pragma present gives the SAME
+      prediction hash as the clang baseline, and stripping the pragma from a
+      copy changes it. The pragma is honoured on GCC and is the thing doing the
+      work. A -ffp-contract=fast clang build still must
       pass -ffp-contract=off explicitly. The golden-blob audit check catches
       any build where neither defence held.                                 */
 /* GNU compilers ignore the standard pragma, and in GNU mode -- which is what

@@ -1,8 +1,13 @@
 /* ============================================================================
    03_reroll.c — same demonstrations, different instrument.
 
-   Sonami: "I may go through hundreds of models before settling to a particular
-   'palette' for a particular piece." A hand-written mapping cannot offer that.
+   Laetitia Sonami: "I may go through hundreds of models before settling to a
+   particular 'palette' for a particular piece."
+     -- Rebecca Fiebrink and Laetitia Sonami, "Reflections on Eight Years of
+        Instrument Creation with Machine Learning", Proceedings of the
+        International Conference on New Interfaces for Musical Expression
+        (NIME 2020), Birmingham, pp. 237-242.
+   A hand-written mapping cannot offer that.
    You wrote it; it is what you wrote. Training can, because the search has a
    starting point, and moving the starting point moves everything you did not
    pin down.
