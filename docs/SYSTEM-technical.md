@@ -18,7 +18,7 @@ One hidden layer, not configurable — `iris_init` takes a width and no depth ar
 
 ## 3. Trainers
 
-The update rule exists once, in `iris__train_run`: `v = momentum·v − lr·g·x; w += v`, biases with the input factor omitted; `d_out = (y−t)·y·(1−y)`, `d_hid = (Σ w2·d_out)(1−a²)`. Defaults lr 0.10, momentum 0.85, clamped to [0.0001, 2.0] and [0.0, 0.99]. Updates are per example; `order[]` is Fisher–Yates shuffled at the top of every epoch from the persistent instrument RNG (which is why RNG state entered the file format).
+The update rule exists once, in `iris_internal_train_run`: `v = momentum·v − lr·g·x; w += v`, biases with the input factor omitted; `d_out = (y−t)·y·(1−y)`, `d_hid = (Σ w2·d_out)(1−a²)`. Defaults lr 0.10, momentum 0.85, clamped to [0.0001, 2.0] and [0.0, 0.99]. Updates are per example; `order[]` is Fisher–Yates shuffled at the top of every epoch from the persistent instrument RNG (which is why RNG state entered the file format).
 
 - **`iris_train_epochs`** — fixed-epoch backprop, the reference implementation, bit-pinned by audit check 12.
 - **`iris_train_converge`** (recommended) — plateau test every `IRIS_CONV_WINDOW 2000` epochs, stop when a window buys < 10% of the error, ceiling 60,000. Three further rules can end a run: an unconditional `err < 1e-6f` floor that sits *outside* the convergence guard, a divergence clamp at |w| > 16, and a callback returning 0. The floor dominates in practice: at 5 examples, 36–39 of 40 seeds stop there. `examples/01_hello.c` stops at 2,557 epochs, error 9.98e-07 — not a multiple of 2,000, so it stopped on the floor, and the plateau test cannot structurally fire before epoch 4,000.

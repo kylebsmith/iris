@@ -10,6 +10,14 @@ changes what a file means, and `docs/adr/0006` and `0018` govern that.
 
 ## 0.1.0 — unreleased
 
+- Internal helpers renamed from `iris__x` to `iris_internal_x`. C99 reserves
+  every identifier containing a double underscore for the implementation, so
+  the old names were formally undefined behaviour in a library that claims to
+  build anywhere. Six names, thirteen files. Renamed in the dated audit records
+  and decision records too, so the repository has one name for one function
+  rather than a split you have to know about. No behaviour changed: the golden
+  hashes are bit-identical and the mutation score is unmoved at 19/19.
+
 **This is the first release. Nothing before it was ever published.**
 
 The version numbers that appear in this project's git history — 0.2.0, 0.3.0,
@@ -165,7 +173,7 @@ arena bound at all. `iris_init` with a one-byte arena and `n_hid = 4` returned a
 live instrument, and training wrote **611 bytes past the end**.
 
 Fixed by separating the two jobs that were conflated in one function:
-`iris__bytes()` is arithmetic with no opinion, and `iris_size()` is that plus
+`iris_internal_bytes()` is arithmetic with no opinion, and `iris_size()` is that plus
 the quality floor. `iris_init` bounds the arena with the former, so the bound
 applies to every shape it accepts. The quality floor is unchanged and still
 belongs to callers choosing a shape.

@@ -11,7 +11,7 @@
  *   tests/golden/v3-expected.txt     scaling ([-1,+1]), frozen at v0.3.0
  *
  * TWO FILES, BECAUSE THERE ARE TWO INPUT SCALINGS AND BOTH ARE PERMANENT.
- * The v1 pair is regenerated with iris__set_legacy_norm(k, 1) so that it stays
+ * The v1 pair is regenerated with iris_internal_set_legacy_norm(k, 1) so that it stays
  * byte-for-byte what it has always been — regenerating it must be a no-op,
  * and if it is not, something in the v1/v2 path has moved and the audit is
  * about to say so.
@@ -107,7 +107,7 @@ static void print_probes(const iris *k, FILE *f) {
 static iris *make(int legacy) {
   iris *k = iris_init(arena, sizeof arena, NI, NH, NO, CAP, GOLD_SEED);
   if (!k) return 0;
-  iris__set_legacy_norm(k, legacy);
+  iris_internal_set_legacy_norm(k, legacy);
   load_examples(k, GOLD_NEX);
   iris_retrain_new(k, GOLD_SEED, GOLD_EPOCHS);
   return k;

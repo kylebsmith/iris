@@ -3,7 +3,7 @@
 **Status:** accepted, 2026-08-22
 **Supersedes nothing; extends** [`0006`](0006-format-v2-one-word-v1-loader-permanent.md),
 whose promise it is written to keep.
-**Affects:** `iris.h` (`iris_norm_in`, `iris__set_legacy_norm`, `iris_save`,
+**Affects:** `iris.h` (`iris_norm_in`, `iris_internal_set_legacy_norm`, `iris_save`,
 `iris_load`, `IRIS_FORMAT`), `tests/audit.c` checks 11, 12, 29, 30,
 `tests/golden/`, `firmware/app/core/schema.c`.
 
@@ -62,7 +62,7 @@ the caller.
   missing from the first draft of this ADR and its absence was a live
   silent-corruption bug — see "The clause that was missing" below.*
 - `iris_init` starts every fresh instrument at v3.
-- `iris__set_legacy_norm` exists for exactly two callers: `iris_load`, and the
+- `iris_internal_set_legacy_norm` exists for exactly two callers: `iris_load`, and the
   audit, which uses it to hold the pre-v3 training path against its frozen
   hash.
 

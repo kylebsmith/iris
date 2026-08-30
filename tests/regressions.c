@@ -41,7 +41,7 @@ int main(void){
          legacy-scaled instrument (the kind restored from an old file). */
   { iris *k=iris_init(A,sizeof A,2,12,3,64,7); demos(k,8);
     iris_train_converge(k,0,0,0);
-    iris__set_legacy_norm(k,1);
+    iris_internal_set_legacy_norm(k,1);
     size_t need=iris_save_size(k);
     unsigned char *buf=malloc(need+8);
     memset(buf,0xA5,need+8);

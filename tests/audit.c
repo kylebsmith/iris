@@ -543,7 +543,7 @@ int main(void) {
                    hash, the only flag-robust class (O0/O1/O2 all
                    bit-identical). UNCHANGED since v0.1.0 and re-frozen only
                    once, when FP_CONTRACT OFF landed (ADR 0003). v0.3.0 did
-                   NOT re-freeze it: iris__set_legacy_norm puts the instrument
+                   NOT re-freeze it: iris_internal_set_legacy_norm puts the instrument
                    back on the old scaling and the old bits come back, which
                    is the mechanical proof that the v1/v2 path in iris_load is
                    still the code it always was.
@@ -555,7 +555,7 @@ int main(void) {
        start from iris_init exactly as make_golden.c does */
     for (int pass = 0; pass < 2; ++pass) {
       iris *kb = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 1234);
-      iris__set_legacy_norm(kb, pass == 0);       /* pass 0: v1/v2, pass 1: v3 */
+      iris_internal_set_legacy_norm(kb, pass == 0);       /* pass 0: v1/v2, pass 1: v3 */
       for (int i = 0; i < 20; ++i) {
         float u = (float)((i * 7919) % 97) / 97.0f;
         float v = (float)((i * 6131) % 89) / 89.0f;
@@ -578,7 +578,7 @@ int main(void) {
       uint32_t want = pass == 0 ? 0xFEFAEDF6u : 0x6805FB0Du;
       /* AND THE L-BFGS PATH, for one specific reason. The v0.3.0 scaling
          change edited exactly one piece of arithmetic that neither golden
-         blob covers: iris__lbfgs_pass folds the input scaling into a
+         blob covers: iris_internal_lbfgs_pass folds the input scaling into a
          precomputed reciprocal and now adds an offset term, which is
          identically 0.0f on the legacy scaling. "Identically zero" is a claim
          about float semantics, so it is pinned rather than argued.
@@ -588,7 +588,7 @@ int main(void) {
          header. */
       static float lw12[IRIS_LBFGS_WORK_FLOATS(NI, NH, NO, IRIS_LBFGS_M) + 2];
       iris *kl = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 1234);
-      iris__set_legacy_norm(kl, pass == 0);
+      iris_internal_set_legacy_norm(kl, pass == 0);
       load_examples(kl, 20);
       iris_train_lbfgs(kl, 300, lw12, sizeof lw12);
       /* Use the library's own macro, not a hand-copy of the same expression.
@@ -688,7 +688,7 @@ int main(void) {
       }
       { float in[NI] = { 1e6f, 0.5f }, out[NO] = { 0.5f, 0.5f, 0.5f };
         iris_record(k, in, out); }
-      iris__set_learning(k, lrs[li], moms[mi]);
+      iris_internal_set_learning(k, lrs[li], moms[mi]);
       int detect_call = 0;
       for (int call = 1; call <= 4; ++call) {
         iris_train_epochs(k, 400);
@@ -703,7 +703,7 @@ int main(void) {
          reported on the train call where it happened — never later */
       if (detect_call > 1) sweep_unreported++;
     }
-    iris__set_learning(k, 0.10f, 0.85f);
+    iris_internal_set_learning(k, 0.10f, 0.85f);
 
     ok("NaN never reaches output; guards report", refused && preserved
        && finite && reported && sweep_nan == 0 && sweep_unreported == 0,
@@ -925,7 +925,7 @@ int main(void) {
     }
     iris_reseed(a, 1234);
     int iters = 0;
-    iris__train_lbfgs_full(a, 300, 0.0f, lwork, sizeof lwork, trace, 512, &iters);
+    iris_internal_train_lbfgs_full(a, 300, 0.0f, lwork, sizeof lwork, trace, 512, &iters);
     int mono = 1, tn = iters + 1 < 512 ? iters + 1 : 512;
     for (int i = 1; i < tn; ++i) if (trace[i] > trace[i - 1]) mono = 0;
     int bad = 0;
@@ -964,7 +964,7 @@ int main(void) {
         for (int r = 0; r < 5; ++r) {
           iris_reseed(a, seed);
           double t0 = now_ms();
-          e_l = iris__train_lbfgs_full(a, 2000, e_base, lwork, sizeof lwork, 0, 0, 0);
+          e_l = iris_internal_train_lbfgs_full(a, 2000, e_base, lwork, sizeof lwork, 0, 0, 0);
           tl[r] = now_ms() - t0;
         }
         /* median of 5 */
@@ -1597,10 +1597,10 @@ int main(void) {
     static float lw33[IRIS_LBFGS_WORK_FLOATS(NI, NH, NO, IRIS_LBFGS_M) + 2];
     iris *k1 = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 4242u);
     load_examples(k1, 20);
-    float l1 = iris__train_lbfgs_full(k1, 1000, 0.0f, lw33, sizeof lw33, 0, 0, 0);
+    float l1 = iris_internal_train_lbfgs_full(k1, 1000, 0.0f, lw33, sizeof lw33, 0, 0, 0);
     iris *k2 = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 4242u);
     load_examples(k2, 20);
-    float l2 = iris__train_lbfgs_full(k2, 10000, 0.0f, lw33, sizeof lw33, 0, 0, 0);
+    float l2 = iris_internal_train_lbfgs_full(k2, 10000, 0.0f, lw33, sizeof lw33, 0, 0, 0);
     iris *k3 = iris_init(arena_d, sizeof arena_d, NI, NH, NO, CAP, 4242u);
     load_examples(k3, 20);
     float sc = iris_train_converge(k3, 0, 0, 0);

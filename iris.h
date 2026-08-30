@@ -181,10 +181,10 @@
    ARE THE STACK BUDGET.
 
    Nine arrays inside this file are sized by these numbers rather than by the
-   shape you actually asked for -- iris__train_run alone reserves
+   shape you actually asked for -- iris_internal_train_run alone reserves
    float x[IRIS_MAX_IN] and float t[IRIS_MAX_OUT], 192 bytes, whether your
    instrument has 32 inputs or 2. Measured with avr-gcc -Os -fstack-usage on
-   an atmega328p: iris__train_run 286 bytes, iris_predict 164. An Uno has
+   an atmega328p: iris_internal_train_run 286 bytes, iris_predict 164. An Uno has
    2 KB of memory in total and the getting-started sketch leaves a few hundred
    bytes of stack, so the defaults below do not fit it with room to spare.
 
@@ -196,7 +196,7 @@
        #define IRIS_MAX_HID 12
        #include "iris.h"
 
-   Measured, same compiler and flags: that takes iris__train_run from 286 bytes
+   Measured, same compiler and flags: that takes iris_internal_train_run from 286 bytes
    to 126, iris_predict from 164 to 52, and the deepest frame from 340 to 132.
    The only rule is that they must be at least as large as the n_in, n_out and
    n_hid you pass to iris_init -- which iris_init checks, and refuses if not.
@@ -642,7 +642,7 @@ IRIS_API iris_status iris_get_status(const iris *k) {
    for widths under its quality floor, iris_init compared `bytes < 0` on
    unsigned types, and the arena bound silently ceased to exist. A size
    function that can refuse is not a size function. */
-static size_t iris__bytes(int n_in, int n_hid, int n_out, int cap) {
+static size_t iris_internal_bytes(int n_in, int n_hid, int n_out, int cap) {
   return sizeof(iris)
        + sizeof(float) * (size_t)( 2*(n_in*n_hid + n_hid + n_hid*n_out + n_out)
                                  + n_hid + n_out + n_hid + n_out
@@ -663,7 +663,7 @@ IRIS_API size_t iris_size(int n_in, int n_hid, int n_out, int cap) {
      costs nothing and prevents a permanent mistake. */
   if (n_hid < 8 || n_hid > IRIS_MAX_HID) return 0;
   if (cap  < 1 || cap  > IRIS_MAX_EX)   return 0;
-  return iris__bytes(n_in, n_hid, n_out, cap);
+  return iris_internal_bytes(n_in, n_hid, n_out, cap);
 }
 
 /* Randomise the weights. This is the reroll.
@@ -718,10 +718,10 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
      iris_init(a 1-byte arena, n_hid = 4) returned a live instrument and
      training wrote 611 bytes past the end.
 
-     The bound below therefore goes through iris__bytes, which is arithmetic
+     The bound below therefore goes through iris_internal_bytes, which is arithmetic
      with no opinion, rather than through iris_size, which has one. A size
      function that can refuse cannot also be a bound. */
-  if (bytes < iris__bytes(n_in, n_hid, n_out, cap)) return 0;
+  if (bytes < iris_internal_bytes(n_in, n_hid, n_out, cap)) return 0;
 
   unsigned char *p = (unsigned char *)mem;
   /* Align BEFORE placing the structure, not after. The caller's arena is only
@@ -730,7 +730,7 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
      leaving the structure itself wherever the arena happened to start. A
      sanitizer reports it as a misaligned member access; a chip that faults on
      unaligned loads reports it as a crash. The 64 bytes of slack in
-     iris__bytes exist for exactly this. */
+     iris_internal_bytes exist for exactly this. */
   p += ((uintptr_t)p & 7u) ? (8u - (size_t)((uintptr_t)p & 7u)) : 0u;
   iris *k = (iris *)p;  p += sizeof(iris);
   p += ((uintptr_t)p & 7u) ? (8u - (size_t)((uintptr_t)p & 7u)) : 0u;
@@ -803,7 +803,7 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
 
    Retained internally for tests/audit.c's Weka-parity check, which sets
    Weka's own 0.3/0.2 pair. See docs/KNOB-AUDIT.md. */
-IRIS_API void iris__set_learning(iris *k, float lr, float momentum) { if (!k) return;
+IRIS_API void iris_internal_set_learning(iris *k, float lr, float momentum) { if (!k) return;
   k->lr = iris_clampf(lr, 0.0001f, 2.0f);   /* range kept for Weka parity */
   k->momentum = iris_clampf(momentum, 0.0f, 0.99f);
 }
@@ -847,7 +847,7 @@ IRIS_API void iris__set_learning(iris *k, float lr, float momentum) { if (!k) re
 
    Applied as decoupled decay on the weights only, never the biases: penalising
    a bias just shifts the function for no capacity benefit. */
-IRIS_API void iris__set_l2(iris *k, float l2) { if (!k) return;
+IRIS_API void iris_internal_set_l2(iris *k, float l2) { if (!k) return;
   k->l2 = iris_clampf(l2, 0.0f, 0.3f);   /* 0.3, not 1.0 — see smoothing */
 }
 IRIS_API float iris_get_l2(const iris *k) { if (!k) return 0.0f; return k->l2; }
@@ -881,7 +881,7 @@ IRIS_API float iris_get_l2(const iris *k) { if (!k) return 0.0f; return k->l2; }
    Default is 0 — stick to the demonstrations — because a musician who has not
    asked for smoothing should get exactly what they showed it. */
 IRIS_API void iris_set_smoothing(iris *k, float amount) { if (!k) return;
-  iris__set_l2(k, iris_clampf(amount, 0.0f, 1.0f) * 0.3f);
+  iris_internal_set_l2(k, iris_clampf(amount, 0.0f, 1.0f) * 0.3f);
 }
 IRIS_API float iris_get_smoothing(const iris *k) { if (!k) return 0.0f; return k->l2 / 0.3f; }
 
@@ -1098,7 +1098,7 @@ IRIS_API float iris_norm_in (const iris *k, int i, float v) { if (!k || i < 0 ||
 
    Nothing else should call it: changing the scaling under trained weights
    changes what those weights mean. */
-IRIS_API void iris__set_legacy_norm(iris *k, int legacy) { if (!k) return; k->in_center = legacy ? 0 : 1; }
+IRIS_API void iris_internal_set_legacy_norm(iris *k, int legacy) { if (!k) return; k->in_center = legacy ? 0 : 1; }
 
 /* WHICH SCALING IS THIS INSTRUMENT ON. 0 = the legacy [0,1] of v1/v2 files,
    1 = the centred [-1,+1] of v3. A UI needs this to tell the musician why an
@@ -1269,7 +1269,7 @@ IRIS_API float iris_novelty(const iris *k, const float *in) { if (!k) return 0.0
    Cost is one pass over the weights per EPOCH; the backprop pass over the
    weights runs once per EXAMPLE, so this is < 1/n_ex relative overhead.     */
 #ifndef IRIS_NO_GUARDS
-IRIS_API int iris__check_weights(iris *k) { if (!k) return 0;
+IRIS_API int iris_internal_check_weights(iris *k) { if (!k) return 0;
   const int nw = k->n_hid * k->n_in + k->n_hid + k->n_out * k->n_hid + k->n_out;
   /* w1,b1,w2,b2 are carved consecutively from the arena; walk them as one */
   float *w = k->w1;
@@ -1361,7 +1361,7 @@ typedef int (*iris_progress_fn)(void *user, int done, int ceiling, float err);
    could not tell a refusal from a repeat of the previous run — while the
    L-BFGS trainer (now experimental/iris_lbfgs.h) already returned -1.0f for
    the same situation. Two conventions, one library. Fixed 2026-08-26. */
-IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
+IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume,
                            iris_progress_fn cb, void *user) { if (!k) return -1.0f;
   if (k->n_ex == 0) {
     /* A run with nothing left to train on is over, however it got that way.
@@ -1376,7 +1376,7 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
 
 #ifndef IRIS_NO_GUARDS
   /* THE DIVERGENCE TRAP, AND WHY THIS REFUSAL EXISTS.
-     When a run diverges, iris__check_weights clamps the offending weights to
+     When a run diverges, iris_internal_check_weights clamps the offending weights to
      +/-IRIS_W_LIMIT and stops. On the NEXT fresh run those weights are still
      sitting exactly at the clamp: epoch 1 pushes one of them past, the guard
      fires again, and training stops after a single epoch. Forever.
@@ -1402,12 +1402,12 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
   if (k->status == IRIS_TRAINING_DIVERGED) {
     int pinned = 0, i;
     const float lim = IRIS_W_LIMIT - 0.01f;
-    /* All FOUR arrays, not two. iris__check_weights clamps the biases as well
+    /* All FOUR arrays, not two. iris_internal_check_weights clamps the biases as well
        as the weights and walks them as one block; this check scanned only w1
        and w2, so a clamp that landed on a bias left the instrument stuck with
        nothing noticing -- exactly the silent state the note above says this
        exists to prevent. Unreachable at the shipped defaults (0 of 400), but
-       reachable through iris__set_learning at its permitted maximum, where it
+       reachable through iris_internal_set_learning at its permitted maximum, where it
        happened 60 times out of 60. */
     for (i = 0; i < k->n_hid * k->n_in;  ++i)
       if (k->w1[i] >= lim || k->w1[i] <= -lim) pinned = 1;
@@ -1529,7 +1529,7 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
          It cannot fire at the defaults because targets live in [0.1,0.9], so
          y*(1-y) >= 0.09 whenever the network is near its target. It takes
          lr >= 0.5 to make it appear at all (0.735% on a cliff target at N=50)
-         and lr = 1.0 to make it common. The setter is now internal (iris__set_learning); it permitted up to
+         and lr = 1.0 to make it common. The setter is now internal (iris_internal_set_learning); it permitted up to
          2.0, so THAT is the honest caveat: measured absent at the defaults,
          measured present above lr 0.5.
 
@@ -1629,7 +1629,7 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
       return 1.0f;
     }
     {
-      int st = iris__check_weights(k);
+      int st = iris_internal_check_weights(k);
       if (st == IRIS_NAN_TRAPPED) {
         iris_reseed(k, k->seed);
         k->status = IRIS_NAN_TRAPPED;
@@ -1697,7 +1697,7 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
 IRIS_API float iris_train_epochs(iris *k, int epochs) { if (!k) return -1.0f;
   k->tr_ceiling = epochs > 0 ? epochs : 0;
   k->tr_running = 0;
-  return iris__train_run(k, epochs, 0, 0, 0, 0);
+  return iris_internal_train_run(k, epochs, 0, 0, 0, 0);
 }
 
 /* Train until the training error plateaus. ceiling <= 0 takes
@@ -1707,7 +1707,7 @@ IRIS_API float iris_train_converge(iris *k, int ceiling, iris_progress_fn cb, vo
   k->tr_ceiling = ceil_;
   k->tr_running = 1;
   {
-    float e = iris__train_run(k, ceil_, 1, 0, cb, user);
+    float e = iris_internal_train_run(k, ceil_, 1, 0, cb, user);
     k->tr_running = 0;
     return e;
   }
@@ -1807,7 +1807,7 @@ IRIS_API int iris_train_slice(iris *k, int epochs) { if (!k) return 0;
     if (epochs <= 0) epochs = IRIS_CONV_WINDOW;
     if (epochs > left) epochs = left;
     if (epochs <= 0) { k->tr_running = 0; return 0; }
-    iris__train_run(k, epochs, 1, 1, 0, 0);
+    iris_internal_train_run(k, epochs, 1, 1, 0, 0);
   }
   if (k->tr_done >= k->tr_ceiling) k->tr_running = 0;
   return k->tr_running;
@@ -2584,7 +2584,7 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
    them apart, so the version number is what selects the scaling — not a
    build flag, not a global, not the caller. iris_load sets k->in_center from
    h[1] and nothing else ever writes it except iris_init (which starts every
-   fresh instrument at v3) and iris__set_legacy_norm (which the audit uses to
+   fresh instrument at v3) and iris_internal_set_legacy_norm (which the audit uses to
    hold the pre-v3 training path against its frozen hash).
 
    WHAT BREAKS IF SOMEONE DELETES THE v1/v2 PATH. Not a load failure — that

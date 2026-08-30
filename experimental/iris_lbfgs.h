@@ -121,7 +121,7 @@
    Normalisation via precomputed reciprocals; identical arithmetic on the
    loss whether or not the gradient is requested, so line-search decisions
    and the accepted-loss trace are consistent to the last bit. */
-IRIS_API float iris__lbfgs_pass(iris *k, float *g) {
+IRIS_API float iris_internal_lbfgs_pass(iris *k, float *g) {
   const int stride = k->n_in + k->n_out;
   const int NI = k->n_in, NH = k->n_hid, NO = k->n_out;
   const int ob1 = NH * NI, ow2 = ob1 + NH, ob2 = ow2 + NO * NH;
@@ -182,10 +182,10 @@ IRIS_API float iris__lbfgs_pass(iris *k, float *g) {
 IRIS_API float iris_eval_loss(iris *k) {
   if (k->n_ex == 0) return 1.0f;
   iris_fit_ranges(k);
-  return iris__lbfgs_pass(k, 0);
+  return iris_internal_lbfgs_pass(k, 0);
 }
 
-IRIS_API float iris__dot(const float *a, const float *b, int n) {
+IRIS_API float iris_internal_dot(const float *a, const float *b, int n) {
   float s = 0.0f;
   for (int i = 0; i < n; ++i) s += a[i] * b[i];
   return s;
@@ -200,7 +200,7 @@ IRIS_API float iris__dot(const float *a, const float *b, int n) {
      out_iters : optional — number of accepted iterations performed
    Returns final full-batch loss, or -1.0f refusing (bad work buffer, or a
    poisoned example — status says which; weights untouched either way). */
-IRIS_API float iris__train_lbfgs_full(iris *k, int max_iters, float target,
+IRIS_API float iris_internal_train_lbfgs_full(iris *k, int max_iters, float target,
                                   void *work, size_t work_bytes,
                                   float *trace, int trace_cap, int *out_iters) {
   if (out_iters) *out_iters = 0;
@@ -238,7 +238,7 @@ IRIS_API float iris__train_lbfgs_full(iris *k, int max_iters, float target,
   float *al   = rho + m;                  /* m */
 
   iris_fit_ranges(k);
-  float f = iris__lbfgs_pass(k, g);
+  float f = iris_internal_lbfgs_pass(k, g);
   if (trace && trace_cap > 0) trace[0] = f;
   int tn = 1;
 
@@ -253,31 +253,31 @@ IRIS_API float iris__train_lbfgs_full(iris *k, int max_iters, float target,
     for (int i = 0; i < W; ++i) d[i] = g[i];
     for (int j = 0; j < count; ++j) {
       int i = (head - 1 - j + 2 * m) % m;          /* newest -> oldest */
-      al[i] = rho[i] * iris__dot(S + (size_t)i * W, d, W);
+      al[i] = rho[i] * iris_internal_dot(S + (size_t)i * W, d, W);
       const float *yy = Y + (size_t)i * W;
       for (int t = 0; t < W; ++t) d[t] -= al[i] * yy[t];
     }
     if (count > 0) {
       int nw = (head - 1 + m) % m;
-      float yy = iris__dot(Y + (size_t)nw * W, Y + (size_t)nw * W, W);
-      float sy = iris__dot(S + (size_t)nw * W, Y + (size_t)nw * W, W);
+      float yy = iris_internal_dot(Y + (size_t)nw * W, Y + (size_t)nw * W, W);
+      float sy = iris_internal_dot(S + (size_t)nw * W, Y + (size_t)nw * W, W);
       float gamma = (yy > 1e-30f) ? sy / yy : 1.0f;
       for (int t = 0; t < W; ++t) d[t] *= gamma;
     }
     for (int j = count - 1; j >= 0; --j) {
       int i = (head - count + j + 2 * m) % m;       /* oldest -> newest */
-      float beta = rho[i] * iris__dot(Y + (size_t)i * W, d, W);
+      float beta = rho[i] * iris_internal_dot(Y + (size_t)i * W, d, W);
       const float *ss = S + (size_t)i * W;
       for (int t = 0; t < W; ++t) d[t] += (al[i] - beta) * ss[t];
     }
     for (int t = 0; t < W; ++t) d[t] = -d[t];
 
-    float gd = iris__dot(g, d, W);
+    float gd = iris_internal_dot(g, d, W);
     int was_sd = (count == 0);
     if (gd >= 0.0f) {                    /* not a descent direction: reset */
       count = 0; head = 0; was_sd = 1;
       for (int t = 0; t < W; ++t) d[t] = -g[t];
-      gd = -iris__dot(g, g, W);
+      gd = -iris_internal_dot(g, g, W);
       if (gd >= 0.0f) break;             /* zero gradient */
     }
 
@@ -298,8 +298,8 @@ IRIS_API float iris__train_lbfgs_full(iris *k, int max_iters, float target,
     int accepted = 0, have_grad = 0;
     for (int ls = 0; ls < 20; ++ls) {
       for (int t = 0; t < W; ++t) xp[t] = xbak[t] + alpha * d[t];
-      if (ls == 0) { fn = iris__lbfgs_pass(k, gt); have_grad = 1; }
-      else         { fn = iris__lbfgs_pass(k, 0);  have_grad = 0; }
+      if (ls == 0) { fn = iris_internal_lbfgs_pass(k, gt); have_grad = 1; }
+      else         { fn = iris_internal_lbfgs_pass(k, 0);  have_grad = 0; }
       if (fn == fn && fn <= f + c1 * alpha * gd) { accepted = 1; break; }
       alpha *= 0.5f;
     }
@@ -309,7 +309,7 @@ IRIS_API float iris__train_lbfgs_full(iris *k, int max_iters, float target,
       count = 0; head = 0;               /* drop history, retry with -g */
       continue;
     }
-    if (!have_grad) fn = iris__lbfgs_pass(k, gt);     /* backtracked: 1 extra pass */
+    if (!have_grad) fn = iris_internal_lbfgs_pass(k, gt);     /* backtracked: 1 extra pass */
 
     /* --- curvature pair -------------------------------------------------- */
     float *ss = S + (size_t)head * W;
@@ -323,10 +323,10 @@ IRIS_API float iris__train_lbfgs_full(iris *k, int max_iters, float target,
        recursion decorative. The textbook safeguard scales with the operands
        (Nocedal & Wright, Numerical Optimization 2e, Ch. 6): accept the pair
        only when sTy exceeds a small multiple of ||s||*||y||. */
-    float sy = iris__dot(ss, yv, W);
+    float sy = iris_internal_dot(ss, yv, W);
     {
-    const float ss_n = iris_sqrt(iris__dot(ss, ss, W));
-    const float yy_n = iris_sqrt(iris__dot(yv, yv, W));
+    const float ss_n = iris_sqrt(iris_internal_dot(ss, ss, W));
+    const float yy_n = iris_sqrt(iris_internal_dot(yv, yv, W));
     const float rel  = 1e-8f * ss_n * yy_n;
     if (sy > rel && sy > 0.0f) {
       rho[head] = 1.0f / sy;
@@ -351,7 +351,7 @@ IRIS_API float iris__train_lbfgs_full(iris *k, int max_iters, float target,
    units as iris_train_epochs), or -1.0f on refusal (see above). The 1e-6f
    target matches iris_train_epochs' early-stop threshold. */
 IRIS_API float iris_train_lbfgs(iris *k, int max_iters, void *work, size_t work_bytes) {
-  return iris__train_lbfgs_full(k, max_iters, 1e-6f, work, work_bytes, 0, 0, 0);
+  return iris_internal_train_lbfgs_full(k, max_iters, 1e-6f, work, work_bytes, 0, 0, 0);
 }
 
 

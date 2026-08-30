@@ -9,7 +9,7 @@ Harnesses: a scratch directory that was not retained (+ `task.h`), built `cc -O2
 
 ## 0. Full inventory — 22 runtime knobs, 14 compile-time
 
-Runtime, user-reachable: `iris_init`(mem, bytes, n_in, n_hid, n_out, cap, seed) · `iris_reseed`(seed) · `iris_set_learning`(lr, momentum) · `iris_set_l2`(l2) · `iris_train_epochs`(epochs) · `iris_train_converge`(ceiling, cb, user) · `iris_train_begin`(ceiling) · `iris_train_slice`(epochs) · `iris_correct`(epochs) · `iris_loo_error`(epochs) · `iris_retrain_new`(seed, epochs) · `iris_train_elm`(lam0, scratch, scratch_bytes) · `iris_train_elm_ex`(lam0, **gain_w**, **gain_b**, …) · `iris_retrain_elm_new`(seed, lam0, …) · `iris_knn_predict`(kk) · `iris__set_legacy_norm`(legacy) · `iris_migrate_scaling`().
+Runtime, user-reachable: `iris_init`(mem, bytes, n_in, n_hid, n_out, cap, seed) · `iris_reseed`(seed) · `iris_set_learning`(lr, momentum) · `iris_set_l2`(l2) · `iris_train_epochs`(epochs) · `iris_train_converge`(ceiling, cb, user) · `iris_train_begin`(ceiling) · `iris_train_slice`(epochs) · `iris_correct`(epochs) · `iris_loo_error`(epochs) · `iris_retrain_new`(seed, epochs) · `iris_train_elm`(lam0, scratch, scratch_bytes) · `iris_train_elm_ex`(lam0, **gain_w**, **gain_b**, …) · `iris_retrain_elm_new`(seed, lam0, …) · `iris_knn_predict`(kk) · `iris_internal_set_legacy_norm`(legacy) · `iris_migrate_scaling`().
 
 Compile-time: `IRIS_MAX_{IN,OUT,HID,EX}`, `IRIS_API`, `IRIS_TINY`, `IRIS_NO_GUARDS`, `IRIS_W_LIMIT`, `IRIS_OUT_{LO,HI}`, `IRIS_CONV_{WINDOW,TOL,CEILING}`, `IRIS_STRESS_{MIN_EX,FLAG}`, `IRIS_KNN_{MAXK,GUARD}`.
 
@@ -55,7 +55,7 @@ noise    default   auto-by-LOO   oracle   cost
 
 At the permitted maximum the instrument is **destroyed**: recall 73× worse than default, grid 6.6× worse, and a third of seeds trip `IRIS_TRAINING_DIVERGED`. At the permitted minimum it is **degraded**: 17× worse recall, plateau-stops at 7500 epochs having gone nowhere. Structured+noisy is worse still — 5/16 diverged at lr=2.0 with recall 0.2814.
 
-**It bricks instruments.** `d.c` D2, 40 seeds, structured σ=0.05: at lr=2.0, **6/40 diverged and 6/6 of those were bricked** — the musician lowers lr back to 0.10, hits retrain, and `iris__train_run` returns −1.0 with `IRIS_DIVERGED_STUCK` forever. Only `iris_retrain_new` recovers, which hands them a *different instrument*. At the defaults: 0/400 at σ≤0.05, 2/400 at σ=0.10 (`f.c` F2). So the bricking path is essentially only reachable by turning this knob.
+**It bricks instruments.** `d.c` D2, 40 seeds, structured σ=0.05: at lr=2.0, **6/40 diverged and 6/6 of those were bricked** — the musician lowers lr back to 0.10, hits retrain, and `iris_internal_train_run` returns −1.0 with `IRIS_DIVERGED_STUCK` forever. Only `iris_retrain_new` recovers, which hands them a *different instrument*. At the defaults: 0/400 at σ≤0.05, 2/400 at σ=0.10 (`f.c` F2). So the bricking path is essentially only reachable by turning this knob.
 
 **Wekinator.** `grep -rn "setLearningRate" src/` over the entire wekinator tree: **zero hits.** Confirmed. Weka's `MultilayerPerceptron` default 0.3 is used unmodified and is not settable anywhere in Wekinator's UI or code. Weka's own documented option range is `-L` "should be between 0 - 1" — **iris permits double Weka's documented maximum.**
 
@@ -70,7 +70,7 @@ An undergraduate tuning lr by watching the error readout will reliably pick the 
 
 **Cost of removal.** Zero. Section 1: `l2` recovers the same gain. There is one fidelity use — `iris_set_learning(k, 0.3f, 0.2f)` reproduces Weka's pair, which `tests/audit.c:662` exercises.
 
-### **VERDICT: MAKE INTERNAL.** Rename to `iris__set_learning` (double underscore, the file's existing private convention), keep it for `tests/audit.c`'s Weka-parity check and the golden hashes, and remove it from the public surface and README. If it must stay public: **CLAMP HARDER to [0.01, 0.5]** — 0.5 is the value the header's own surrogate-gradient note names as the point where the vanishing-gradient pathology starts firing, and everything above it is measured destructive here.
+### **VERDICT: MAKE INTERNAL.** Rename to `iris_internal_set_learning` (double underscore, the file's existing private convention), keep it for `tests/audit.c`'s Weka-parity check and the golden hashes, and remove it from the public surface and README. If it must stay public: **CLAMP HARDER to [0.01, 0.5]** — 0.5 is the value the header's own surrogate-gradient note names as the point where the vanishing-gradient pathology starts firing, and everything above it is measured destructive here.
 
 ---
 
@@ -263,7 +263,7 @@ Three findings. (1) **gain = 0 returns 0/healthy and produces a dead instrument*
 
 **Cost of removal.** Nothing measured is lost. The best value found (1.0) is not the shipped one, and the difference is 3%.
 
-### **VERDICT: DELETE.** Make `iris_train_elm_ex` static/private (`iris__train_elm_ex`) or fold it into `iris_train_elm` outright. This is a two-parameter research hook with a silent-kill value at 0, a meaningless sign, a documented-as-unreachable feature that is in fact reachable, and a default the file itself admits is unmeasured. It is precisely the PI's "random under the hood knob with massive implications."
+### **VERDICT: DELETE.** Make `iris_train_elm_ex` static/private (`iris_internal_train_elm_ex`) or fold it into `iris_train_elm` outright. This is a two-parameter research hook with a silent-kill value at 0, a meaningless sign, a documented-as-unreachable feature that is in fact reachable, and a default the file itself admits is unmeasured. It is precisely the PI's "random under the hood knob with massive implications."
 
 ---
 
@@ -305,9 +305,9 @@ Not tuning knobs — they are the *rig*. All correctly hard-refused: `n_in ∈ [
 
 ---
 
-## 12. `iris__set_legacy_norm` / `iris_migrate_scaling`
+## 12. `iris_internal_set_legacy_norm` / `iris_migrate_scaling`
 
-`iris__set_legacy_norm` already carries the private `__` prefix but is `IRIS_API` and reachable. Its own comment says "WHO ACTUALLY CALLS THIS: `tests/audit.c` only" and "Nothing else should call it: changing the scaling under trained weights changes what those weights mean."
+`iris_internal_set_legacy_norm` already carries the private `__` prefix but is `IRIS_API` and reachable. Its own comment says "WHO ACTUALLY CALLS THIS: `tests/audit.c` only" and "Nothing else should call it: changing the scaling under trained weights changes what those weights mean."
 
 ### **VERDICT: MAKE INTERNAL** (`#ifdef IRIS_TESTING` or move to a test-only header). A function documented as "nothing should call this" should not be in the public surface. `iris_migrate_scaling` and `iris_input_scaling` are fine — they are a UI's honest answer to "why did my old instrument load worse."
 
@@ -345,7 +345,7 @@ Not tuning knobs — they are the *rig*. All correctly hard-refused: `n_in ∈ [
 | `k` (knn) | [1, min(8,n)] | fully clamped both ends; 15% total spread; recall always exact | **yes — a text field, default 1** | **Yes** | 1.6–9.9% | **KEEP EXPOSED** |
 | `seed` | uint32 | 1.14–1.28× spread; 0 broken instrument in 400 | none | Nothing to choose — it's a die | the reroll itself | **KEEP EXPOSED** |
 | `n_in`/`n_out`/`cap` | [1,32]/[1,16]/[1,4096] | out-of-range → NULL, correctly | n/a | Yes — it's the rig | the rig | **KEEP EXPOSED** |
-| `iris__set_legacy_norm` | 0/1 | "nothing else should call it" — its own comment | n/a | No | 0 | **MAKE INTERNAL** |
+| `iris_internal_set_legacy_norm` | 0/1 | "nothing else should call it" — its own comment | n/a | No | 0 | **MAKE INTERNAL** |
 
 **Net: 22 runtime knobs → 8.** What survives: `n_in`, `n_out`, `cap`, `seed`, `n_hid` (as a memory decision, floored at 8), one smoothing control, k-NN's `k`, and the slice size. Everything removed is either provably inert across its safe range, provably a second spelling of the smoothing control, or provably capable of destroying an instrument — and in four cases, of destroying it while reporting `IRIS_STATUS_OK`.
 
@@ -445,7 +445,7 @@ The guard at `iris.h:979` reads `if (!resume && k->status == IRIS_TRAINING_DIVER
 
 ### R4b. The stuck-detector never scans the biases (`l_stuck2.c`)
 
-`iris__check_weights` clamps `w1, b1, w2, b2`, but the pinned-scan at `iris.h:980-985` walks only `w1` and `w2`. When divergence pins a *bias*, `DIVERGED_STUCK` is unreachable — permanently:
+`iris_internal_check_weights` clamps `w1, b1, w2, b2`, but the pinned-scan at `iris.h:980-985` walks only `w1` and `w2`. When divergence pins a *bias*, `DIVERGED_STUCK` is unreachable — permanently:
 
 ```
     seed 5: diverged with pinned weights=0 pinned biases=1
@@ -457,7 +457,7 @@ The guard at `iris.h:979` reads `if (!resume && k->status == IRIS_TRAINING_DIVER
 
 This is the exact "frozen at its damaged output, retrain does nothing, no message" scenario the header's long comment says it fixed — and the fix only covers the case where the pinned float happens to be a weight. `TRAINING_DIVERGED`'s documented remedy is "check lr/momentum, or reseed"; the musician *already* put lr/momentum back. Only `DIVERGED_STUCK` names `iris_retrain_new`. Seed 1 is worse still: three refusals, then `status=OK, epochs=4000, grid=0.1944`.
 
-**Closable?** Yes: extend the scan to `b1`/`b2`. The arrays are contiguous — walk the same `nw` floats `iris__check_weights` already walks.
+**Closable?** Yes: extend the scan to `b1`/`b2`. The arrays are contiguous — walk the same `nw` floats `iris_internal_check_weights` already walks.
 
 ### R5. The sliced trainer has no refusal at all (`e2.c`, `REPRO.c`)
 
@@ -467,7 +467,7 @@ This is the exact "frozen at its damaged output, retrain does nothing, no messag
   attempt 3: begin=1 epochs=1 status=TRAINING_DIVERGED progress=1.00 is_trained=1
 ```
 
-`iris_train_begin` (`iris.h:1266`) never inspects `status`, and `iris_train_slice` calls `iris__train_run(..., resume=1)`, which skips the guard by construction. `iris_train_progress()` returns **1.00** — a completed bar. This is the path the header tells UI authors to use and claims is "bit-identical to the blocking call"; on this input the blocking call returns `-1.0f` / `DIVERGED_STUCK` and the sliced one returns a finished, "trained" instrument. **The claim is false on exactly the input where it matters.**
+`iris_train_begin` (`iris.h:1266`) never inspects `status`, and `iris_train_slice` calls `iris_internal_train_run(..., resume=1)`, which skips the guard by construction. `iris_train_progress()` returns **1.00** — a completed bar. This is the path the header tells UI authors to use and claims is "bit-identical to the blocking call"; on this input the blocking call returns `-1.0f` / `DIVERGED_STUCK` and the sliced one returns a finished, "trained" instrument. **The claim is false on exactly the input where it matters.**
 
 **Closable?** Yes: run the pinned-check in `iris_train_begin` and return 0.
 

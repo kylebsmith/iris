@@ -164,7 +164,7 @@ IRIS_API void iris_set_l2(iris *k, float alpha) {
 ```
 
 ```c
-/* in iris__train_run, hoisted out of the example loop, just before `err = 0.0f;`
+/* in iris_internal_train_run, hoisted out of the example loop, just before `err = 0.0f;`
    — one divide and one multiply per EPOCH, not per weight: */
     const float wdlr = k->lr * (k->l2 / (float)k->n_ex);
 ```
