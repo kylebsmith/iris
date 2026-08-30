@@ -177,8 +177,37 @@
 #define IRIS_VERSION_PATCH 0
 #define IRIS_VERSION_STRING "0.1.0"
 
+/* THE MAXIMA ARE THE SIZE OF EVERY WORKING ARRAY, SO ON A SMALL BOARD THEY
+   ARE THE STACK BUDGET.
+
+   Nine arrays inside this file are sized by these numbers rather than by the
+   shape you actually asked for -- iris__train_run alone reserves
+   float x[IRIS_MAX_IN] and float t[IRIS_MAX_OUT], 192 bytes, whether your
+   instrument has 32 inputs or 2. Measured with avr-gcc -Os -fstack-usage on
+   an atmega328p: iris__train_run 286 bytes, iris_predict 164. An Uno has
+   2 KB of memory in total and the getting-started sketch leaves a few hundred
+   bytes of stack, so the defaults below do not fit it with room to spare.
+
+   They are #ifndef so you can shrink them. Define them BEFORE including this
+   file and every working array shrinks with them:
+
+       #define IRIS_MAX_IN  4
+       #define IRIS_MAX_OUT 4
+       #define IRIS_MAX_HID 12
+       #include "iris.h"
+
+   Measured, same compiler and flags: that takes iris__train_run from 286 bytes
+   to 126, iris_predict from 164 to 52, and the deepest frame from 340 to 132.
+   The only rule is that they must be at least as large as the n_in, n_out and
+   n_hid you pass to iris_init -- which iris_init checks, and refuses if not.
+   On a 32-bit board (ESP32, RP2040, STM32) leave them alone; the defaults cost
+   nothing you have. */
+#ifndef IRIS_MAX_IN
 #define IRIS_MAX_IN   32   /* sensor features in  */
+#endif
+#ifndef IRIS_MAX_OUT
 #define IRIS_MAX_OUT  16   /* sound parameters out */
+#endif
 /* THE CAP HAS TO FIT THE MACHINE'S SIZE TYPE.
 
    4,096 demonstrations is the right ceiling on a 32-bit or 64-bit target: it
@@ -203,7 +232,9 @@
                             4096 examples is ~786 KB of examples alone, already
                             past the S3's 512 KB, so nothing legitimate is being
                             refused. Added 2026-08-27 (gap C11).            */
+#ifndef IRIS_MAX_HID
 #define IRIS_MAX_HID  64   /* hidden units         */
+#endif
 
 #ifndef IRIS_API
 /* `static inline`, not plain `static`. A single-header library defines every
@@ -267,6 +298,12 @@ typedef enum {
                                 the demonstrated range (0 with no
                                 demonstrations), never the forward pass over
                                 random weights.                              */
+  IRIS_STORE_FULL        = 6,  /* iris_record was refused because the store is
+                                full. Distinguished from a poisoned reading,
+                                which reports IRIS_NAN_TRAPPED: both return 0,
+                                and a sketch that printed "full" for either sent
+                                the student to delete demonstrations they did
+                                not have.                                    */
   IRIS_DIVERGED_STUCK    = 5   /* a previous run diverged and left weights at the
                                 clamp. Training refuses until the instrument is
                                 rerolled (iris_retrain_new) — the examples are
@@ -860,8 +897,10 @@ IRIS_API float iris_get_smoothing(const iris *k) { if (!k) return 0.0f; return k
 IRIS_API int iris_count(const iris *k) { if (!k) return 0; return k->n_ex; }
 IRIS_API int iris_capacity(const iris *k) { if (!k) return 0; return k->cap; }
 
+/* LENGTHS, same rule as iris_predict and just as unchecked.
+   Reads exactly n_in floats from `in` and n_out from `out`. */
 IRIS_API int iris_record(iris *k, const float *in, const float *out) { if (!k) return 0;
-  if (k->n_ex >= k->cap) return 0;                  /* full — say so, loudly */
+  if (k->n_ex >= k->cap) { k->status = IRIS_STORE_FULL; return 0; }
 
 #ifndef IRIS_NO_GUARDS
   /* REFUSE A POISONED DEMONSTRATION AT THE DOOR. A NaN or Inf from a glitched
@@ -890,6 +929,18 @@ IRIS_API int iris_record(iris *k, const float *in, const float *out) { if (!k) r
   k->ex_id[k->n_ex] = k->next_id++;
   k->n_ex++;
   k->trained = 0;                                   /* model is now stale */
+
+  /* This call just disproved the two complaints this call can raise, so clear
+     them. The header tells you to read `if (iris_get_status(k))` as "is
+     something wrong?", and without this one bad sensor reading answered yes
+     for the rest of the instrument's life -- long after the wiring was fixed
+     and hundreds of good demonstrations had been accepted. Nothing else is
+     touched: a diverged or stuck FIT is not disproved by storing a number,
+     and only training may clear those. iris_train and iris_load already
+     clear on success; this makes iris_record keep the same promise. */
+  if (k->status == IRIS_NAN_TRAPPED || k->status == IRIS_STORE_FULL)
+    k->status = IRIS_STATUS_OK;
+
   return k->ex_id[k->n_ex - 1];
 }
 
@@ -903,6 +954,9 @@ IRIS_API int iris_id_at(const iris *k, int idx) { if (!k) return -1;
   return (idx < 0 || idx >= k->n_ex) ? -1 : k->ex_id[idx];
 }
 
+/* LENGTHS, same rule as iris_predict and just as unchecked.
+   Writes exactly n_in floats into `in` and n_out floats into `out`.
+   Either may be null if you do not want that half. */
 IRIS_API int iris_get(const iris *k, int idx, float *in, float *out) { if (!k) return 0;
   if (idx < 0 || idx >= k->n_ex) return 0;
   const int stride = k->n_in + k->n_out;
@@ -942,6 +996,8 @@ IRIS_API int iris_delete_last(iris *k) { if (!k) return 0; return iris_delete_in
 /* Delete whichever example is closest to where you are standing right now.
    On a device with three buttons this is how you say "not THAT one" without
    needing to read a list. */
+/* LENGTHS, same rule as iris_predict and just as unchecked.
+   Reads exactly n_in floats from `in`. */
 IRIS_API int iris_delete_nearest(iris *k, const float *in) { if (!k) return 0;
   int best = -1; float best_d = 1e30f;
   const int stride = k->n_in + k->n_out;
@@ -1445,9 +1501,14 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
 
          d_out = (predicted - target) * y*(1-y). y*(1-y) is the exact derivative
          of the TRUE logistic function. Our forward pass does not use the true
-         logistic: iris_sigmoid is built from iris_tanh, which is a Padé
-         rational approximant (PART 1). So the backward pass is not the
-         derivative of the forward pass.         implementation and contradicted PART 1 twenty lines above it.
+         logistic: iris_sigmoid is built from iris_tanh, which is the clamped
+         rational approximant of PART 1. So the backward pass is not the
+         derivative of the forward pass. It is a surrogate: close enough in
+         shape to point downhill, and deliberately kept because the measured
+         fits are good and changing it would move every golden hash in the
+         audit. Saying so plainly here matters -- an earlier draft of this note
+         described it as the exact derivative, which was wrong about our own
+         implementation and contradicted PART 1 twenty lines above it.
 
          HOW WRONG, MEASURED. Ratio of the derivative used to the exact
          derivative of the function actually evaluated, verified numerically
@@ -1505,7 +1566,7 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
       /* --- hidden layer error: blame flows backward through the weights ----
          (1 - a*a) is the exact derivative of the TRUE tanh. iris_tanh is not
          tanh — see the surrogate-gradient note on the output layer above, which
-         applies here identically. The exact derivative of the Padé approximant
+         applies here identically. The exact derivative of the approximant
          is ((x*x - 9) / (3*(3 + x*x)))^2, and it is not what this uses. */
       for (int h = 0; h < NH; ++h) {
         float acc = 0.0f;
@@ -1622,7 +1683,7 @@ IRIS_API float iris__train_run(iris *k, int epochs, int conv, int resume,
    It is NOT numerically identical to Weka and cannot be. We compute in
    binary32; Weka computes in binary64 at every step. Exact agreement is
    impossible in principle, not merely unachieved. It also is not identical in
-   behaviour: our hidden units are Pade tanh against their logistic, our output
+   behaviour: our hidden units use the approximant against their logistic, our output
    units are sigmoid-then-clamp against their unthresholded linear, our
    defaults are lr 0.10 / momentum 0.85 against their 0.3 / 0.2, and we
    reshuffle every epoch where they shuffle once. Same rule, different
@@ -1682,6 +1743,34 @@ IRIS_API int iris_train(iris *k) {
      keeps technique. But that is what iris_correct is FOR. This function is
      called train, a caller expects it to fit the demonstrations it has now,
      and the two must not be the same act. */
+  if (k->n_ex == 0) return 0;      /* nothing to fit is not a successful fit */
+
+  /* WHAT THIS BETS ON, AND WHEN THE BET IS WRONG.
+
+     Training stops when a window of epochs stops buying much error. That rule
+     is right for demonstrations recorded by a human hand, which are noisy: a
+     long run there fits the noise and generalises 13-52% WORSE.
+
+     It is expensive for clean demonstrations, and the size of that is worth
+     knowing. On a straight one-sensor ramp with twelve evenly spaced takes:
+
+       epochs      training error   worst miss on a demonstrated pose
+       4,000       3.26e-04         0.0337    <- where this function stops
+       60,000      3.07e-04         0.0299    <- IRIS_CONV_CEILING
+       160,000     2.93e-04         0.0323
+       320,000     2.06e-06         0.0023    <- 15x better recall
+       640,000     9.90e-07         0.0020
+
+     The error sits on a FALSE plateau from epoch 4,000 to 160,000 and then
+     falls two orders of magnitude. The plateau outlasts this library's entire
+     maximum budget by nearly three times, so nothing here can see past it, and
+     raising `ceiling` on iris_train_converge cannot help -- a ceiling is a
+     maximum, and the run is stopping far below it.
+
+     If your demonstrations are clean and the recall matters more than the
+     generalisation, the escape is iris_train_epochs(k, 320000) or more. That
+     is a real choice with a real cost, which is why it is written down here
+     rather than made for you. */
   iris_reseed(k, k->seed);
   return iris_train_converge(k, 0, 0, 0) >= 0.0f ? 1 : 0;
 }
@@ -1708,6 +1797,10 @@ IRIS_API int iris_train_begin(iris *k, int ceiling) { if (!k) return 0;
 /* Runs at most `epochs` more. Returns 1 if there is more to do, 0 when the
    run has finished (plateau, ceiling, early stop, or a guard). */
 IRIS_API int iris_train_slice(iris *k, int epochs) { if (!k) return 0;
+  /* A budget of zero or less is "do nothing", not "use the default". It used
+     to fall through to the engine's own default of 2,000 epochs, so a caller
+     computing a slice size that came out zero silently trained instead. */
+  if (epochs <= 0) return k->tr_running;
   if (!k->tr_running) return 0;
   {
     int left = k->tr_ceiling - k->tr_done;
@@ -1725,7 +1818,14 @@ IRIS_API int iris_train_slice(iris *k, int epochs) { if (!k) return 0;
    run will usually stop early — so the bar never goes backwards and never
    claims to be further along than it is. */
 IRIS_API float iris_train_progress(const iris *k) { if (!k) return 0.0f;
-  if (!k->tr_running) return 1.0f;
+  /* "Not running" covers two situations that need opposite answers: a run
+     that FINISHED is 1.0, and a run that never STARTED is 0.0. Returning 1.0
+     for both drew a student's progress bar full before they pressed anything,
+     empty one slice later, then full again. tr_ceiling and tr_done are both 0
+     only on a fresh or freshly-loaded instrument -- iris_train_begin sets the
+     ceiling first thing -- so they are what tells the two apart. */
+  if (!k->tr_running)
+    return (k->tr_ceiling > 0 || k->tr_done > 0) ? 1.0f : 0.0f;
   if (k->tr_ceiling <= 0) return 1.0f;
   {
     float f = (float)k->tr_done / (float)k->tr_ceiling;
@@ -2219,7 +2319,7 @@ IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->see
 #define IRIS_ARENA_ELM(NI, NH, NO, NEX)                                          \
   ( IRIS_ARENA(NI, NH, NO, NEX) + IRIS_ELM_SCRATCH(NH, NO) )
 
-/* Exact inverse of iris_tanh — the Pade approximant, not the true tanh — via
+/* Exact inverse of iris_tanh — our approximant, not the true tanh — via
    Newton on x*(27+x^2) = y*(27+9x^2). Five iterations reach float32
    roundoff over |y| <= 0.98, which covers the whole 0.1-0.9 target band.
    Deterministic: fixed iteration count, no early exit. */
@@ -2674,8 +2774,23 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
                                         + 2u*((size_t)k->n_in + k->n_out)
                                         + nex * ((size_t)k->n_in + k->n_out) )
                       + sizeof(int32_t) * nex
-                      + (h[1] == IRIS_FORMAT ? sizeof(float) : 0u);
-    if (bytes < hdr + body) return 0;
+                      + (h[1] == IRIS_FORMAT ? sizeof(float) : 0u)   /* smoothing */
+                      + ((h[1] == IRIS_FORMAT || h[1] == IRIS_FORMAT_V4)
+                           ? sizeof(uint32_t) : 0u);                 /* checksum */
+
+    /* EXACTLY, not at least. The checksum is what makes a corrupted file
+       refusable -- but the checksum is only consulted for v4 and v5, and which
+       one you get is decided by the version word, which is itself four
+       unprotected bytes. Flip one bit there and a v5 file claims to be a v1,
+       skips its own verification, and loads: measured, exactly one accepted
+       corruption in 4,608 single-bit flips, playing 1.000 where it should have
+       played 0.376, with a healthy status.
+
+       Length closes it without touching the format. Each version has a
+       different total for the same shape -- v1 is a word shorter than v2, v4
+       adds the checksum, v5 adds the smoothing word too -- so a file whose
+       label and length disagree is corrupt whatever else is true of it. */
+    if (bytes != hdr + body) return 0;
   }
   k->n_ex = (int32_t)h[5]; k->seed = h[6]; k->next_id = (int32_t)h[7];
   if (h[1] != IRIS_FORMAT_V1) k->rng.s = h[8] ? h[8] : (k->seed ? k->seed : 1u);
@@ -2796,7 +2911,13 @@ IRIS_API int iris_migrate_scaling(iris *k) { if (!k) return 0;
   if (k->n_ex <= 0) return 0;          /* nothing to re-fit from */
   k->in_center = 1;
   iris_reseed(k, k->seed);               /* a fit from a defined start */
-  iris_train_converge(k, 0, 0, 0);
+  /* The re-fit can fail -- a stuck divergence, or a not-a-number that came in
+     through iris_load from an old file. Returning 1 anyway told the caller
+     their instrument had been migrated when what they actually had was an
+     instrument on the new scaling with weights that never converged to it,
+     which is worse than not migrating. Report the truth; iris_get_status says
+     which failure it was. */
+  if (iris_train_converge(k, 0, 0, 0) < 0.0f) return 0;
   return 1;
 }
 
@@ -2859,6 +2980,8 @@ IRIS_API int iris_migrate_scaling(iris *k) { if (!k) return 0;
    precision; between demonstrations the nearest k blend. Conflicting
    duplicates average finitely (the guard keeps zero-distance weights
    finite). O(n_ex * n_in) per call, division-free scan, no state touched. */
+/* LENGTHS, same rule as iris_predict and just as unchecked.
+   Reads exactly n_in floats from `in` and writes exactly n_out into `out`. */
 IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int kk) { if (!k) return;
   /* The distance measure needs the input ranges, and those are only set by a
      fit. Called on a recorded-but-never-trained instrument this silently used
@@ -2939,7 +3062,14 @@ IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int k
    out[0]; this is then exactly desktop Wekinator's shipping default for
    discrete outputs (Weka IBk, k=1, min-max normalised Euclidean distance,
    first-recorded wins ties). */
+/* LENGTHS, same rule as iris_predict and just as unchecked.
+   Reads exactly n_in floats from `in` and writes exactly n_out into `out`. */
 IRIS_API int iris_classify_1nn(const iris *k, const float *in, float *out) { if (!k) return -1;
+  /* Same reason as iris_knn_predict: the distance measure needs the input
+     ranges, and only a fit sets them. Without this, a classifier called on a
+     recorded-but-never-trained instrument used the default 0..1 range and
+     could return the wrong class with a healthy status. */
+  if (!k->fitted && k->n_ex > 0) iris_fit_ranges((iris *)k);
   const int NIn = k->n_in, NOut = k->n_out;
   if (k->n_ex == 0) return -1;
   float inv[IRIS_MAX_IN];

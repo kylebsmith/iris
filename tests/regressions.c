@@ -208,7 +208,61 @@ int main(void){
     check("K out-of-range channel index is refused, not computed",
           bad_in==0.0f && bad_out==0.0f && bad_den==0.0f, d); }
 
+  /* L — D1: corrupting the version word must not opt a file out of its own
+         checksum. Every single-bit flip must be refused. */
+  { static unsigned char f[4096], t2[4096];
+    iris *k=iris_init(A,sizeof A,2,12,3,64,7);
+    for(int i=0;i<8;i++){ float u=(i%3)/2.0f,v=(i/3)/2.0f;
+      float in[2]={u,v},o[3]={0.2f+0.5f*u,0.5f,0.8f-0.5f*v}; iris_record(k,in,o); }
+    iris_train(k);
+    float q[2]={0.4f,0.6f}, ref[3]; iris_predict(k,q,ref);
+    size_t n=iris_save(k,f,sizeof f);
+    int accepted=0;
+    for(size_t b=0;b<n;b++) for(int bit=0;bit<8;bit++){
+      memcpy(t2,f,n); t2[b]^=(unsigned char)(1u<<bit);
+      static unsigned char C3[IRIS_ARENA(2,12,3,64)];
+      iris *k2=iris_init(C3,sizeof C3,2,12,3,64,7);
+      if(iris_load(k2,t2,n)){
+        float got[3]; iris_predict(k2,q,got);
+        if(got[0]!=ref[0]||got[1]!=ref[1]||got[2]!=ref[2]) accepted++;
+      } }
+    snprintf(d,sizeof d,"%zu flips, %d accepted a corrupted file that plays differently", n*8, accepted);
+    check("L every single-bit corruption is refused", accepted==0, d); }
+
+  /* M — D5: a refused record must say WHICH of its three reasons applied. */
+  { iris *k=iris_init(B,sizeof B,1,12,1,32,1);
+    float in=0.5f,o=0.5f, nan=0.0f/0.0f;
+    iris_record(k,&in,&o);
+    int s_full=0, s_nan=0;
+    iris_record(k,&nan,&o); s_nan=(int)iris_get_status(k);
+    iris *k2=iris_init(A,sizeof A,2,12,3,64,1);
+    { float i2[2]={0.1f,0.2f},o2[3]={0.3f,0.4f,0.5f};
+      for(int i=0;i<80;i++) iris_record(k2,i2,o2);
+      s_full=(int)iris_get_status(k2); }
+    snprintf(d,sizeof d,"poisoned reading -> status %d, full store -> status %d", s_nan, s_full);
+    check("M a refused record distinguishes its reasons",
+          s_nan==IRIS_NAN_TRAPPED && s_full==IRIS_STORE_FULL, d); }
+
+  /* N — D16: a non-positive slice budget must do nothing, not 2,000 epochs. */
+  { iris *k=iris_init(B,sizeof B,1,12,1,32,1);
+    for(int i=0;i<6;i++){ float in=i/5.0f,o=i/5.0f; iris_record(k,&in,&o); }
+    iris_train_begin(k,20000);
+    int before=iris_train_epochs_done(k);
+    iris_train_slice(k,0);
+    int after=iris_train_epochs_done(k);
+    snprintf(d,sizeof d,"slice(0) advanced the epoch count by %d", after-before);
+    check("N a zero slice budget does nothing", after==before, d); }
+
+  /* O — D14: training an instrument with nothing in it must not report success. */
+  { iris *k=iris_init(B,sizeof B,1,12,1,32,1);
+    for(int i=0;i<6;i++){ float in=i/5.0f,o=i/5.0f; iris_record(k,&in,&o); }
+    iris_train(k);
+    iris_clear(k);
+    int r=iris_train(k);
+    snprintf(d,sizeof d,"iris_train on an emptied instrument returned %d", r);
+    check("O training nothing reports failure", r==0, d); }
+
 done:
-  printf("\n  %d of 11 failing\n", fails);
+  printf("\n  %d of 15 failing\n", fails);
   return fails ? 1 : 0;
 }

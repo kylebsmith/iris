@@ -21,7 +21,7 @@
  */
 
 #define IRIS_API __attribute__((used))
-#include "../../iris.h"
+#include "../../../iris.h"
 
 #define NI_MAX  12  /* the shim allows any input count up to this  */
 #define NO       4  /* sound: pitch, timbre, pressure, aux         */
