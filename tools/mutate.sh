@@ -71,7 +71,7 @@ run_mutation "stop writing the smoothing word"              's/\*sm = k->l2;/*sm
 
 echo
 echo "-- the reporting, and the two return conventions --"
-run_mutation "iris_record refuses with -1 instead of 0"     's/if \(k->n_ex >= k->cap\) return 0;/if (k->n_ex >= k->cap) return -1;/'
+run_mutation "iris_record refuses with -1 instead of 0"     's/{ k->status = IRIS_STORE_FULL; return 0; }/{ k->status = IRIS_STORE_FULL; return -1; }/'
 run_mutation "iris_train reports success when it refused"   's/return iris_train_converge\(k, 0, 0, 0\) >= 0\.0f \? 1 : 0;/return 1;/'
 run_mutation "iris_get_status always reports healthy"       's/return \(iris_status\)k->status;/return IRIS_STATUS_OK;/'
 run_mutation "iris_index_of returns 0 for a null instrument" 's/IRIS_API int iris_index_of\(const iris \*k, int id\) \{ if \(!k\) return -1;/IRIS_API int iris_index_of(const iris *k, int id) { if (!k) return 0;/'
@@ -88,6 +88,17 @@ if [ "$SURVIVED" -gt 0 ]; then
   echo
   echo "  Each survivor is a property with no check behind it, or a check that"
   echo "  cannot fail. Both are the same defect from the user's side."
+  exit 1
+fi
+if [ "$SKIPPED" -gt 0 ]; then
+  echo
+  echo "  STALE — $SKIPPED mutation(s) did not match the code and did not run."
+  echo
+  echo "  A skipped mutation is not a passing one. The pattern stopped matching"
+  echo "  because the line it edits was changed, so the check silently became a"
+  echo "  no-op while this script kept printing 100%. That is exactly the defect"
+  echo "  class this harness exists to catch, so it fails here too: resync the"
+  echo "  pattern in this file against the current code, then run it again."
   exit 1
 fi
 echo "  every mutation was detected."
