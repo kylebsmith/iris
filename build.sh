@@ -37,6 +37,9 @@ case "${1:-audit}" in
               sh tools/mutate.sh "${2:-}" ;;
   bloat)      # Is the file getting harder to read? A ratchet, not a report.
               sh tools/bloat.sh ;;
+  coverage)   # The refusal paths. Every case asks a function to say no.
+              cc $CFLAGS -o build/coverage tests/coverage.c -lm
+              ./build/coverage ;;
   claims)
     # Do the documents still tell the truth about the code? See tools/.
     sh tools/check-claims.sh

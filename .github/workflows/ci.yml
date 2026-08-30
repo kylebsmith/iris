@@ -23,6 +23,7 @@ jobs:
           sh build.sh sinks
           sh build.sh claims
           sh build.sh bloat
+          sh build.sh coverage
 
   # The library claims zero external symbols. That claim is checkable in one
   # command, so check it on every push rather than asserting it in a README.
