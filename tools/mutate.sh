@@ -42,7 +42,19 @@ run_mutation() {
   #
   # Greping output for a word that appears in both the pass and the fail message
   # is the same defect this harness exists to catch, in the harness.
-  ( cd "$WORK/m" && sh build.sh audit && sh build.sh regressions && sh build.sh claims ) \
+  # BEHAVIOURAL SUITES ONLY. `claims` used to be in this list and it made every
+  # mutation a false kill: it compares iris.h's line count against a number in
+  # README.md, so ANY edit to the source fails it -- including a mutation that
+  # changes nothing observable. Measured: with the shuffle-fill mutation applied,
+  # audit and regressions both PASS and claims fails on "total lines
+  # MISMATCH doc=3406 actual=3415". That scored 100% while detecting nothing.
+  #
+  # A mutation is killed when the library BEHAVES differently, not when a
+  # document disagrees about a line count. audit, regressions, coverage and tu
+  # are the suites that test behaviour; claims and bloat are not and are run
+  # separately by build.sh and CI.
+  ( cd "$WORK/m" && sh build.sh audit && sh build.sh regressions \
+                 && sh build.sh coverage && sh build.sh tu ) \
       >/dev/null 2>&1 && rc=0 || rc=1
   if [ "$rc" != "0" ]; then
     printf "  killed  %-52s\n" "$label"; KILLED=$((KILLED+1))
@@ -70,6 +82,11 @@ run_mutation "drop the arena bound in iris_init"            's/if \(bytes < need
 run_mutation "ignore an unsizeable shape in iris_init"     's/if \(need == 0\) return 0;/;/'
 run_mutation "drop the not-a-number door check"             's/if \(iris_isbad\(in\[i\]\)\)/if (0)/'
 run_mutation "iris_isbad always says healthy"               's/return \(c\.u & 0x7F800000u\) == 0x7F800000u;/return 0;/'
+# EXPECTED SURVIVOR, kept deliberately. The trainer refills order[] at the start
+# of every run, so the init-time fill is unobservable -- verified over 300
+# randomised trials on dirty arenas under both sanitizers, identical result hash
+# either way. The line stays as defence in depth; this mutation stays as the
+# record that it is untestable rather than untested. See iris.h at k->order.
 run_mutation "stop filling the shuffle buffer at init"      's/for \(int i = 0; i < cap; \+\+i\) k->order\[i\] = i;/;/'
 run_mutation "hidden-width floor 8 -> 1 in iris_init"       's/if \(n_hid < 8 \|\| n_hid > IRIS_MAX_HID\) return 0;/if (n_hid < 1 || n_hid > IRIS_MAX_HID) return 0;/'
 run_mutation "remove the degenerate-range floor"            's/if \(k->in_hi\[i\]  - k->in_lo\[i\]  < w\)/if (0)/'
