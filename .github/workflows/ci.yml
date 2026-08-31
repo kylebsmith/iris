@@ -25,6 +25,7 @@ jobs:
           sh build.sh bloat
           sh build.sh coverage
           sh build.sh sketches
+          sh build.sh tu
 
   # The library claims zero external symbols. That claim is checkable in one
   # command, so check it on every push rather than asserting it in a README.

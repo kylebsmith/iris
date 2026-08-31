@@ -52,6 +52,16 @@ case "${1:-audit}" in
               fi ;;
   target)     # The zero-dependency claim, on the CHIP's compiler, not the host.
               sh tools/freestanding-esp32.sh ;;
+  tu)         # Two translation units disagreeing about IRIS_MAX_*, which is a
+              # thing iris.h documents doing. Under a sanitizer, because the
+              # failure it guards was a stack overwrite, not a wrong answer.
+              cc -std=c99 -O1 -g -fsanitize=address,undefined \
+                 -fno-sanitize-recover=all -I. -c tests/tu/big.c -o build/tu_big.o
+              cc -std=c99 -O1 -g -fsanitize=address,undefined \
+                 -fno-sanitize-recover=all -I. -c tests/tu/small.c -o build/tu_small.o
+              cc -fsanitize=address,undefined build/tu_small.o build/tu_big.o \
+                 -o build/tu -lm
+              ./build/tu ;;
   coverage)   # The refusal paths. Every case asks a function to say no.
               cc $CFLAGS -o build/coverage tests/coverage.c -lm
               ./build/coverage ;;

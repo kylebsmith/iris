@@ -1337,7 +1337,38 @@ IRIS_API void iris_forward_norm(const iris *k, const float *x_norm) { if (!k) re
   }
 }
 
+/* DOES THIS INSTRUMENT FIT THIS TRANSLATION UNIT'S WORKING ARRAYS?
+
+   Nine functions below declare float x[IRIS_MAX_IN] and friends. Those maxima
+   are #ifndef so a small board can shrink them (see the note above them), and
+   that is a per-TRANSLATION-UNIT setting: define IRIS_MAX_IN 4 in one .c file
+   and not in another, and the two files disagree about how big those arrays
+   are while sharing one instrument through a pointer.
+
+   iris_init checks the shape against the maxima -- but it checks them in the
+   translation unit that CALLS iris_init, which is the one with the large
+   maxima, so it passes. The unit with the small maxima then writes n_in floats
+   into its own float x[4]. Reproduced under AddressSanitizer:
+   "stack-buffer-overflow, WRITE of size 4, [32,48) 'x.i'".
+
+   So every function that declares one of those arrays asks this first. It is
+   two comparisons and it turns a memory overwrite into an ordinary refusal. */
+IRIS_API int iris_shape_fits(const iris *k) {
+  return k && k->n_in <= IRIS_MAX_IN && k->n_out <= IRIS_MAX_OUT
+           && k->n_hid <= IRIS_MAX_HID;
+}
+
 IRIS_API void iris_predict(const iris *k, const float *in, float *out) { if (!k) return;
+  if (!iris_shape_fits(k)) {
+    /* Write a safe value rather than returning silently: `out` holds whatever
+       the caller last played, and leaving it there is stale audio, which is the
+       failure this library refuses everywhere else. Same substitute the
+       unfitted path uses -- the centre of the demonstrated range. */
+    for (int o = 0; o < k->n_out; ++o)
+      out[o] = (k->n_ex > 0) ? 0.5f * (k->out_lo[o] + k->out_hi[o]) : 0.0f;
+    ((iris *)k)->status = IRIS_NOT_FITTED;
+    return;
+  }
   float x[IRIS_MAX_IN];
 
 #ifndef IRIS_NO_GUARDS
@@ -1418,6 +1449,7 @@ IRIS_API void iris_predict(const iris *k, const float *in, float *out) { if (!k)
    ========================================================================== */
 
 IRIS_API float iris_novelty(const iris *k, const float *in) { if (!k) return 0.0f;
+  if (!iris_shape_fits(k)) return 0.0f;
   if (k->n_ex == 0) return 1.0f;
   const int stride = k->n_in + k->n_out;
   float best = 1e30f;
@@ -1561,6 +1593,7 @@ typedef int (*iris_progress_fn)(void *user, int done, int ceiling, float err);
    the same situation. Two conventions, one library. Fixed 2026-08-26. */
 IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume,
                            iris_progress_fn cb, void *user) { if (!k) return -1.0f;
+  if (!iris_shape_fits(k)) { k->status = IRIS_NOT_FITTED; return -1.0f; }
   if (k->n_ex == 0) {
     /* A run with nothing left to train on is over, however it got that way.
        iris_clear was taught to end a run; the four delete functions were not,
@@ -2104,6 +2137,7 @@ IRIS_API float iris_retrain_new(iris *k, uint32_t seed, int epochs) { if (!k) re
    is valid to play afterwards — but it is NOT the instrument you had before you
    called this, because it has been retrained. Save first if that matters. */
 IRIS_API float iris_loo_error(iris *k, int epochs) { if (!k) return -1.0f;
+  if (!iris_shape_fits(k)) { k->status = IRIS_NOT_FITTED; return -1.0f; }
   if (k->n_ex < 3) return -1.0f;
   const int n = k->n_ex, ni = k->n_in, no = k->n_out, stride = ni + no;
   const uint32_t seed0 = k->seed;
@@ -2503,6 +2537,7 @@ IRIS_API float iris_logit(float t) { return 2.0f * iris_artanh(2.0f * t - 1.0f);
 IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
                            void *scratch, size_t scratch_bytes) { if (!k) return -1;
   if (!scratch || k->n_ex == 0) return -1;
+  if (!iris_shape_fits(k)) { k->status = IRIS_NOT_FITTED; return -1; }
   const int NI_ = k->n_in, NH_ = k->n_hid, NO_ = k->n_out, K = NH_ + 1;
   if (NH_ < 8) return -1;              /* below the measured reroll floor */
   if (scratch_bytes < IRIS_ELM_SCRATCH(NH_, NO_)) return -1;
@@ -2806,6 +2841,21 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
    checksum that passes is exactly the evidence that would persuade you the
    file is fine. Do not save an instrument that something else may be touching.
    There is no allocation and no lock in this library to do it for you. */
+/* FORMAT v6 CHANGES NO BYTES AT ALL -- the same trick v3 used. Same header,
+   same payload, same length, same checksum. What it changes is one fact ABOUT
+   the instrument: v6 means "this was saved before it was ever fitted".
+
+   Why it has to exist. iris_load used to set trained = 1 unconditionally, so
+   record-save-load-play on a never-trained instrument ran the forward pass over
+   the random weights iris_reseed left, returned numbers that vary with the
+   gesture, and reported IRIS_STATUS_OK. The unfitted guard in iris_predict is
+   the defence the front page calls the one thing to get right, and the loader
+   walked around it. Nothing in the bytes could tell the two apart, because
+   untrained weights are just weights.
+
+   v1-v5 keep meaning exactly what they always meant -- fitted -- so no file
+   ever written changes meaning, which is the promise adr/0006 makes. */
+#define IRIS_FORMAT_V6 6u       /* v5 layout, and it was NOT fitted when saved */
 #define IRIS_FORMAT 5u          /* what iris_save writes: v4 + the smoothing word */
 #define IRIS_FORMAT_V4 4u       /* v3 layout + a CRC32, no smoothing. Forever.  */
 #define IRIS_FORMAT_V3 3u       /* v3 without the CRC. Readable forever.        */
@@ -2876,7 +2926,13 @@ IRIS_API size_t iris_save(const iris *k, void *buf, size_t cap) { if (!k) return
 
      v2 and v3 have identical layouts, so this costs nothing but the truth. */
   h[0] = IRIS_MAGIC;
-  h[1] = k->in_center ? IRIS_FORMAT : IRIS_FORMAT_V2;
+  /* v6 when this instrument has never been fitted -- same bytes, and the
+     loader will not claim it is trained. The legacy [0,1] branch has no such
+     marker and cannot gain one without breaking v2's meaning, so an unfitted
+     legacy save still loads as trained; that combination needs an instrument
+     restored from a pre-release v1/v2 file and then never trained. */
+  h[1] = k->in_center ? (k->trained ? IRIS_FORMAT : IRIS_FORMAT_V6)
+                      : IRIS_FORMAT_V2;
   h[2] = (uint32_t)k->n_in; h[3] = (uint32_t)k->n_hid;
   h[4] = (uint32_t)k->n_out; h[5] = (uint32_t)k->n_ex;
   h[6] = k->seed; h[7] = (uint32_t)k->next_id;
@@ -2902,7 +2958,7 @@ IRIS_API size_t iris_save(const iris *k, void *buf, size_t cap) { if (!k) return
        the public interface, silent on a chip with no memory protection, and
        made likelier by iris_suggest_smoothing asking the caller for exactly
        this size. v2 carries neither the smoothing word nor the checksum. */
-    if (h[1] == IRIS_FORMAT) {
+    if (h[1] == IRIS_FORMAT || h[1] == IRIS_FORMAT_V6) {
       uint32_t *tail = (uint32_t *)(ids + k->n_ex);
       float *sm = (float *)tail;
       *sm = k->l2;
@@ -2919,14 +2975,15 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
   if (h[0] != IRIS_MAGIC) return 0;
   if (h[1] != IRIS_FORMAT_V1 && h[1] != IRIS_FORMAT_V2 &&
       h[1] != IRIS_FORMAT_V3 && h[1] != IRIS_FORMAT_V4 &&
-      h[1] != IRIS_FORMAT) { k->status = IRIS_NAN_TRAPPED; return 0; }
+      h[1] != IRIS_FORMAT && h[1] != IRIS_FORMAT_V6) {
+    k->status = IRIS_NAN_TRAPPED; return 0; }
 
   /* VERIFY THE CHECKSUM before trusting a single weight. Only v4 carries one;
      v1/v2/v3 predate it and load unchecked, which is the price of the promise
      that an old instrument keeps working forever. A mismatch means the file is
      damaged — refuse it rather than play weights that will be subtly wrong with
      nothing reporting anything. */
-  if (h[1] == IRIS_FORMAT || h[1] == IRIS_FORMAT_V4) {
+  if (h[1] == IRIS_FORMAT || h[1] == IRIS_FORMAT_V6 || h[1] == IRIS_FORMAT_V4) {
     /* No bounds test here: the function refuses anything under 8 words at
        entry, so bytes >= 32 and the 4-byte trailer is always present. cppcheck
        and an independent audit both flagged the removed test as dead. */
@@ -2988,8 +3045,10 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
                                         + 2u*((size_t)k->n_in + k->n_out)
                                         + nex * ((size_t)k->n_in + k->n_out) )
                       + sizeof(int32_t) * nex
-                      + (h[1] == IRIS_FORMAT ? sizeof(float) : 0u)   /* smoothing */
-                      + ((h[1] == IRIS_FORMAT || h[1] == IRIS_FORMAT_V4)
+                      + ((h[1] == IRIS_FORMAT || h[1] == IRIS_FORMAT_V6)
+                           ? sizeof(float) : 0u)                        /* smoothing */
+                      + ((h[1] == IRIS_FORMAT || h[1] == IRIS_FORMAT_V6
+                          || h[1] == IRIS_FORMAT_V4)
                            ? sizeof(uint32_t) : 0u);                 /* checksum */
 
     /* EXACTLY, not at least. The checksum is what makes a corrupted file
@@ -3048,15 +3107,27 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
      0 -- which is what it always got, and is the honest answer: the file does
      not know. Its weights are unaffected either way; the setting only matters
      the moment somebody retrains. */
-  if (h[1] == IRIS_FORMAT) {
+  if (h[1] == IRIS_FORMAT || h[1] == IRIS_FORMAT_V6) {
     const float *sm = (const float *)(ids + k->n_ex);
     k->l2 = iris_clampf(*sm, 0.0f, 0.3f);
   } else {
     k->l2 = 0.0f;
   }
 
-  k->trained = 1;
-  k->fitted  = 1;             /* the weights in the file came from a real fit */
+  /* v6 says this instrument was saved before it was ever fitted, so do not
+     claim it is. Every other format means fitted, which is what they have
+     always meant. Without this the loader walked around iris_predict's
+     unfitted guard: record, save, load, play, and the forward pass ran over
+     random weights while the status read healthy. */
+  { const int was_fit = (h[1] != IRIS_FORMAT_V6);
+    k->trained = was_fit;
+    /* AND `fitted` TOO, which is the one iris_predict actually guards on.
+       `fitted` means "has EVER produced a fit" and is what stops the forward
+       pass running over random weights; `trained` only means "the fit still
+       matches the examples" and is cleared by any record or delete, which must
+       NOT silence an instrument mid-performance. Setting only `trained` here
+       left the hole open: is_trained said 0 and iris_predict played anyway. */
+    k->fitted  = was_fit; }
   k->status = IRIS_STATUS_OK;   /* a freshly loaded instrument carries no stale error */
 
   /* MEASURE the loaded instrument's error instead of leaving whatever the
@@ -3194,6 +3265,7 @@ IRIS_API int iris_migrate_scaling(iris *k) { if (!k) return 0;
 /* LENGTHS, same rule as iris_predict and just as unchecked.
    Reads exactly n_in floats from `in` and writes exactly n_out into `out`. */
 IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int kk) { if (!k) return;
+  if (!iris_shape_fits(k)) { ((iris *)k)->status = IRIS_NOT_FITTED; return; }
   /* The distance measure needs the input ranges, and those are only set by a
      fit. Called on a recorded-but-never-trained instrument this silently used
      the default range of 0..1 and gave a quietly wrong answer. Fit them here:
@@ -3276,6 +3348,7 @@ IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int k
 /* LENGTHS, same rule as iris_predict and just as unchecked.
    Reads exactly n_in floats from `in` and writes exactly n_out into `out`. */
 IRIS_API int iris_classify_1nn(const iris *k, const float *in, float *out) { if (!k) return -1;
+  if (!iris_shape_fits(k)) { ((iris *)k)->status = IRIS_NOT_FITTED; return -1; }
   /* Same reason as iris_knn_predict: the distance measure needs the input
      ranges, and only a fit sets them. Without this, a classifier called on a
      recorded-but-never-trained instrument used the default 0..1 range and
