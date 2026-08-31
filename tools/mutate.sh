@@ -83,7 +83,14 @@ run_mutation "stop writing the smoothing word"              's/\*sm = k->l2;/*sm
 echo
 echo "-- the reporting, and the two return conventions --"
 run_mutation "iris_record refuses with -1 instead of 0"     's/{ k->status = IRIS_STORE_FULL; return 0; }/{ k->status = IRIS_STORE_FULL; return -1; }/'
-run_mutation "iris_train reports success when it refused"   's/return iris_train_converge\(k, 0, 0, 0\) >= 0\.0f \? 1 : 0;/return 1;/'
+run_mutation "iris_train reports success when it refused"   's/return \(e >= 0\.0f \&\& k->trained\) \? 1 : 0;/return 1;/'
+# NOT a mutation: "iris_train ignores the trained flag" would survive, because
+# with the setters guarded I could find no route that leaves a NON-NEGATIVE
+# error behind while trained is 0 -- the NaN-example-via-file route and the
+# emptied-instrument route both return -1.0f. The `&& k->trained` condition is
+# therefore defence in depth against a case that is currently unreachable.
+# Adding a mutation that cannot be killed would put a permanent false survivor
+# in this report, which is the opposite of what this harness is for.
 run_mutation "iris_get_status always reports healthy"       's/return \(iris_status\)k->status;/return IRIS_STATUS_OK;/'
 run_mutation "iris_index_of returns 0 for a null instrument" 's/IRIS_API int iris_index_of\(const iris \*k, int id\) \{ if \(!k\) return -1;/IRIS_API int iris_index_of(const iris *k, int id) { if (!k) return 0;/'
 
