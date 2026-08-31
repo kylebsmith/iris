@@ -10,6 +10,22 @@ changes what a file means, and `docs/adr/0006` and `0018` govern that.
 
 ## 0.1.0 — unreleased
 
+- **A note on the mutation-testing figures in this repository's git history.**
+  Any mutation score quoted in a commit message before the commit "tools: the mutation harness has been reporting a fake score" was produced by
+  a harness that was not measuring anything. It decided kill-or-survive by
+  searching its own output for the word "failing", and the regression suite
+  printed "0 of 16 failing" on every run, so every mutation was recorded as
+  killed. Proved by mutating a word inside a comment: reported "killed".
+  Fixed to decide by exit code, at which point the honest score was 70%.
+  A second false-scoring mechanism was found later the same day and fixed in "tools: the mutation harness was scoring 100% by detecting
+  nothing, again": the kill test included the documentation-consistency check, which
+  compares the header's line count against a number in the README, so any edit
+  to the source failed it and killed every mutation for a reason that had
+  nothing to do with behaviour. The kill test now runs only the suites that
+  test behaviour. The figures from that commit onward are real; the earlier ones
+  are not, and the commits are left in place rather than rewritten because a
+  record that corrects itself is worth more than one that looks clean.
+
 - Internal helpers renamed from `iris__x` to `iris_internal_x`. C99 reserves
   every identifier containing a double underscore for the implementation, so
   the old names were formally undefined behaviour in a library that claims to
