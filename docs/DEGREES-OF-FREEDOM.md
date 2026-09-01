@@ -67,8 +67,11 @@ calls the coordinated version a **synergy**; the same idea, older name.
 
 - Synthetic targets (sums of sines), not recorded human gestures. The shape of
   the result should hold; the exact numbers are about this test.
-- Twelve demonstrations. With forty, everything improves and the ordering
-  between the three cases is unchanged — the program prints both.
+- Twelve demonstrations; `docs/degrees-of-freedom.c` fixes `ND=12` and prints
+  that one case only. The forty-demonstration run was done separately and is not
+  reproducible from the shipped program — everything improved and the ordering
+  between the three cases was unchanged, but take that as a note, not a result
+  you can re-run here.
 - "Inputs are free" holds *here* because the target uses every input smoothly.
   A target with sharp structure in many input dimensions is the classic curse
   of dimensionality and will cost you. Inputs are cheap in this test, not in

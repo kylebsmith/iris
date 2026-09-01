@@ -84,8 +84,9 @@ defects. Every one was re-verified here before anything was changed.
   ignore the standard contraction pragma, and in GNU mode — which is what the
   Arduino development environment builds with — they contract by default. The
   same seed and the same demonstrations produced a *different instrument*. A
-  file-scope `#pragma GCC optimize ("fp-contract=off")` fixes it: twelve builds
-  across three compilers and three optimisation levels now agree exactly.
+  file-scope `#pragma GCC optimize ("fp-contract=off")` fixes it: every build in
+  that sweep now agrees exactly. (This note used to say "twelve builds across
+  three compilers and three optimisation levels", which multiplies to nine.)
 - `-ffinite-math-only` is not `-ffast-math` and did not trip the tripwire, but
   it deleted every guard in the library: `iris_isbad` folded to false, poisoned
   demonstrations were accepted, and a broken sensor produced a plausible number
@@ -125,7 +126,9 @@ defects. Every one was re-verified here before anything was changed.
   one output by 0.14 of full scale. It now saves and restores, and takes
   scratch space to do it. It refuses without that space rather than proceeding:
   refusing an answer is recoverable, replacing someone's instrument is not.
-- **Format 5**: format 4 plus one float, the smoothing setting. It was the last
+- **Format 5**: format 4 plus one float, the smoothing setting — what `iris_save`
+  writes for a fitted instrument. A sixth format word exists and is written for an
+  unfitted save, so the loader accepts six, not five. Format 5 was the last
   unfinished item on `FREEZE.md`'s "cheap today and impossible tomorrow" list.
   Formats 1 through 4 still load; a v4 file was hand-built and verified to load
   and predict bit-identically, reporting smoothing 0, which is honest — v4 never

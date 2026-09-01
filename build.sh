@@ -79,8 +79,10 @@ case "${1:-audit}" in
                 # guard's name.
                 if [ -n "${CI:-}" ]; then
                   echo "  FAIL  running in CI with no starter to check."
-                  echo "        Check the starter out and set IRIS_STARTER, or"
-                  echo "        drop this step -- do not let it pass silently."
+                  echo "        The workflow already checks the starter out and"
+                  echo "        sets IRIS_STARTER, so reaching this means that"
+                  echo "        checkout failed -- most likely the starter is"
+                  echo "        not published yet. Publish it first."
                   exit 1
                 fi
               fi ;;

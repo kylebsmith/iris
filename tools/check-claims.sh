@@ -137,8 +137,8 @@ want "CHANGELOG heads this version" "$V" \
 # want() compares two strings, so two EMPTY strings match. If both greps stop
 # finding anything -- a heading reformat, say -- the check would pass while
 # measuring nothing. Require a date shape first, then compare.
-CHDATE=$(grep -oE '^## [0-9]+\.[0-9]+\.[0-9]+ — [0-9]{4}-[0-9]{2}-[0-9]{2}' CHANGELOG.md | head -1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}')
-CFDATE=$(grep -oE '^date-released: "[0-9]{4}-[0-9]{2}-[0-9]{2}"' CITATION.cff | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}')
+CHDATE=$(grep -oE '^## [0-9]+\.[0-9]+\.[0-9]+ — [0-9]{4}-[0-9]{2}-[0-9]{2}' CHANGELOG.md | head -1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)
+CFDATE=$(grep -oE '^date-released: "[0-9]{4}-[0-9]{2}-[0-9]{2}"' CITATION.cff | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)
 want "CHANGELOG states a release date" "yes" "$([ -n "$CHDATE" ] && echo yes || echo no)"
 want "CITATION.cff states a release date" "yes" "$([ -n "$CFDATE" ] && echo yes || echo no)"
 want "CITATION.cff date matches the CHANGELOG entry" \
@@ -162,25 +162,34 @@ if ${CC:-cc} -std=c99 -I. -o /tmp/_iris_sizes /tmp/_iris_sizes.c -lm 2>/dev/null
   STRUCT_B=$(echo "$SIZES" | awk '{print $1}')
   ARENA_B=$(echo "$SIZES" | awk '{print $2}')
   ARENA_C=$(printf "%s" "$ARENA_B" | sed 's/\([0-9]\)\([0-9]\{3\}\)$/\1,\2/')
-  want "struct iris size in SYSTEM-technical.md" "$STRUCT_B" \
-       "$(grep -oE '`struct iris` is [0-9]+ bytes' docs/SYSTEM-technical.md | grep -oE '[0-9]+')"
-  want "arena figure in SYSTEM-technical.md" "$ARENA_C" \
-       "$(grep -oE 'IRIS_ARENA\(2,12,3,256\)` is [0-9,]+ bytes' docs/SYSTEM-technical.md | grep -oE '[0-9,]+ bytes' | grep -oE '[0-9,]+')"
-  want "arena figure quoted from the audit" "macro $ARENA_B B, needed $ARENA_B B, slack 0 B" \
-       "$(grep -oE 'macro [0-9]+ B, needed [0-9]+ B, slack 0 B' docs/SYSTEM-technical.md | head -1)"
-  want "arena figure in SYSTEM-plain-english.md" "$ARENA_C" \
-       "$(grep -oE '^[0-9,]+ bytes — about nine kilobytes' docs/SYSTEM-plain-english.md | grep -oE '[0-9,]+')"
+  want "struct iris size in SYSTEM-technical.md" \
+       "$(grep -oE '`struct iris` is [0-9]+ bytes' docs/SYSTEM-technical.md | grep -oE '[0-9]+')" "$STRUCT_B"
+  want "arena figure in SYSTEM-technical.md" \
+       "$(grep -oE 'IRIS_ARENA\(2,12,3,256\)` is [0-9,]+ bytes' docs/SYSTEM-technical.md | grep -oE '[0-9,]+ bytes' | grep -oE '[0-9,]+')" "$ARENA_C"
+  want "arena figure quoted from the audit" \
+       "$(grep -oE 'macro [0-9]+ B, needed [0-9]+ B, slack 0 B' docs/SYSTEM-technical.md | head -1)" "macro $ARENA_B B, needed $ARENA_B B, slack 0 B"
+  want "arena figure in SYSTEM-plain-english.md" \
+       "$(grep -oE '^[0-9,]+ bytes — about nine kilobytes' docs/SYSTEM-plain-english.md | grep -oE '[0-9,]+')" "$ARENA_C"
 else
-  say "size probe" "SKIP: probe did not build"
+  say "size probe" "FAIL: probe did not build"; fail=1
 fi
 
 # Every document that states the audit's check count, not just two of them.
-want "audit count in SYSTEM-technical.md" "$CHECKS" \
-     "$(grep -oE 'The audit prints [0-9]+ `PASS` lines' docs/SYSTEM-technical.md | grep -oE '[0-9]+')"
-want "audit count in build.sh usage"      "$CHECKS" \
-     "$(grep -oE 'run the correctness checks \([0-9]+\)' build.sh | grep -oE '[0-9]+')"
-want "audit count in the pull-request checklist" "$CHECKS" \
-     "$(grep -oE '`sh build.sh audit` — [0-9]+ checks' CONTRIBUTING.md | grep -oE '[0-9]+')"
+want "audit count in SYSTEM-technical.md" \
+     "$(grep -oE 'The audit prints [0-9]+ `PASS` lines' docs/SYSTEM-technical.md | grep -oE '[0-9]+')" "$CHECKS"
+want "audit count in build.sh usage" \
+     "$(grep -oE 'run the correctness checks \([0-9]+\)' build.sh | grep -oE '[0-9]+')" "$CHECKS"
+want "audit count in the pull-request checklist" \
+     "$(grep -oE '`sh build.sh audit` — [0-9]+ checks' CONTRIBUTING.md | grep -oE '[0-9]+')" "$CHECKS"
+
+# extras/README.md states the size of extras/ports/ in prose. It is exact today
+# and nothing measured it, which is how every other stale number here began.
+if [ -f extras/README.md ]; then
+  PORTS_L=$(find extras/ports -type f -exec cat {} + 2>/dev/null | wc -l | tr -d ' ')
+  PORTS_C=$(printf "%s" "$PORTS_L" | sed 's/\([0-9]\)\([0-9]\{3\}\)$/\1,\2/')
+  want "extras/ports line count in extras/README.md" \
+       "$(grep -oE '[0-9,]+ lines' extras/README.md | head -1 | grep -oE '[0-9,]+')" "$PORTS_C"
+fi
 
 # The library was renamed from embwek. Include guards kept the old spelling for
 # a while after; this stops that coming back.

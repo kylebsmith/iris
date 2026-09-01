@@ -285,8 +285,11 @@
        #define IRIS_MAX_HID 12
        #include "iris.h"
 
-   Measured, same compiler and flags: that takes iris_internal_train_run from 286 bytes
-   to 126, iris_predict from 164 to 52, and the deepest frame from 340 to 132.
+   Measured, same compiler and flags (avr-gcc 7.3.0, -mmcu=atmega328p -Os
+   -fstack-usage): the deepest frame on the record/train/predict path falls
+   from 308 bytes to 148 -- a saving of 160. Two documents used to quote 340
+   and 132 for this; that pair no longer reproduces, and the 160-byte saving
+   does. A bare caller with no locals of its own measures 288 and 128.
    The only rule is that they must be at least as large as the n_in, n_out and
    n_hid you pass to iris_init -- which iris_init checks, and refuses if not.
    On a 32-bit board (ESP32, RP2040, STM32) leave them alone; the defaults cost

@@ -108,7 +108,8 @@ the fastest, loosest maths settings for exactly this reason.) Second, you can
 deliberately re-roll those starting random numbers and get a *different*
 instrument that agrees with your demonstrations almost as closely but takes a
 different path between them. Measured: after a re-roll the sound at your
-demonstrated poses moves about six times less than the sound in the gaps. Your
+demonstrated poses moves about four and a half times less than the sound in
+the gaps. Your
 demonstrations stay put; the in-between changes character. That is a creative
 tool, not a bug.
 
@@ -150,9 +151,10 @@ The same thing happens with a bad take — a gesture recorded while your hand
 slipped. There is a worked example of exactly this. An instrument trained on
 fourteen good demonstrations answered one particular gesture with the three sound
 settings 0.618, 0.500 and 0.383 (each parameter runs from 0 to 1). One bad
-demonstration was added, and the same gesture then produced 0.067, 0.946, 0.059.
-Completely different, and wrong. In that case the contradiction was violent
-enough that training itself blew up, and the library reported that it had. The
+demonstration was added, and the same gesture then produced 0.087, 0.937, 0.071.
+Completely different, and wrong. Deleting the bad take and re-fitting brought it
+back to 0.618, 0.500, 0.383 exactly — the program prints all of this, and those
+are its numbers, not a retelling. The
 quieter case is the more common one and the more dangerous: a slightly-off
 demonstration that does not break anything, just bends everything a little.
 
@@ -212,7 +214,7 @@ human gesture.
 And of all the timing figures, exactly one was ever measured on the actual target
 chip: 321 milliseconds, for a deliberately short fixed-length training run — 600
 passes — on twenty demonstrations. The trainer iris actually recommends does not
-stop at 600; on twenty demonstrations it runs about 16,000 passes, and nobody has
+stop at 600; on twenty demonstrations it runs about 18,000 passes, and nobody has
 ever timed that on the chip. Scaling up from a laptop puts it near seven seconds.
 Every other figure carrying that chip's name is an estimate scaled from a laptop
 in the same way, and the project says so on the face of the table.
@@ -221,9 +223,11 @@ in the same way, and the project says so on the face of the table.
 
 Once trained, playing the instrument is cheap. One gesture in, one set of sound
 parameters out, in about thirty billionths of a second on a laptop — measured. On
-the small chip the estimate is about eight millionths of a second. At a thousand
-gestures per second that is about 0.8 percent of one core of that chip, and that
-figure is an estimate too.
+the small chip it is 14.9 millionths of a second — and that one is a reading
+from the board, not a laptop figure scaled by a guess. An earlier version of
+this page said about eight millionths, which was exactly such a guess and was
+withdrawn. At a thousand gestures per second, 14.9 microseconds is about 1.5
+percent of one core.
 
 The whole instrument, including room for 256 stored demonstrations, occupies
 9,272 bytes — about nine kilobytes. A single photo from a phone is several

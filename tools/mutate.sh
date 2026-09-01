@@ -173,14 +173,12 @@ if [ "$GOT" != "$WANT" ]; then
   echo "  is stale. Both are defects; neither is silent."
   exit 1
 fi
+
 if [ "$SURVIVED" -gt 0 ]; then
   echo
-  echo "  Both survivors are the expected, annotated pair -- guard branches that"
-  echo "  are unreachable on a 64-bit host. See their run_mutation lines."
-fi
-if [ "$SURVIVED" -gt 0 ]; then
-  echo "  every mutation was detected, or is one of the two annotated survivors"
-  echo "  that cannot be killed on a 64-bit host."
+  echo "  Every mutation was detected, except the two annotated survivors -- guard"
+  echo "  branches that are unreachable on a 64-bit host. See their run_mutation"
+  echo "  lines for why no host test can kill them."
 else
   echo "  every mutation was detected."
 fi

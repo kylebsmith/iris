@@ -17,9 +17,14 @@
    reader would quote our own output back at us.
 
    EVERY FIGURE IN THE "est. S3" COLUMNS IS A SCALING OF A HOST MEASUREMENT,
-   NOT A READING FROM THE BOARD. Only the backprop-600 row has ever been
-   measured on hardware; iris_train_converge, iris_train_elm and iris_train_lbfgs are
-   all UNMEASURED on device. Corrected 2026-08-26.                          */
+   NOT A READING FROM THE BOARD. Two of these have hardware readings behind
+   them and two do not. backprop-600: 321 ms at 20 examples (BRINGUP-LOG).
+   iris_train_converge: 595 ms at 4 demonstrations and 2.7-3.0 s at 8 to 20,
+   from device_torture test 5, which times iris_train() -- and iris_train() is
+   a thin wrapper whose last statement is iris_train_converge(k,0,0,0), so
+   timing one times the other. This comment previously said converge was
+   unmeasured while README.md:158-159 quoted the numbers. iris_train_elm and
+   iris_train_lbfgs really are UNMEASURED on device.                        */
 #define IRIS_S3_SCALE 270.0
 #include <stdio.h>
 #include <string.h>
@@ -1936,10 +1941,12 @@ int main(void) {
        alone[2], together[2], alone[3], together[3]);
   }
 
-  printf("TRAINING COST  (this machine; the S3 is roughly 25-40x slower)\n\n");
-  printf("  * S3 columns are the HOST time x270, not board readings. Only\n"
-         "    backprop-600 has ever been measured on hardware (321 ms @20 ex,\n"
-         "    BRINGUP-LOG.md:198). converge/ELM/L-BFGS are UNMEASURED on device.\n\n");
+  printf("TRAINING COST  (this machine; S3 columns below are x270)\n\n");
+  printf("  * S3 columns are the HOST time x270, not board readings.\n"
+         "    Measured on hardware: backprop-600 (321 ms @20 ex,\n"
+         "    BRINGUP-LOG.md:198) and converge (595 ms @4 demos, 2.7-3.0 s\n"
+         "    @8-20, device_torture test 5). ELM and L-BFGS are UNMEASURED\n"
+         "    on device.\n\n");
   printf("  examples   backprop-600      S3 x270*  |  L-BFGS-100      S3 x270* |  ELM nh-12       S3 x270*\n");
   const int exs[] = { 10, 20, 50, 100, 200 };
   static float lwork_t[IRIS_LBFGS_WORK_FLOATS(NI, NH, NO, IRIS_LBFGS_M) + 2];

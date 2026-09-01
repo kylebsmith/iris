@@ -77,7 +77,7 @@ nice-to-have. It is the whole product.
 
 ## What it is
 
-`iris.h` is a single header — 3,427 lines, 1,186 of them code — implementing the
+`iris.h` is a single header — 3,430 lines, 1,186 of them code — implementing the
 interactive machine learning loop that Wekinator made standard in 2009, rebuilt
 for targets that have no operating system.
 
@@ -268,7 +268,8 @@ the worst instrument.
 seed — which is the reroll, a die rather than a setting — and **smoothing**,
 0 to 1, the one knob that changes how good the instrument is. `0` sticks tightly
 to your demonstrations; `1` smooths confidently between them. On clean
-demonstrations 0 is best; on noisy ones 1 is **2.6× better**. Monotone across
+demonstrations 0 is best; on noisy ones 1 is **2.5× better** (grid error 0.1805
+→ 0.0716 at take-to-take noise σ=0.10, `docs/KNOB-AUDIT.md:124`). Monotone across
 its whole range, zero divergences at any value.
 
 `iris_suggest_smoothing(k, scratch, bytes)` will run a leave-one-out sweep and
