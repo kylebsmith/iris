@@ -61,8 +61,8 @@
      iris_train_converge(k, 0, 0, 0);    // trains until the error plateaus
      iris_predict(k, gesture, sound);    // now play
 
-   THE WORDS THIS FILE USES, defined once, here, before it uses them. CONTRIBUTING.md
-   asks for no bare acronyms and the audience includes musicians and first-year
+   THE WORDS THIS FILE USES, defined once, here, before it uses them.
+   CONTRIBUTING.md asks for no bare acronyms and the audience includes musicians and first-year
    students, so:
 
      EPOCH        one pass over every demonstration you have recorded. Training
