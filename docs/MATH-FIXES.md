@@ -3,7 +3,7 @@
 > **Historical record.** Describes fixes as applied on its date. Line numbers
 > and counts refer to the file as it stood then.
 
-Everything below was re-measured against the working tree at this repository (`iris.h` md5 unchanged, `./build.sh audit` = 40/40 PASS at baseline). Three candidate patches were applied to copies in scratch copies that were not retained and the full audit run on each; every hash and timing quoted in §4 and §7 is from those runs, not estimated.
+Everything below was re-measured against this repository's working tree (`iris.h` md5 unchanged, `./build.sh audit` = 40/40 PASS at baseline). Three candidate patches were applied to copies in scratch copies that were not retained and the full audit run on each; every hash and timing quoted in §4 and §7 is from those runs, not estimated.
 
 ---
 

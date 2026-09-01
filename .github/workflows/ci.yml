@@ -62,5 +62,9 @@ jobs:
             echo "== $O -ffp-contract=off =="
             cc -std=c99 $O -ffp-contract=off -I. -o build_audit tests/audit.c -lm 2>/dev/null || \
               { mkdir -p build; cc -std=c99 $O -ffp-contract=off -I. -o build_audit tests/audit.c -lm; }
-            ./build_audit | grep -E "golden blob" || exit 1
+            # NOT `./build_audit | grep ...`: audit.c prints the same label text on
+            # PASS and on FAIL, and a pipe hands the exit status to grep, so that
+            # form matched a FAILING golden hash and reported success.
+            ./build_audit > audit.out || { cat audit.out; exit 1; }
+            grep -qE '^PASS  golden blob' audit.out || { cat audit.out; exit 1; }
           done

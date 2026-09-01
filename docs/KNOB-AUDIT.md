@@ -5,7 +5,7 @@
 
 # THE KNOB AUDIT — `iris.h` v0.4.0
 
-Harnesses: a scratch directory that was not retained (+ `task.h`), built `cc -O2 -std=c99 -Ithis repository`. Task: 2 sensor inputs → 3 sound parameters, N demonstrations drawn at random positions, two truth surfaces (smooth / structured-with-a-cliff), optional Gaussian take-to-take noise σ. Metrics: **recall** = RMSE on the musician's own demos ("does it play back what I showed it"), **grid** = RMSE against truth on a 21×21 held-out grid ("does it behave between demos"), **span** = mean output range over the grid (0 = dead instrument). 12–16 seeds/tasks per cell unless stated.
+Harnesses: built in a scratch directory that was not retained, with `cc -O2 -std=c99` against this repository's `iris.h`. Task: 2 sensor inputs → 3 sound parameters, N demonstrations drawn at random positions, two truth surfaces (smooth / structured-with-a-cliff), optional Gaussian take-to-take noise σ. Metrics: **recall** = RMSE on the musician's own demos ("does it play back what I showed it"), **grid** = RMSE against truth on a 21×21 held-out grid ("does it behave between demos"), **span** = mean output range over the grid (0 = dead instrument). 12–16 seeds/tasks per cell unless stated.
 
 ## 0. Full inventory — 22 runtime knobs, 14 compile-time
 
@@ -353,7 +353,7 @@ Not tuning knobs — they are the *rig*. All correctly hard-refused: `n_in ∈ [
 
 # Yes. Twelve routes, all reachable, none requiring anything stupid.
 
-Harnesses: a scratch directory that was not retained — `REPRO.c` reproduces all twelve in one run; `common.h` holds the shared 2-in/3-out task. Built with `cc -O2 -Wall -Wextra -std=c99 -Ithis repository`. All output below is real.
+Harnesses: built in a scratch directory that was not retained, with `cc -O2 -std=c99` against this repository's `iris.h`. All output below is real.
 
 **Healthy reference** (defaults, 20 demos, seed 7): grid RMSE 0.0170, recall 0.0011, status OK.
 

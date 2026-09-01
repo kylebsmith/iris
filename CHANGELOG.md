@@ -8,7 +8,7 @@ input-scaling semantics. A library bump never invalidates a saved instrument;
 the loader keeps reading every older format, permanently. Only a format bump
 changes what a file means, and `docs/adr/0006` and `0018` govern that.
 
-## 0.1.0 — unreleased
+## 0.1.0 — 2026-08-31
 
 - **A note on the mutation-testing figures in this repository's git history.**
   Any mutation score quoted in a commit message before the commit "tools: the mutation harness has been reporting a fake score" was produced by
@@ -32,7 +32,7 @@ changes what a file means, and `docs/adr/0006` and `0018` govern that.
   build anywhere. Six names, thirteen files. Renamed in the dated audit records
   and decision records too, so the repository has one name for one function
   rather than a split you have to know about. No behaviour changed: the golden
-  hashes are bit-identical and the mutation score is unmoved at 19/19.
+  hashes are bit-identical and the mutation score is unmoved at 18 killed of 20, 90%.
 
 **This is the first release. Nothing before it was ever published.**
 

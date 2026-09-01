@@ -1,4 +1,4 @@
-Everything below is measured on this host (Apple clang, `-O2 -std=c99`). Harnesses: a scratch directory that was not retained — `sweep.c` (the activation arms), `speed.c`, `fmt.c`, `verify.c`, `task.h`, variant headers `act_{A,B,C,D,E}.h`, raw CSV `out_{A,B,C,D,E}.csv`. `act_A.h` is byte-identical to `iris.h`, and `sh build.sh audit` passes on the untouched tree (0 failed).
+Everything below is measured on this host (Apple clang, `-O2 -std=c99`). The harnesses -- `sweep.c` (the activation arms), `speed.c`, `fmt.c`, `verify.c`, `task.h`, the variant headers `act_{A,B,C,D,E}.h` and the raw CSV `out_{A,B,C,D,E}.csv` -- were built in a scratch directory that was not retained. `act_A.h` was byte-identical to the released `iris.h`, and `sh build.sh audit` passes on the untouched tree (0 failed).
 
 ---
 
