@@ -110,7 +110,7 @@ defects. Every one was re-verified here before anything was changed.
   32-bit floating point adding `1e-6` to anything above 32 changes nothing at
   all — so the range stayed zero, the normalisation divided zero by zero, and
   every prediction became not-a-number. A light sensor reads 0..4095 and a
-  distance sensor reads millimetres, and `TASKS.md` (in the ESP32 starter kit)
+  distance sensor reads millimetres, and `TASKS.md` (in the starter kit)
   sends students at exactly
   those. Measured: worked to 31.77, dead from 32.72. The floor is relative now.
   The golden hashes did not move: the frozen data has no constant channel.

@@ -88,7 +88,7 @@ AddressSanitizer decide. Prefer adding checks of that kind.
   found during pre-release development: `iris_size` returns 0 for shapes it
   rejects, and `bytes < 0` is false forever on an unsigned type, so the bound
   silently ceased to exist.
-- **`iris.h` is duplicated** into each sketch folder in the ESP32 starter kit
+- **`iris.h` is duplicated** into each sketch folder in the starter kit
   so students need no install step. After editing the header, run
   `sh sync-iris.sh` there or the copies go stale.
 - **Structure sizes differ by architecture.** `IRIS_ARENA(2,12,1,8)` is 944
@@ -150,7 +150,7 @@ negative-results note explaining what it measured.
 2. `sh build.sh claims` — documents match the code
 3. `sh build.sh fuzz` — no sanitizer report
 4. `sh build.sh mpe` and `sh build.sh sinks` — zero failures
-5. If `iris.h` changed: run `sh sync-iris.sh` in the ESP32 starter kit
+5. If `iris.h` changed: run `sh sync-iris.sh` in the starter kit
 6. If a sketch changed: compile it, with `--warnings all`, and confirm zero
    diagnostics from our own files
 

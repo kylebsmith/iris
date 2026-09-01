@@ -33,7 +33,8 @@ everything else is detail.
 
 ## The hardware half
 
-`iris-esp32-starter/` beside this repository is what a student receives: ten
+The starter kit — `iris-starter` when published, `iris-esp32-starter/` beside
+this repository on disk — is what a student receives: ten
 Arduino sketches, a getting-started walkthrough, and a Processing sketch that
 draws the learned mapping so you can see it rather than only hear it. Start
 there if you have a board; start with `examples/` here if you do not.
@@ -147,7 +148,7 @@ period at 48 kHz. It fits inside a sample, but with about 1.4x of margin, not th
 comfortable multiple an earlier version of this line claimed — that figure was
 7.4–7.8 µs, which was a host measurement scaled by an estimated ratio and
 presented as if it had been taken on the part. Measured on the board:
-`device_torture.ino` (in the ESP32 starter kit) test 9, 20,000 predictions in
+`device_torture.ino` (in the starter kit) test 9, 20,000 predictions in
 298,915 µs on an ESP32-S3 at
 240 MHz, 2 inputs / 12 hidden / 3 outputs. Reproduced within 0.001 µs across
 runs and across two different boards.
