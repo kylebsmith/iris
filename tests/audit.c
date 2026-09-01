@@ -1799,6 +1799,70 @@ int main(void) {
   }
 
 
+  /* SAVE FORMAT v4, which iris_load accepts and nothing exercised.
+     README, CHANGELOG and iris.h all promise the loader keeps reading every
+     older format, permanently. Six format words are accepted; v1 and v3 have
+     frozen fixtures, v2 has a synthesised round trip, v5 and v6 round-trip
+     continuously -- and v4 had neither a fixture nor a check. It is also the
+     only pre-v5 format carrying a CRC32, so its load path has a branch that
+     was never taken by any test. A permanent promise should not have an
+     untested leg.
+
+     No new fixture is needed, which is why this can be added without freezing
+     another binary: a v4 file IS a v3 file with the version word changed and a
+     CRC32 appended, so this derives one from the frozen v3 golden and requires
+     it to produce bit-identical predictions. The checksum is written the way
+     iris_load reads it -- little-endian, byte at a time -- rather than by
+     copying a host uint32, so the test does not silently depend on this
+     machine's byte order. */
+  {
+    static unsigned char v3f[64 * 1024], v4f[64 * 1024], bad[64 * 1024];
+    static unsigned char ar_a[IRIS_ARENA(NI, NH, NO, CAP)];
+    static unsigned char ar_b[IRIS_ARENA(NI, NH, NO, CAP)];
+    static unsigned char ar_z[IRIS_ARENA(NI, NH, NO, CAP)];
+    size_t n3 = 0, n4 = 0;
+    int l3 = 0, l4 = 0, mism = 0, probes = 0, tries = 0, refused = 0;
+    FILE *fb = fopen("tests/golden/v3-instrument.bin", "rb");
+    if (fb) { n3 = fread(v3f, 1, sizeof v3f, fb); fclose(fb); }
+
+    if (n3 > 12 && n3 + 4 <= sizeof v4f) {
+      uint32_t c;
+      memcpy(v4f, v3f, n3);
+      ((uint32_t *)v4f)[1] = IRIS_FORMAT_V4;
+      c = iris_crc32(v4f, n3);
+      for (int i = 0; i < 4; ++i) v4f[n3 + i] = (unsigned char)((c >> (8 * i)) & 0xFFu);
+      n4 = n3 + 4;
+
+      iris *a = iris_init(ar_a, sizeof ar_a, NI, NH, NO, CAP, 7);
+      iris *b = iris_init(ar_b, sizeof ar_b, NI, NH, NO, CAP, 7);
+      l3 = a && iris_load(a, v3f, n3);
+      l4 = b && iris_load(b, v4f, n4);
+      if (l3 && l4) {
+        for (int i = 0; i <= 20; ++i)
+          for (int j = 0; j <= 20; ++j) {
+            float in[NI] = { i / 20.0f, j / 20.0f }, o3[NO], o4[NO];
+            iris_predict(a, in, o3); iris_predict(b, in, o4);
+            ++probes;
+            for (int o = 0; o < NO; ++o) if (o3[o] != o4[o]) ++mism;
+          }
+      }
+      /* Every flipped bit must be refused, not merely most of them. Eight
+         positions spread across the body, plus one in the checksum itself. */
+      for (int t = 0; t < 8; ++t) {
+        size_t pos = 8 + (size_t)t * ((n4 - 12) / 8);
+        iris *z;
+        memcpy(bad, v4f, n4); bad[pos] ^= 0x01u;
+        z = iris_init(ar_z, sizeof ar_z, NI, NH, NO, CAP, 7);
+        ++tries; if (z && !iris_load(z, bad, n4)) ++refused;
+      }
+    }
+    ok("save format v4 loads bit-exactly and refuses a flipped bit",
+       l3 && l4 && probes == 441 && mism == 0 && tries == 8 && refused == 8,
+       "v3 %zu B loaded %d; v4 %zu B loaded %d; %d probes x %d outputs, "
+       "%d bit mismatches; %d of %d corrupted copies refused",
+       n3, l3, n4, l4, probes, NO, mism, refused, tries);
+  }
+
   /* README.md says "Verified: four instruments trained interleaved, 8,000
      interleaved predictions, zero cross-talk." Until now nothing in this suite
      verified it -- a line beginning "Verified:" with no evidence attached, in a

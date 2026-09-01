@@ -128,12 +128,37 @@ printf "  killed %d, survived %d, skipped %d\n" "$KILLED" "$SURVIVED" "$SKIPPED"
 if [ "$TOTAL" -gt 0 ]; then
   printf "  mutation score: %d%%\n" $(( KILLED * 100 / TOTAL ))
 fi
+# Two mutations cannot be killed on a 64-bit host, for reasons annotated at
+# their run_mutation lines: both guard branches that are unreachable on this
+# word size. Before this list existed the run was permanently red, which meant
+# its exit code could never tell you a TWENTY-FIRST survivor had appeared --
+# a new hole would change the list and nothing else. Comparing the survivor SET
+# against the expected one restores the signal in both directions: a new
+# survivor fails, and so does an expected one that has quietly started being
+# killed, because that means the annotation is now wrong.
+EXPECTED_SURVIVORS="ignore an unsizeable shape in iris_init
+stop filling the shuffle buffer at init"
 if [ "$SURVIVED" -gt 0 ]; then
-  printf "\n  UNPROTECTED — nothing in the suite noticed these:%b\n" "$SURVIVORS"
+  printf "\n  survivors:%b\n" "$SURVIVORS"
+fi
+GOT=$(printf "%b" "$SURVIVORS" | sed 's/^ *//' | grep -v '^$' | sort)
+WANT=$(printf "%s\n" "$EXPECTED_SURVIVORS" | sed 's/^ *//' | grep -v '^$' | sort)
+if [ "$GOT" != "$WANT" ]; then
   echo
-  echo "  Each survivor is a property with no check behind it, or a check that"
-  echo "  cannot fail. Both are the same defect from the user's side."
+  echo "  THE SURVIVOR SET CHANGED. Expected exactly:"
+  printf "%s\n" "$WANT" | sed 's/^/    /'
+  echo "  Got:"
+  printf "%s\n" "$GOT" | sed 's/^/    /'
+  echo
+  echo "  A new survivor is a property with no check behind it, or a check that"
+  echo "  cannot fail. An expected survivor that vanished means its annotation"
+  echo "  is stale. Both are defects; neither is silent."
   exit 1
+fi
+if [ "$SURVIVED" -gt 0 ]; then
+  echo
+  echo "  Both survivors are the expected, annotated pair -- guard branches that"
+  echo "  are unreachable on a 64-bit host. See their run_mutation lines."
 fi
 if [ "$SKIPPED" -gt 0 ]; then
   echo

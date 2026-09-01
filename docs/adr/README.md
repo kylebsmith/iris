@@ -9,7 +9,11 @@
 > `BRINGUP-LOG.md`, which are not here either — including the on-device
 > training measurement in 0021, which you therefore cannot re-run from this
 > repository. The *decisions* are accurate and still govern `iris.h`; the
-> *paths* will not resolve. Rule 3 below asks that numbers come from a program
+> *paths* will not resolve. Two further records, **0002 and 0004**, are stale
+> for a different reason: they predate the commit that moved the output ports
+> and the sink and source interfaces into `extras/`, so their `src/` and
+> `ports/` prefixes should now read `extras/`. The basenames are unchanged.
+> Rule 3 below asks that numbers come from a program
 > anyone can re-run, and for those records this repository cannot keep that
 > promise, so it is said here rather than left to be discovered.
 

@@ -138,6 +138,11 @@ int main(void) {
     putchar('\n');
   }
   printf("\n   mean |tiny - iris| over the surface: %.4f\n", acc / (double)n);
-  printf("   tiny.c is 123 lines of code. iris.h is 2835 lines.\n\n");
+  /* No line counts here. The two that used to be printed were string
+     literals computed by nothing, and neither was ever true of either file.
+     A number in a program that the program does not measure is the exact
+     thing this project tells contributors not to write. */
+  printf("   tiny.c is a few hundred lines; iris.h is an order of magnitude"
+         " more.\n\n");
   return 0;
 }

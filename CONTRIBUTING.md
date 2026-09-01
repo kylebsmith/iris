@@ -35,10 +35,10 @@ false where they stood — the discipline exists because we needed it.
 ## Commands
 
 ```sh
-sh build.sh audit      # 42 correctness checks, including the frozen hashes
+sh build.sh audit      # 43 correctness checks, including the frozen hashes
 sh build.sh claims     # fails the build when a document contradicts the code
 sh build.sh fuzz       # sanitizers decide, not our assertions. See below.
-sh build.sh tiny       # an independent 123-line reimplementation, for comparison
+sh build.sh tiny       # an independent, much smaller reimplementation
 sh build.sh mpe        # the polyphonic-expression encoder, byte level
 sh build.sh sinks      # the control-change and network output ports
 ```
@@ -146,7 +146,7 @@ negative-results note explaining what it measured.
 
 ## Before you open a pull request
 
-1. `sh build.sh audit` — 42 checks, both hashes unmoved
+1. `sh build.sh audit` — 43 checks, both hashes unmoved
 2. `sh build.sh claims` — documents match the code
 3. `sh build.sh fuzz` — no sanitizer report
 4. `sh build.sh mpe` and `sh build.sh sinks` — zero failures

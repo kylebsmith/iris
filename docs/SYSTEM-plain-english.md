@@ -14,7 +14,7 @@ when you hear it.
 **iris** is a small piece of software that removes the need to write those rules
 down. Instead of describing what you want, you show it. It is a *library*, which
 just means a chunk of code that other programs borrow rather than a program you
-open by itself. It is about two thousand lines of text in one file. Once it is
+open by itself. It is one file. Once it is
 running it occupies about nine kilobytes of memory, which is what lets it live on
 a chip the size of a postage stamp.
 

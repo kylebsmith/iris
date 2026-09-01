@@ -77,7 +77,10 @@ done
 #
 # This rule keeps it that way: a living document that states a line count is a
 # second copy waiting to drift.
-LIVING="README.md CONTRIBUTING.md docs/SYSTEM-technical.md docs/SYSTEM-plain-english.md docs/DESIGN.md docs/FREEZE.md"
+# Not only .md. docs/tiny.c printed "tiny.c is 123 lines of code. iris.h is 2835
+# lines." for months -- neither number ever true, neither computed by anything --
+# and this scan could not see it because it only ever read Markdown.
+LIVING="README.md CONTRIBUTING.md docs/SYSTEM-technical.md docs/SYSTEM-plain-english.md docs/DESIGN.md docs/FREEZE.md docs/tiny.c tests/audit.c build.sh"
 DUPES=0
 for f in $LIVING; do
   [ -f "$f" ] || continue
@@ -104,6 +107,26 @@ say  "version" "$V"
 # once" only ever counted the macro. Compare them.
 MAST=$(grep -oE '^   v[0-9]+\.[0-9]+\.[0-9]+' iris.h | head -1 | tr -d ' v')
 want "masthead version matches the macro"  "$V" "$MAST"
+
+# Four other files state the version and none of them were compared against the
+# macro. Every one of them could be set to 9.9.9 and this script still exited 0
+# -- which is the mechanism behind three separate stale numbers found in the
+# release audit, not a hypothetical. The version is a fact about the release;
+# every file that repeats it is a place it can rot.
+want "library.properties version" "$V" \
+     "$(grep -oE '^version=[0-9]+\.[0-9]+\.[0-9]+' library.properties | cut -d= -f2)"
+want "CITATION.cff version"       "$V" \
+     "$(grep -oE '^version: [0-9]+\.[0-9]+\.[0-9]+' CITATION.cff | awk '{print $2}')"
+want "README states the version"  "$V" \
+     "$(grep -oE 'Version [0-9]+\.[0-9]+\.[0-9]+' README.md | head -1 | awk '{print $2}')"
+want "CHANGELOG heads this version" "$V" \
+     "$(grep -oE '^## [0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | head -1 | awk '{print $2}')"
+
+# The release date is a claim too, and CITATION.cff is the file an archive reads
+# to mint citation metadata -- so a slipped date there has a downstream consumer.
+want "CITATION.cff date matches the CHANGELOG entry" \
+     "$(grep -oE '^## [0-9]+\.[0-9]+\.[0-9]+ — [0-9]{4}-[0-9]{2}-[0-9]{2}' CHANGELOG.md | head -1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}')" \
+     "$(grep -oE '^date-released: "[0-9]{4}-[0-9]{2}-[0-9]{2}"' CITATION.cff | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}')"
 
 # The library was renamed from embwek. Include guards kept the old spelling for
 # a while after; this stops that coming back.

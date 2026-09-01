@@ -24,7 +24,8 @@ iris_predict(k, gesture, sound);       /* now play it */
 cc -std=c99 -O2 -Wall -Wextra -I. -o min examples/00_minimal.c -lm && ./min
 ```
 
-That example is nine lines of body and compiles with **zero warnings** under
+That example is short enough to read in one sitting and compiles with **zero
+warnings** under
 `-Wall -Wextra`. If you can write those nine lines, you can use this library;
 everything else is detail.
 
@@ -43,7 +44,7 @@ An instrument you cannot rely on is not an instrument.
 
 The tools musicians use to build gestural instruments keep dying. Not from bad
 mathematics — from dependency rot. Wekinator's example patches need Processing 2
-and Kinect software development kits that no longer exist. MnM will not load in 64-bit Max. GRT needs
+and Kinect software development kits that no longer exist. MnM will not load in 64-bit Max. The Gesture Recognition Toolkit needs
 patching for modern compilers. ml.lib breaks on each Max release. The piece you
 wrote quietly becomes unperformable, and the practice you built around it goes
 with it.
@@ -81,7 +82,10 @@ interactive machine learning loop that Wekinator made standard in 2009, rebuilt
 for targets that have no operating system.
 
 - **No dependencies.** Compiles `-ffreestanding -nostdlib` and links with zero
-  undefined symbols. No libc, no `math.h`, no `printf` — the transcendental
+  undefined symbols *on a host*. On the ESP32-S3 it is not zero: the compiler's
+  own float-divide and block-memory helpers (`__divsf3`, `memset`, `sqrtf`)
+  remain, which `sh build.sh target` prints and `iris.h`'s masthead states
+  exactly. No libc, no `math.h`, no `printf` — the transcendental
   functions are in the file. Three compiler flags are needed to hold that
   literally, none of which changes a single output bit, and all three are
   verified by `build.sh claims` on every compiler it can find:
@@ -159,7 +163,7 @@ the blocking call, and never from an interrupt.
 ## Run the tests
 
 ```sh
-sh build.sh audit     # 42 correctness checks, including the golden hashes
+sh build.sh audit     # 43 correctness checks, including the golden hashes
 sh build.sh mpe       # the polyphonic-expression encoder, byte level
 sh build.sh sinks     # the control-change and Open Sound Control ports
 ```
@@ -175,7 +179,7 @@ frozen.
 | `examples/` | `00_minimal.c` draws the learned space; `01_hello.c` three gestures; `02_fix_a_mistake.c` the repair loop; `03_reroll.c` same demos, different instrument |
 | `extras/` | Output ports, the two port interfaces, and the browser benchmark. **Nothing in the library calls any of it.** |
 | `tests/` | The audit suite and the frozen golden fixtures |
-| `experimental/` | L-BFGS. Not in the core, no production callers — read its header before citing it |
+| `experimental/` | Limited-memory BFGS, a second-order trainer that uses recent gradients to guess curvature. Not in the core, no production callers — read its header before citing it |
 | `docs/` | Design notes, architecture decision records, and negative results |
 
 
@@ -184,7 +188,7 @@ frozen.
 **It is a reconstruction of Wekinator's lineage, not a reimplementation of
 Wekinator.** It reproduces Weka's `MultilayerPerceptron` per-weight update
 recursion, its one-hidden-layer depth, its per-sample update granularity, and
-Wekinator's default 1-NN classifier. It deliberately diverges on activations,
+Wekinator's default nearest-neighbour classifier, which answers with the single closest example it has seen. It deliberately diverges on activations,
 hyperparameter defaults, output units and the stopping rule — each argued at
 file and line in the audit.
 

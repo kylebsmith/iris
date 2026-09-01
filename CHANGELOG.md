@@ -8,7 +8,7 @@ input-scaling semantics. A library bump never invalidates a saved instrument;
 the loader keeps reading every older format, permanently. Only a format bump
 changes what a file means, and `docs/adr/0006` and `0018` govern that.
 
-## 0.1.0 — 2026-08-31
+## 0.1.0 — 2026-09-01
 
 - **A note on the mutation-testing figures in this repository's git history.**
   Any mutation score quoted in a commit message before the commit "tools: the mutation harness has been reporting a fake score" was produced by

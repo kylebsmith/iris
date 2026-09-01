@@ -19,7 +19,7 @@ set -e
 CC=${CC:-cc}
 
 # iris — build everything three ways from one core.
-#   ./build.sh audit        run the correctness checks (41)
+#   ./build.sh audit        run the correctness checks (43)
 #   ./build.sh claims       verify the docs still match the code
 #   ./build.sh mpe          run the MPE sink's byte-level checks
 #   ./build.sh sinks        run the CC and OSC sinks' byte-level checks
@@ -35,7 +35,7 @@ set -e
 mkdir -p build
 # -Wno-unused-function is GONE (2026-08-27). It was suppressing the compiler's
 # own dead-code detector, which is how 36 lines of dead code sat unnoticed until
-# a 23-agent audit found them. IRIS_API is `static inline` now, so unused
+# a later audit found them. IRIS_API is `static inline` now, so unused
 # definitions in a header no longer warn and the flag is not needed.
 CFLAGS="-O2 -Wall -Wextra"
 
@@ -139,9 +139,27 @@ case "${1:-audit}" in
       && clang --target=wasm32 -std=c99 -I. -fsyntax-only extras/ports/osc/iris_osc.c \
       && clang --target=wasm32 -std=c99 -I. -fsyntax-only extras/ports/template/iris_yoursink.c \
       && echo "PASS  32-bit sizes: cc_cfg 28, cc 224, osc_cfg 20, osc 480; template builds" ;;
-  experiment) cc $CFLAGS -o build/experiment tests/experiment.c -lm
+  experiment) "$CC" $CFLAGS -o build/experiment tests/experiment.c -lm
               ./build/experiment ;;
   bench)
+    # Needs an LLVM with the wasm32 CODE GENERATOR and wasm-ld. Apple clang has
+    # neither, and this is the reference platform in README.md -- so the arm
+    # fails there for a toolchain reason with a message about triples. Say so,
+    # and skip rather than fail. (The wasm32 uses in `mpe` and `sinks` are
+    # -fsyntax-only, front end only, and work on Apple clang fine.)
+    # Probe CODE GENERATION, not the linker: wasm-ld may well be installed
+    # (homebrew puts one on PATH) while the clang actually being invoked has no
+    # wasm32 back end, which is the case for Apple clang -- the platform
+    # README.md names as the reference. A front-end check would pass and then
+    # this arm would still die on "no available targets".
+    if ! echo 'int f(void){return 0;}' | \
+         clang --target=wasm32 -c -x c - -o /dev/null 2>/dev/null; then
+      echo "  SKIP  bench needs a clang with the wasm32 code generator."
+      echo "        Apple clang has none (it has the front end only), so this"
+      echo "        arm cannot run on the reference platform. brew install llvm"
+      echo "        and put its bin on PATH first."
+      exit 0
+    fi
     clang --target=wasm32 -O2 -nostdlib -ffreestanding \
       -Wl,--no-entry -Wl,--export-dynamic -Wl,--allow-undefined \
       -Wl,-z,stack-size=32768 -Wl,--initial-memory=1114112 \
@@ -170,7 +188,7 @@ open('build/bench.html','w').write(open('extras/bench/page.html').read().replace
     "$CC" $CFLAGS -o build/make_golden tests/golden/make_golden.c -lm
       ./build/make_golden ;;
   clean)      rm -rf build ;;
-  tiny)       cc $CFLAGS -o build/tiny docs/tiny.c -lm
+  tiny)       "$CC" $CFLAGS -o build/tiny docs/tiny.c -lm
               ./build/tiny ;;
   regressions)
               # One test per reviewed defect, each written before its fix and

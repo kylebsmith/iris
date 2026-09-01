@@ -4,7 +4,7 @@
    iris_lbfgs.h  —  the L-BFGS trainer   [EXPERIMENTAL, NOT IN THE CORE]
 
    Moved out of iris.h on 2026-08-26. It is not part of the validated core
-   and nothing that ships calls it: all nine call sites in the tree are in
+   and nothing that ships calls it: every call site in the tree is in
    tests/audit.c. Its promotion to the device was gated on two ESP32-S3
    measurements (adr/0007:47-49) that have never been taken.
 
