@@ -11,6 +11,13 @@
 # has ever quoted as evidence.
 set -e
 
+# The compiler, once, so it can be overridden. Every arm below used the literal
+# `cc`, while .github/workflows/ci.yml declared a gcc/clang matrix and exported
+# CC -- so two of the four audit jobs ran a compiler they were not named after,
+# and a poisoned $CC was never invoked at all. A matrix that cannot change what
+# runs is not a matrix.
+CC=${CC:-cc}
+
 # iris — build everything three ways from one core.
 #   ./build.sh audit        run the correctness checks (41)
 #   ./build.sh claims       verify the docs still match the code
@@ -49,33 +56,45 @@ case "${1:-audit}" in
                 ( cd "$ST" && sh sync-iris.sh )
               else
                 echo "  SKIP  no starter repo at $ST (set IRIS_STARTER)"
+                # A SKIP is a pass locally, where you may not have the starter
+                # checked out. In CI it is not: this arm exists BECAUSE all ten
+                # student copies once went a version behind while every suite
+                # here was green, and a version of that guard whose only
+                # possible outcome is success is the same defect wearing the
+                # guard's name.
+                if [ -n "${CI:-}" ]; then
+                  echo "  FAIL  running in CI with no starter to check."
+                  echo "        Check the starter out and set IRIS_STARTER, or"
+                  echo "        drop this step -- do not let it pass silently."
+                  exit 1
+                fi
               fi ;;
   target)     # The zero-dependency claim, on the CHIP's compiler, not the host.
               sh tools/freestanding-esp32.sh ;;
   tu)         # Two translation units disagreeing about IRIS_MAX_*, which is a
               # thing iris.h documents doing. Under a sanitizer, because the
               # failure it guards was a stack overwrite, not a wrong answer.
-              cc -std=c99 -O1 -g -fsanitize=address,undefined \
+              "$CC" -std=c99 -O1 -g -fsanitize=address,undefined \
                  -fno-sanitize-recover=all -I. -c tests/tu/big.c -o build/tu_big.o
-              cc -std=c99 -O1 -g -fsanitize=address,undefined \
+              "$CC" -std=c99 -O1 -g -fsanitize=address,undefined \
                  -fno-sanitize-recover=all -I. -c tests/tu/small.c -o build/tu_small.o
-              cc -fsanitize=address,undefined build/tu_small.o build/tu_big.o \
+              "$CC" -fsanitize=address,undefined build/tu_small.o build/tu_big.o \
                  -o build/tu -lm
               ./build/tu ;;
   coverage)   # The refusal paths. Every case asks a function to say no.
-              cc $CFLAGS -o build/coverage tests/coverage.c -lm
+              "$CC" $CFLAGS -o build/coverage tests/coverage.c -lm
               ./build/coverage ;;
   claims)
     # Do the documents still tell the truth about the code? See tools/.
     sh tools/check-claims.sh
     ;;
   audit)
-    cc $CFLAGS -o build/audit tests/audit.c -lm
+    "$CC" $CFLAGS -o build/audit tests/audit.c -lm
     ./build/audit
     # Guards are inert on healthy runs — provable only across two builds:
     # core with guards vs core with -DIRIS_NO_GUARDS, same recipe, same bits.
-    cc $CFLAGS -o build/guards_ab tests/guards_ab.c -lm
-    cc $CFLAGS -DIRIS_NO_GUARDS -o build/guards_ab_ng tests/guards_ab.c -lm
+    "$CC" $CFLAGS -o build/guards_ab tests/guards_ab.c -lm
+    "$CC" $CFLAGS -DIRIS_NO_GUARDS -o build/guards_ab_ng tests/guards_ab.c -lm
     G=$(./build/guards_ab | head -1);      N=$(./build/guards_ab_ng | head -1)
     GP=$(./build/guards_ab | tail -1);     NP=$(./build/guards_ab_ng | tail -1)
     if [ "$G" = "$N" ]; then
@@ -98,7 +117,7 @@ case "${1:-audit}" in
     # The MPE sink is platform-free on purpose: no USB, no board, no serial
     # port. It emits complete MIDI messages into a caller-supplied iris_bytes,
     # so every byte it will ever put on the wire can be asserted here.
-    cc $CFLAGS -I. -o build/mpe_test extras/tests/mpe_test.c \
+    "$CC" $CFLAGS -I. -o build/mpe_test extras/tests/mpe_test.c \
        extras/ports/mpe/iris_mpe.c extras/ports/mpe/iris_mpe_wire.c -lm
     ./build/mpe_test
     # The 32-bit struct sizes the port claims, asserted on a real 32-bit
@@ -109,9 +128,9 @@ case "${1:-audit}" in
     # Same idiom as `mpe`, same reason: these ports have no USB, no board and
     # no serial port in them, so every byte they will ever emit is asserted
     # here, on a laptop, with a transport that can be told to refuse.
-    cc $CFLAGS -I. -o build/cc_test  extras/tests/cc_test.c  extras/ports/cc/iris_cc.c   -lm
+    "$CC" $CFLAGS -I. -o build/cc_test  extras/tests/cc_test.c  extras/ports/cc/iris_cc.c   -lm
     ./build/cc_test
-    cc $CFLAGS -I. -o build/osc_test extras/tests/osc_test.c extras/ports/osc/iris_osc.c -lm
+    "$CC" $CFLAGS -I. -o build/osc_test extras/tests/osc_test.c extras/ports/osc/iris_osc.c -lm
     ./build/osc_test
     # The 32-bit struct sizes the ports claim, asserted on a real 32-bit
     # target rather than halved by hand from this 64-bit host. The template
@@ -148,7 +167,7 @@ open('build/bench.html','w').write(open('extras/bench/page.html').read().replace
       echo "Commit first, so 'git checkout -- tests/golden' can undo it."
       exit 1
     fi
-    cc $CFLAGS -o build/make_golden tests/golden/make_golden.c -lm
+    "$CC" $CFLAGS -o build/make_golden tests/golden/make_golden.c -lm
       ./build/make_golden ;;
   clean)      rm -rf build ;;
   tiny)       cc $CFLAGS -o build/tiny docs/tiny.c -lm
@@ -156,10 +175,10 @@ open('build/bench.html','w').write(open('extras/bench/page.html').read().replace
   regressions)
               # One test per reviewed defect, each written before its fix and
               # watched to fail. Non-zero exit if any regresses.
-              cc $CFLAGS -I. -o build/regressions tests/regressions.c -lm
+              "$CC" $CFLAGS -I. -o build/regressions tests/regressions.c -lm
                 ./build/regressions ;;
   fuzz)       # Oracle-free: the sanitizers decide, not our assertions.
-              cc -std=c99 -O1 -g -fsanitize=address,undefined \
+              "$CC" -std=c99 -O1 -g -fsanitize=address,undefined \
                  -fno-sanitize-recover=all -I. -o build/fuzz tests/fuzz.c -lm
                 ./build/fuzz "${2:-400}" ;;
   *)          echo "usage: ./build.sh [audit|mpe|sinks|claims|fuzz|regressions|mutate|experiment|tiny|bench|golden|clean]"; exit 1 ;;

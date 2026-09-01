@@ -675,13 +675,25 @@ struct iris {
 
    SAFE: many instruments on one core, one after another; one instrument per
    thread across as many cores as you have; one instrument used only inside an
-   interrupt.
+   interrupt -- but read the PLATFORM CAVEAT below before you do that last one.
 
    NOT SAFE: the SAME instrument from an interrupt and the main loop.
    iris_predict writes its working values inside the instrument, so an
    interrupt landing mid-call leaves both answers wrong. Give the interrupt its
    own instrument. The full table and the cross-talk verification are in
    README.md under "Threading".
+
+   PLATFORM CAVEAT, and it decides the interrupt case on the board this library
+   is usually run on. Everything above is a statement about THIS CODE: iris
+   keeps no global or static state, so separate instruments cannot interfere.
+   It is not a promise about your chip. On an ESP32 under FreeRTOS the
+   floating-point registers are not saved when an interrupt is taken, so any
+   float arithmetic inside an interrupt handler -- iris or anyone else's --
+   can corrupt the interrupted task's registers, silently. iris is float
+   throughout. So on that platform, do not call any iris_ function from an
+   interrupt handler: read the sensor there, set a flag, and call iris from the
+   main loop. The C-level statement above stands wherever interrupt entry does
+   save the floating-point registers.
 
    TIMING, for the audio case. One prediction is 14.9 microseconds on an
    ESP32-S3 against a 20.8 microsecond audio sample at 48 kHz -- 1.4x of

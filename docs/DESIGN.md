@@ -1,6 +1,15 @@
 # `iris` — API and Architecture Design
 
-**Status:** design frozen for v0.1. All numerics below were compiled and run (gcc 13, `-O2`, float32 throughout); measured numbers are marked **[measured]** and come from `tests/num_probe.c`, which becomes a CI test.
+> **Historical record.** This is the design as it stood *before* the library was
+> built, and it is not what shipped. The interface it specifies —
+> `iris_config_t`, `iris_peek`, `iris_infer`, banks, Wendland kernels — exists
+> nowhere in `iris.h`, and neither does the layout it assumes (`src/`, `ports/`,
+> `CMakeLists.txt`, `library.json`): the released library is one flat header.
+> Its symbol names, file paths and version string describe a plan, and are
+> deliberately left unchanged. For what is true now, read `iris.h`, `README.md`
+> and run `sh build.sh claims`.
+
+**Status:** superseded. All numerics below were compiled and run (gcc 13, `-O2`, float32 throughout) and measured numbers are marked **[measured]**, but the harness that produced them was a scratch file that was never retained or turned into a test -- see the closing note, which says the same thing.
 
 ## Two findings that shaped everything
 

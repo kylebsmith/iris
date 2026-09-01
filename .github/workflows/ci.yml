@@ -15,9 +15,18 @@ jobs:
         cc: [gcc, clang]
     steps:
       - uses: actions/checkout@v4
+      # The `sketches` arm below compares the students' ten copies of iris.h
+      # against this one. Without this second checkout it had nothing to
+      # compare and printed SKIP, so the step could only ever pass -- which is
+      # exactly the failure it was written to catch.
+      - uses: actions/checkout@v4
+        with:
+          repository: kylebsmith/iris-esp32-starter
+          path: _starter
       - name: audit, mpe, sinks
         run: |
           export CC=${{ matrix.cc }}
+          export IRIS_STARTER="$GITHUB_WORKSPACE/_starter"
           sh build.sh audit
           sh build.sh mpe
           sh build.sh sinks

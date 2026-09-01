@@ -74,7 +74,7 @@ nice-to-have. It is the whole product.
 
 ## What it is
 
-`iris.h` is a single header — 3,415 lines, 1,186 of them code — implementing the
+`iris.h` is a single header — 3,427 lines, 1,186 of them code — implementing the
 interactive machine learning loop that Wekinator made standard in 2009, rebuilt
 for targets that have no operating system.
 
@@ -120,6 +120,13 @@ So this is fine: any number of instruments on one core called one after
 another; one instrument per thread across many cores; one instrument living
 only inside an interrupt. There is no per-core limit, and a single-core chip
 runs one thing at a time anyway.
+
+One platform exception, and it is the board most readers here have: on an
+ESP32 under FreeRTOS the floating-point registers are not saved when an
+interrupt is taken, so float arithmetic of any kind inside an interrupt handler
+can corrupt the interrupted task. iris is float throughout, so on that chip do
+not call it from an interrupt at all — read the sensor there, set a flag, and
+call iris from the main loop.
 
 This is not: the *same* instrument from an interrupt and from the main loop.
 `iris_predict` writes its working values inside the instrument, so an interrupt
