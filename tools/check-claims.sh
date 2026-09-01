@@ -42,7 +42,13 @@ int probe(void){ iris *k=iris_init(m,sizeof m,2,12,3,64,1234);
   static float g[2], s[3];
   g[0]=.1f; g[1]=.2f; s[0]=.3f; s[1]=.4f; s[2]=.5f;
   iris_record(k,g,s); iris_train_converge(k,0,0,0); iris_predict(k,g,s);
-  iris_save(k,0,0); return 0; }
+  /* A REAL BUFFER, and the load side too. iris_save(k,0,0) returns at the
+     null-buffer guard, so iris_save's body and iris_crc32 were never emitted
+     and iris_load was never called at all -- a libc call anywhere in the
+     serialisation path passed this probe with zero undefined symbols. */
+  { static unsigned char f[16384];
+    size_t n = iris_save(k,f,sizeof f); iris_load(k,f,n); }
+  return 0; }
 PROBE
 # Test EVERY compiler available, not just the default one. This check used to
 # run `cc` only, and on the GNU compiler it fails: gcc assumes a square root
@@ -97,7 +103,8 @@ done
 want "line count stated in exactly one living document"  "0" "$DUPES"
 
 # --- version stated exactly once ------------------------------------------
-V=$(grep -oE 'IRIS_VERSION_STRING "[^"]+"' iris.h | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+V=$(grep -oE 'IRIS_VERSION_STRING "[^"]+"' iris.h | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+want "iris.h states a version" "yes" "$([ -n "$V" ] && echo yes || echo no)"
 # Scope this to THIS repository's own tracked files. A bare recursive grep
 # counts whatever happens to be under the working directory -- and in CI the
 # starter kit is checked out into the workspace, carrying ten vendored copies
@@ -123,14 +130,14 @@ want "masthead version matches the macro"  "$V" "$MAST"
 # -- which is the mechanism behind three separate stale numbers found in the
 # release audit, not a hypothetical. The version is a fact about the release;
 # every file that repeats it is a place it can rot.
-want "library.properties version" "$V" \
-     "$(grep -oE '^version=[0-9]+\.[0-9]+\.[0-9]+' library.properties | cut -d= -f2)"
-want "CITATION.cff version"       "$V" \
-     "$(grep -oE '^version: [0-9]+\.[0-9]+\.[0-9]+' CITATION.cff | awk '{print $2}')"
-want "README states the version"  "$V" \
-     "$(grep -oE 'Version [0-9]+\.[0-9]+\.[0-9]+' README.md | head -1 | awk '{print $2}')"
-want "CHANGELOG heads this version" "$V" \
-     "$(grep -oE '^## [0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | head -1 | awk '{print $2}')"
+want "library.properties version" \
+     "$(grep -oE '^version=[0-9]+\.[0-9]+\.[0-9]+' library.properties | cut -d= -f2)" "$V"
+want "CITATION.cff version" \
+     "$(grep -oE '^version: [0-9]+\.[0-9]+\.[0-9]+' CITATION.cff | awk '{print $2}')" "$V"
+want "README states the version" \
+     "$(grep -oE 'Version [0-9]+\.[0-9]+\.[0-9]+' README.md | head -1 | awk '{print $2}')" "$V"
+want "CHANGELOG heads this version" \
+     "$(grep -oE '^## [0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | head -1 | awk '{print $2}')" "$V"
 
 # The release date is a claim too, and CITATION.cff is the file an archive reads
 # to mint citation metadata -- so a slipped date there has a downstream consumer.
@@ -209,7 +216,7 @@ for bad in \
   "first embedded" \
   "the only library"
 do
-  H=$(grep -rin "$bad" --include='*.md' --include='*.h' --include='*.c' . 2>/dev/null | grep -v 'check-claims' | grep -vi 'never\|forbidden\|not\b\|cannot' || true)
+  H=$(grep -rin "$bad" --include='*.md' --include='*.h' --include='*.c' . 2>/dev/null | grep -v 'check-claims' | grep -viE '(never|cannot|does not|is not|are not|no longer|forbidden)[^.]*$' || true)
   if [ -n "$H" ]; then say "forbidden: \"$bad\"" "FOUND"; echo "$H" | head -2; fail=1
   else say "forbidden: \"$bad\"" "absent"; fi
 done

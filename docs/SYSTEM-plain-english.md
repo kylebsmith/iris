@@ -211,11 +211,12 @@ The project's own documentation marks that finding as unresolved and flags the
 recommendation as provisional. Nothing has yet been tested against real recorded
 human gesture.
 
-And of all the timing figures, exactly one was ever measured on the actual target
-chip: 321 milliseconds, for a deliberately short fixed-length training run — 600
+Two of the timing figures were measured on the actual target chip. The first is
+321 milliseconds, for a deliberately short fixed-length training run — 600
 passes — on twenty demonstrations. The trainer iris actually recommends does not
-stop at 600; on twenty demonstrations it runs about 18,000 passes, and nobody has
-ever timed that on the chip. Scaling up from a laptop puts it near seven seconds.
+stop at 600; on twenty demonstrations it runs about 18,000 passes, and that one
+has been timed on the chip too — 595 milliseconds at four demonstrations and
+2.7 to 3.0 seconds at eight to twenty.
 Every other figure carrying that chip's name is an estimate scaled from a laptop
 in the same way, and the project says so on the face of the table.
 
