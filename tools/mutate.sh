@@ -128,6 +128,24 @@ printf "  killed %d, survived %d, skipped %d\n" "$KILLED" "$SURVIVED" "$SKIPPED"
 if [ "$TOTAL" -gt 0 ]; then
   printf "  mutation score: %d%%\n" $(( KILLED * 100 / TOTAL ))
 fi
+# ORDER MATTERS. This runs BEFORE the survivor-set comparison below. A stale
+# pattern makes a mutation SKIP, so it is neither killed nor survived -- and if
+# the stale one is an EXPECTED survivor, the set comparison sees it missing and
+# reports "THE SURVIVOR SET CHANGED", which sends you looking for a new hole in
+# the test suite instead of at the pattern that stopped matching. Diagnose the
+# stale pattern first; it is the more specific fault.
+if [ "$SKIPPED" -gt 0 ]; then
+  echo
+  echo "  STALE — $SKIPPED mutation(s) did not match the code and did not run."
+  echo
+  echo "  A skipped mutation is not a passing one. The pattern stopped matching"
+  echo "  because the line it edits was changed, so the check silently became a"
+  echo "  no-op while this script kept printing 100%. That is exactly the defect"
+  echo "  class this harness exists to catch, so it fails here too: resync the"
+  echo "  pattern in this file against the current code, then run it again."
+  exit 1
+fi
+
 # Two mutations cannot be killed on a 64-bit host, for reasons annotated at
 # their run_mutation lines: both guard branches that are unreachable on this
 # word size. Before this list existed the run was permanently red, which meant
@@ -160,15 +178,9 @@ if [ "$SURVIVED" -gt 0 ]; then
   echo "  Both survivors are the expected, annotated pair -- guard branches that"
   echo "  are unreachable on a 64-bit host. See their run_mutation lines."
 fi
-if [ "$SKIPPED" -gt 0 ]; then
-  echo
-  echo "  STALE — $SKIPPED mutation(s) did not match the code and did not run."
-  echo
-  echo "  A skipped mutation is not a passing one. The pattern stopped matching"
-  echo "  because the line it edits was changed, so the check silently became a"
-  echo "  no-op while this script kept printing 100%. That is exactly the defect"
-  echo "  class this harness exists to catch, so it fails here too: resync the"
-  echo "  pattern in this file against the current code, then run it again."
-  exit 1
+if [ "$SURVIVED" -gt 0 ]; then
+  echo "  every mutation was detected, or is one of the two annotated survivors"
+  echo "  that cannot be killed on a 64-bit host."
+else
+  echo "  every mutation was detected."
 fi
-echo "  every mutation was detected."

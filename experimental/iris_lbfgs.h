@@ -10,8 +10,8 @@
 
    ⚠️ DO NOT CITE CHECK 33 AS A RESULT ABOUT L-BFGS. It is a result about THIS
    IMPLEMENTATION, and this implementation has two defects that account for
-   most of the gap (measured 2026-08-26, research/prior-art/
-   WHY-lbfgs-defaults-robustness.md section 1):
+   most of the gap (measured 2026-08-26; the workings are in the unpublished
+   research tree iris was extracted from, and are not in this repository):
 
    DEFECT 1 — the curvature safeguard is absolutely scaled. The test
    `sTy <= 1e-12` is a fixed constant, but this problem's gradients run at

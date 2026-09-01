@@ -330,7 +330,7 @@
    function in every translation unit that includes it, and a caller who uses
    five of them is not doing anything wrong. With plain `static`, -Wall -Wextra
    then emits an unused-function warning for each of the other sixty — measured
-   2026-08-27: THIRTY warnings compiling the nine-line examples/00_minimal.c.
+   2026-08-27: THIRTY warnings compiling the minimal example, examples/00_minimal.c.
    That is a terrible first thirty seconds for someone who just cloned this.
    `inline` tells the compiler the definition is expected to be unused here,
    silencing that without changing linkage, ODR behaviour or codegen. */

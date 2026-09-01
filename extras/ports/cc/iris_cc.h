@@ -18,8 +18,8 @@
    MPE hands you three dimensions whose meanings are already decided (pitch,
    pressure, timbre) plus a note gate. Three problems follow. It privileges a
    PITCH AXIS, and Zappi & McPherson (NIME 2014) measured that adding a pitch
-   axis REDUCED exploration — see research/notes/pitch-articulation-and-
-   sensing.md. It translates badly: CC74 is unipolar in one synth and bipolar
+   axis REDUCED exploration. (The note working this through lives in the
+   unpublished research tree iris was extracted from.) It translates badly: CC74 is unipolar in one synth and bipolar
    in the next, bend range is negotiated per host, and MPE zone setup is
    fifteen messages of things that can be wrong. And it cannot represent a
    mapping with two outputs, or five.

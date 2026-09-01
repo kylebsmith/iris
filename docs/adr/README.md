@@ -13,6 +13,11 @@
 > for a different reason: they predate the commit that moved the output ports
 > and the sink and source interfaces into `extras/`, so their `src/` and
 > `ports/` prefixes should now read `extras/`. The basenames are unchanged.
+> Two further prefixes appear in those records and resolve nowhere here either:
+> `research/` (briefs, prior-art notes and measurement write-ups) and `admin/`.
+> Neither was ever tracked in this repository. Where a record leans on one of
+> them for a number -- 0021's 1.93x regression table is the significant case --
+> that number cannot be re-derived from what is published.
 > Rule 3 below asks that numbers come from a program
 > anyone can re-run, and for those records this repository cannot keep that
 > promise, so it is said here rather than left to be discovered.
@@ -81,3 +86,4 @@ Sections: Status, Context, Decision, Rejected alternatives, Consequences.
 | [0018](0018-the-input-scaling-travels-with-the-file.md) | Inputs are scaled to [-1,+1], and the scaling travels with the file | accepted |
 | [0019](0019-the-residual-ledger-integrates-it-does-not-sample.md) | The bad-example detector integrates the residual; it does not sample the endpoint | accepted |
 | [0020](0020-settle-is-a-separate-act-from-train.md) | SETTLE is a separate act from TRAIN, and it reseeds | accepted |
+| [0021](0021-the-one-recommended-trainer.md) | One recommended trainer: fixed-epoch backpropagation, not convergence | accepted |

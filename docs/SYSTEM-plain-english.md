@@ -226,7 +226,7 @@ gestures per second that is about 0.8 percent of one core of that chip, and that
 figure is an estimate too.
 
 The whole instrument, including room for 256 stored demonstrations, occupies
-9,264 bytes — about nine kilobytes. A single photo from a phone is several
+9,272 bytes — about nine kilobytes. A single photo from a phone is several
 hundred times larger. It never asks the operating system for memory while it
 runs, which is part of why it can live on a battery-powered device in your hands
 rather than on a server.

@@ -98,7 +98,17 @@ want "line count stated in exactly one living document"  "0" "$DUPES"
 
 # --- version stated exactly once ------------------------------------------
 V=$(grep -oE 'IRIS_VERSION_STRING "[^"]+"' iris.h | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-N=$(grep -rl "IRIS_VERSION_STRING \"" --include='*.h' . | wc -l | tr -d ' ')
+# Scope this to THIS repository's own tracked files. A bare recursive grep
+# counts whatever happens to be under the working directory -- and in CI the
+# starter kit is checked out into the workspace, carrying ten vendored copies
+# of iris.h, so this read 11 and failed every job. `git ls-files` cannot see
+# them because they belong to a different repository. The non-git fallback
+# keeps this runnable from a tarball.
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  N=$(git ls-files '*.h' | xargs grep -l "IRIS_VERSION_STRING \"" 2>/dev/null | wc -l | tr -d ' ')
+else
+  N=$(grep -rl "IRIS_VERSION_STRING \"" --include='*.h' . | wc -l | tr -d ' ')
+fi
 want "version declared exactly once"  "1" "$N"
 say  "version" "$V"
 
@@ -124,9 +134,53 @@ want "CHANGELOG heads this version" "$V" \
 
 # The release date is a claim too, and CITATION.cff is the file an archive reads
 # to mint citation metadata -- so a slipped date there has a downstream consumer.
+# want() compares two strings, so two EMPTY strings match. If both greps stop
+# finding anything -- a heading reformat, say -- the check would pass while
+# measuring nothing. Require a date shape first, then compare.
+CHDATE=$(grep -oE '^## [0-9]+\.[0-9]+\.[0-9]+ — [0-9]{4}-[0-9]{2}-[0-9]{2}' CHANGELOG.md | head -1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}')
+CFDATE=$(grep -oE '^date-released: "[0-9]{4}-[0-9]{2}-[0-9]{2}"' CITATION.cff | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}')
+want "CHANGELOG states a release date" "yes" "$([ -n "$CHDATE" ] && echo yes || echo no)"
+want "CITATION.cff states a release date" "yes" "$([ -n "$CFDATE" ] && echo yes || echo no)"
 want "CITATION.cff date matches the CHANGELOG entry" \
      "$(grep -oE '^## [0-9]+\.[0-9]+\.[0-9]+ — [0-9]{4}-[0-9]{2}-[0-9]{2}' CHANGELOG.md | head -1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}')" \
      "$(grep -oE '^date-released: "[0-9]{4}-[0-9]{2}-[0-9]{2}"' CITATION.cff | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}')"
+
+# --- sizes stated in prose, measured rather than trusted --------------------
+# `struct iris` grew by 8 bytes before 0.1.0 and FOUR published figures did not
+# follow it: two in SYSTEM-technical.md, one in SYSTEM-plain-english.md, and two
+# in the starter kit -- one of them inside a quotation attributed to the audit,
+# which the audit does not emit. CONTRIBUTING.md names this exact trap. Naming a
+# trap is not a guard, so measure the numbers and compare them to the prose.
+cat > /tmp/_iris_sizes.c <<'SZPROBE'
+#define IRIS_IMPLEMENTATION
+#include "iris.h"
+#include <stdio.h>
+int main(void){ printf("%zu %d\n", sizeof(iris), (int)IRIS_ARENA(2,12,3,256)); return 0; }
+SZPROBE
+if ${CC:-cc} -std=c99 -I. -o /tmp/_iris_sizes /tmp/_iris_sizes.c -lm 2>/dev/null; then
+  SIZES=$(/tmp/_iris_sizes)
+  STRUCT_B=$(echo "$SIZES" | awk '{print $1}')
+  ARENA_B=$(echo "$SIZES" | awk '{print $2}')
+  ARENA_C=$(printf "%s" "$ARENA_B" | sed 's/\([0-9]\)\([0-9]\{3\}\)$/\1,\2/')
+  want "struct iris size in SYSTEM-technical.md" "$STRUCT_B" \
+       "$(grep -oE '`struct iris` is [0-9]+ bytes' docs/SYSTEM-technical.md | grep -oE '[0-9]+')"
+  want "arena figure in SYSTEM-technical.md" "$ARENA_C" \
+       "$(grep -oE 'IRIS_ARENA\(2,12,3,256\)` is [0-9,]+ bytes' docs/SYSTEM-technical.md | grep -oE '[0-9,]+ bytes' | grep -oE '[0-9,]+')"
+  want "arena figure quoted from the audit" "macro $ARENA_B B, needed $ARENA_B B, slack 0 B" \
+       "$(grep -oE 'macro [0-9]+ B, needed [0-9]+ B, slack 0 B' docs/SYSTEM-technical.md | head -1)"
+  want "arena figure in SYSTEM-plain-english.md" "$ARENA_C" \
+       "$(grep -oE '^[0-9,]+ bytes — about nine kilobytes' docs/SYSTEM-plain-english.md | grep -oE '[0-9,]+')"
+else
+  say "size probe" "SKIP: probe did not build"
+fi
+
+# Every document that states the audit's check count, not just two of them.
+want "audit count in SYSTEM-technical.md" "$CHECKS" \
+     "$(grep -oE 'The audit prints [0-9]+ `PASS` lines' docs/SYSTEM-technical.md | grep -oE '[0-9]+')"
+want "audit count in build.sh usage"      "$CHECKS" \
+     "$(grep -oE 'run the correctness checks \([0-9]+\)' build.sh | grep -oE '[0-9]+')"
+want "audit count in the pull-request checklist" "$CHECKS" \
+     "$(grep -oE '`sh build.sh audit` — [0-9]+ checks' CONTRIBUTING.md | grep -oE '[0-9]+')"
 
 # The library was renamed from embwek. Include guards kept the old spelling for
 # a while after; this stops that coming back.

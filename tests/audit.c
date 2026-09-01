@@ -1589,8 +1589,10 @@ int main(void) {
      scikit-learn's small-data guidance concerns HELD-OUT error on a
      regularised objective; on held-out error the honest figure is ~6% at 16
      seeds, not "several times". Do not quote this check as evidence against
-     the field's advice. Full workings and the fair-comparison protocol:
-     research/prior-art/WHY-lbfgs-defaults-robustness.md section 1.
+     the field's advice. The full workings and the fair-comparison protocol are
+     in the unpublished research tree iris was extracted from, so they are not
+     re-runnable from this repository -- treat this check as a measurement of
+     this implementation, not of the method.
 
      Levenberg-Marquardt was measured too and is NOT here, because it is not
      in the file: it stalls in the same place as L-BFGS (median train MSE
@@ -1848,8 +1850,11 @@ int main(void) {
       }
       /* Every flipped bit must be refused, not merely most of them. Eight
          positions spread across the body, plus one in the checksum itself. */
-      for (int t = 0; t < 8; ++t) {
-        size_t pos = 8 + (size_t)t * ((n4 - 12) / 8);
+      /* Eight positions across the body, and a ninth in the checksum trailer
+         itself -- corrupting the checksum must be refused just as corrupting
+         what it covers is, and the body-only sweep never touched it. */
+      for (int t = 0; t < 9; ++t) {
+        size_t pos = (t == 8) ? n4 - 2 : 8 + (size_t)t * ((n4 - 12) / 8);
         iris *z;
         memcpy(bad, v4f, n4); bad[pos] ^= 0x01u;
         z = iris_init(ar_z, sizeof ar_z, NI, NH, NO, CAP, 7);
@@ -1857,7 +1862,7 @@ int main(void) {
       }
     }
     ok("save format v4 loads bit-exactly and refuses a flipped bit",
-       l3 && l4 && probes == 441 && mism == 0 && tries == 8 && refused == 8,
+       l3 && l4 && probes == 441 && mism == 0 && tries == 9 && refused == 9,
        "v3 %zu B loaded %d; v4 %zu B loaded %d; %d probes x %d outputs, "
        "%d bit mismatches; %d of %d corrupted copies refused",
        n3, l3, n4, l4, probes, NO, mism, refused, tries);

@@ -104,7 +104,7 @@ AddressSanitizer decide. Prefer adding checks of that kind.
 | Path | What |
 |---|---|
 | `iris.h` | The whole library. Start at the masthead. |
-| `examples/` | `00_minimal.c` is the nine-line one. `iris_smallest/` is the Arduino one. |
+| `examples/` | `00_minimal.c` is the smallest one. `iris_smallest/` is the Arduino one. |
 | `tests/` | `audit.c` is ours and self-referential. `fuzz.c` is not. |
 | `extras/ports/` | Where sound goes out: control change, polyphonic expression, network. |
 | `docs/` | Design notes and decision records. `tiny.c` is the independent check. |

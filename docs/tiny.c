@@ -1,13 +1,13 @@
 /* ============================================================================
-   tiny.c — the same algorithm iris.h implements, by hand, in under 100 lines.
+   tiny.c — the same algorithm iris.h implements, by hand, in a fraction of the space.
 
    THIS IS AN AUDIT, NOT A LIBRARY. Its job is to answer one question a reviewer
    or a student is entitled to ask: is iris.h doing anything mysterious, or is
    it this, plus guards, persistence, ports and documentation?
 
    Run it. It prints its own learned surface and iris.h's on the same task, and
-   the mean difference between them. If the number is small, the 900 lines of
-   library and these 80 lines compute the same thing — and every other line in
+   the mean difference between them. If the number is small, the library and this
+   one short file compute the same thing — and every other line in
    iris.h is there for a reason you can name (a refusal, a file format, an
    output port, an explanation), not because the maths needs it.
 
@@ -142,7 +142,6 @@ int main(void) {
      literals computed by nothing, and neither was ever true of either file.
      A number in a program that the program does not measure is the exact
      thing this project tells contributors not to write. */
-  printf("   tiny.c is a few hundred lines; iris.h is an order of magnitude"
-         " more.\n\n");
+  printf("   tiny.c does the same job in a small fraction of the space.\n\n");
   return 0;
 }

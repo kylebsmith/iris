@@ -26,7 +26,7 @@ cc -std=c99 -O2 -Wall -Wextra -I. -o min examples/00_minimal.c -lm && ./min
 
 That example is short enough to read in one sitting and compiles with **zero
 warnings** under
-`-Wall -Wextra`. If you can write those nine lines, you can use this library;
+`-Wall -Wextra`. If you can write the block above, you can use this library;
 everything else is detail.
 
 ---

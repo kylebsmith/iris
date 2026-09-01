@@ -18,7 +18,16 @@ set -e
 # runs is not a matrix.
 CC=${CC:-cc}
 
+# Where this repository is, absolutely. The sketches arm needs to tell
+# sync-iris.sh which iris.h is the source of truth, and a relative path is wrong
+# the moment the starter is checked out inside this workspace rather than beside it.
+ROOT=$(cd "$(dirname "$0")" && pwd)
+
 # iris — build everything three ways from one core.
+#
+# Terms used below, spelled out once: MPE is polyphonic expression, a way of
+# sending each note its own bend and pressure; CC is control change, the plain
+# numbered-knob message; OSC is Open Sound Control, a network message format.
 #   ./build.sh audit        run the correctness checks (43)
 #   ./build.sh claims       verify the docs still match the code
 #   ./build.sh mpe          run the MPE sink's byte-level checks
@@ -52,8 +61,14 @@ case "${1:-audit}" in
               # commit message promised to wire this in and did not; that is
               # what this arm is.
               ST=${IRIS_STARTER:-../iris-esp32-starter}
+              # Tell sync-iris.sh where THIS header is. It defaults to
+              # ../iris/iris.h, which is the local sibling layout; on a CI
+              # runner the starter is checked out inside this workspace and
+              # that relative path does not exist, so the arm exited 2 with
+              # "cannot find the library" -- a failure that says nothing about
+              # whether the students' copies match.
               if [ -f "$ST/sync-iris.sh" ]; then
-                ( cd "$ST" && sh sync-iris.sh )
+                ( cd "$ST" && IRIS_SRC="$ROOT/iris.h" sh sync-iris.sh )
               else
                 echo "  SKIP  no starter repo at $ST (set IRIS_STARTER)"
                 # A SKIP is a pass locally, where you may not have the starter

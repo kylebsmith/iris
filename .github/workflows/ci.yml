@@ -58,21 +58,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          cat > probe.c <<'PROBE'
-          #include "iris.h"
-          static unsigned char mem[IRIS_ARENA(2,12,3,64)];
-          int probe(void){
-            iris *k = iris_init(mem,sizeof mem,2,12,3,64,1234);
-            float g[2]={0.1f,0.2f}, s[3]={0.3f,0.4f,0.5f};
-            iris_record(k,g,s); iris_train_converge(k,0,0,0);
-            iris_predict(k,g,s); iris_save(k,0,0);
-            return 0; }
-          PROBE
-          gcc -std=c99 -O2 -ffreestanding -fno-stack-protector -I. -c probe.c -o probe.o
-          UNDEF=$(nm -u probe.o | tr -d ' ' | grep -v '^$' || true)
-          if [ -n "$UNDEF" ]; then echo "FAIL: external symbols: $UNDEF"; exit 1; fi
-          echo "PASS: zero external symbols"
+      # This job used to carry its OWN copy of the probe, and the copy drifted:
+      # tools/check-claims.sh compiles with -fno-math-errno and
+      # -fno-tree-loop-distribute-patterns on GNU compilers, because without
+      # them gcc emits calls to memcpy, memset and sqrtf that the library never
+      # wrote -- and this job omitted both. So `sh build.sh claims` passed while
+      # the job asserting the same thing failed on ubuntu's real gcc. Two
+      # implementations of one claim is how that happens. There is one now.
+      - run: sh build.sh claims
 
   # Determinism is a contract, not a hope. This job runs FIVE combinations --
   # -O0 -O1 -O2 -O3 -Os, all with -ffp-contract=off -- and every one must
