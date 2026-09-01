@@ -86,4 +86,4 @@ Sections: Status, Context, Decision, Rejected alternatives, Consequences.
 | [0018](0018-the-input-scaling-travels-with-the-file.md) | Inputs are scaled to [-1,+1], and the scaling travels with the file | accepted |
 | [0019](0019-the-residual-ledger-integrates-it-does-not-sample.md) | The bad-example detector integrates the residual; it does not sample the endpoint | accepted |
 | [0020](0020-settle-is-a-separate-act-from-train.md) | SETTLE is a separate act from TRAIN, and it reseeds | accepted |
-| [0021](0021-the-one-recommended-trainer.md) | One recommended trainer: fixed-epoch backpropagation, not convergence | accepted |
+| [0021](0021-the-one-recommended-trainer.md) | Which trainer iris recommends: train to the plateau | **provisional** |

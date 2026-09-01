@@ -168,9 +168,11 @@ finds it about three times in ten, and the library says in plain words that it
 does not pretend otherwise.
 
 When it does find one: you delete that demonstration and retrain. In the worked
-example the first retrain attempt failed outright — the library said so plainly
-rather than returning a broken instrument — and a full re-roll from fresh random
-numbers recovered it: 0.621, 0.500, 0.380, essentially the original. That is the
+example the re-fit simply worked, and the instrument came back to 0.618, 0.500,
+0.383 — the numbers it started with. Had the bad take damaged the weights badly
+enough to stop training, the library would have refused and said so rather than
+returning a broken instrument, and a full re-roll from fresh random numbers is
+the cure for that. That is the
 repair procedure. Find the contradiction, delete it, retrain, and if the retrain
 refuses, start over from scratch.
 

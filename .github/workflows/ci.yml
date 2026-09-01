@@ -25,7 +25,7 @@ jobs:
       # difference is WHERE the failure lands: without this, the job dies at
       # step 2 on a raw git error before a single test runs. With it, the job
       # fails at the check that actually cares, with a message a person can act
-      # on. Publish iris-esp32-starter before iris and neither happens.
+      # on. Publish iris-starter before iris and neither happens.
       - uses: actions/checkout@v4
         continue-on-error: true
         with:

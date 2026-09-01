@@ -213,7 +213,9 @@ no algorithm chooser, no per-output input selection.
   noise found that training to a plateau degrades badly once the data is noisy,
   where a fixed epoch ceiling holds up. Real sensors are noisy. See
   `docs/adr/0021`.
-- **Only one training measurement exists on real hardware.** Everything else
+- **Two training measurements exist on real hardware** — fixed-epoch backprop
+  and train-to-plateau. `iris_train_elm` and `iris_train_lbfgs` are unmeasured on
+  device. Everything else
   labelled "S3" is a scaling of a host measurement, and the scaling column says
   so.
 
@@ -259,9 +261,11 @@ not, and several were dangerous.
 **Removed from the public API:** the learning rate and momentum. Momentum at
 0.99 — one nudge from the 0.85 default — **diverged 21 of 40 runs and
 permanently bricked 20 of them.** A learning rate of 2.0 destroyed 5 of 16. And
-their safe ranges buy nothing: tuning the learning rate, the epoch ceiling, the
-hidden width and the smoothing all land within 2–4% of each other, because they
-were five spellings of one axis. Worse, the only number a UI could show points
+their safe ranges buy nothing: tuning the learning rate, the epoch ceiling and
+the smoothing all land within 2–4% of each other, because they were six
+spellings of one axis. (The hidden width is NOT one of them —
+`docs/KNOB-AUDIT.md:142` measures a 33–43% gain from choosing it well, and :38
+says auto-selecting it does not work.) Worse, the only number a UI could show points
 *backwards* — the setting with the best-looking training error produced nearly
 the worst instrument.
 

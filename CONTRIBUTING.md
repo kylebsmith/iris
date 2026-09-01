@@ -93,8 +93,8 @@ AddressSanitizer decide. Prefer adding checks of that kind.
   `sh sync-iris.sh` there or the copies go stale.
 - **Structure sizes differ by architecture.** `IRIS_ARENA(2,12,1,8)` is 944
   bytes on the ESP32-S3 and 1,032 on a 64-bit laptop. Never quote one as the
-  other; measure on the target. Both of those numbers were 8 bytes smaller in
-  this file until 0.1.0, because `struct iris` grew and the prose did not
+  other; measure on the target. The first of those was 4 bytes smaller and the
+  second 8 bytes smaller in this file until 0.1.0, because `struct iris` grew and the prose did not
   follow — which is the trap, stated twice.
 - **Comments have been wrong.** One stated a measurement off by a factor of
   eight. Verify a comment before relying on it, and fix it when it is wrong.
