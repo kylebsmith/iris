@@ -33,7 +33,7 @@ static int iris_null__send(iris_sink *s, const float *v) {
 }
 static int iris_null__stop(iris_sink *s) { ((iris_null_sink *)s)->stops++; return IRIS_OK; }
 
-IRIS_MUST_CHECK static int iris_null_sink_init(iris_null_sink *z, int n, const iris_desc *desc) {
+IRIS_MUST_CHECK static inline int iris_null_sink_init(iris_null_sink *z, int n, const iris_desc *desc) {
   int rc;
   if (!z || n < 1 || n > IRIS_SINK_MAX_DIMS) return IRIS_E_CONFIG;
   if ((rc = iris_desc_check(desc, n)) < 0) return rc;
@@ -62,7 +62,7 @@ static int iris_null_bytes__write(iris_bytes *w, const unsigned char *msg, int l
   return IRIS_OK;
 }
 
-IRIS_MUST_CHECK static int iris_null_bytes_init(iris_null_bytes *b) {
+IRIS_MUST_CHECK static inline int iris_null_bytes_init(iris_null_bytes *b) {
   if (!b) return IRIS_E_CONFIG;
   b->base.name = "null-bytes"; b->base.write = iris_null_bytes__write;
   b->msgs = b->bytes = b->refused = 0; b->refuse = IRIS_OK;

@@ -15,6 +15,7 @@
 #   sh tools/mutate.sh -v       show the suite output for survivors
 set -u
 VERBOSE=${1:-}
+out=""
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -53,9 +54,12 @@ run_mutation() {
   # document disagrees about a line count. audit, regressions, coverage and tu
   # are the suites that test behaviour; claims and bloat are not and are run
   # separately by build.sh and CI.
-  ( cd "$WORK/m" && sh build.sh audit && sh build.sh regressions \
-                 && sh build.sh coverage && sh build.sh tu ) \
-      >/dev/null 2>&1 && rc=0 || rc=1
+  # Capture the output rather than discarding it: -v prints it for survivors,
+  # and it referenced $out, which nothing ever assigned. Under `set -u` that
+  # made the documented verbose mode abort instead of run.
+  out=$( ( cd "$WORK/m" && sh build.sh audit && sh build.sh regressions \
+                        && sh build.sh coverage && sh build.sh tu ) 2>&1 ) \
+      && rc=0 || rc=1
   if [ "$rc" != "0" ]; then
     printf "  killed  %-52s\n" "$label"; KILLED=$((KILLED+1))
   else
@@ -79,6 +83,12 @@ run_mutation "backward slope 1-a^2 -> 1-a^2 scaled 0.99"    's/acc \* \(1\.0f - 
 echo
 echo "-- the safety properties --"
 run_mutation "drop the arena bound in iris_init"            's/if \(bytes < need\) return 0;/;/'
+# EXPECTED SURVIVOR, same category as the shuffle-buffer one below: `need == 0`
+# is the overflow path in iris_internal_bytes, and no shape within the library's
+# own ceilings sizes to 0 on a 64-bit host, so the guarded branch is unreachable
+# here and no host test can kill this. It is not an untested property; it is a
+# property this machine cannot exercise. Left annotated rather than removed so
+# the survivor count stays honest.
 run_mutation "ignore an unsizeable shape in iris_init"     's/if \(need == 0\) return 0;/;/'
 run_mutation "drop the not-a-number door check"             's/if \(iris_isbad\(in\[i\]\)\)/if (0)/'
 run_mutation "iris_isbad always says healthy"               's/return \(c\.u & 0x7F800000u\) == 0x7F800000u;/return 0;/'

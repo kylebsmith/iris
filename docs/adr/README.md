@@ -1,5 +1,18 @@
 # Architecture Decision Records
 
+> **Where these decisions were made.** iris was extracted from a larger
+> instrument-firmware project that is not published. Ten of the records below —
+> 0005, 0012, 0013, 0014, 0015, 0016, 0018, 0019, 0020 and 0021 — were written
+> inside that tree, and their file references (`firmware/`, `host/`, `core/`,
+> `app.c`, `rig.h`, `admin/DECISIONS.md`) are to it, not to this repository.
+> The same goes for two sources they cite, `docs/frontier/REPORT.md` and
+> `BRINGUP-LOG.md`, which are not here either — including the on-device
+> training measurement in 0021, which you therefore cannot re-run from this
+> repository. The *decisions* are accurate and still govern `iris.h`; the
+> *paths* will not resolve. Rule 3 below asks that numbers come from a program
+> anyone can re-run, and for those records this repository cannot keep that
+> promise, so it is said here rather than left to be discovered.
+
 An ADR is a short note that records **one decision that had a real trade-off**,
 written **before** the code that implements it, and kept afterwards whether or
 not the decision turns out well.

@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use iris in research or in a piece, please cite it."
+title: "iris: interactive machine learning for handmade instruments, in one C99 header"
+abstract: >-
+  iris trains a small neural network on a microcontroller so that a performer
+  can demonstrate a handful of gestures paired with sounds and have the mapping
+  between them filled in. It is a single C99 header with no dependencies, no
+  dynamic allocation and no build system, and it trains on the device rather
+  than on a host computer. Behaviour is bit-pinned across compilers and
+  optimisation levels so that a saved instrument plays the same way twice.
+type: software
+authors:
+  - given-names: Kyle
+    family-names: Smith
+    email: kyle@jefflisa.com
+version: 0.1.0
+date-released: "2026-08-31"
+license: BSD-3-Clause
+repository-code: "https://github.com/kylebsmith/iris"
+keywords:
+  - interactive machine learning
+  - digital musical instruments
+  - embedded systems
+  - microcontroller
+  - neural networks
+  - gesture mapping
+  - new interfaces for musical expression

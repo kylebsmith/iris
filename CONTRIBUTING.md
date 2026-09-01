@@ -35,7 +35,7 @@ false where they stood — the discipline exists because we needed it.
 ## Commands
 
 ```sh
-sh build.sh audit      # 41 correctness checks, including the frozen hashes
+sh build.sh audit      # 42 correctness checks, including the frozen hashes
 sh build.sh claims     # fails the build when a document contradicts the code
 sh build.sh fuzz       # sanitizers decide, not our assertions. See below.
 sh build.sh tiny       # an independent 123-line reimplementation, for comparison
@@ -91,9 +91,11 @@ AddressSanitizer decide. Prefer adding checks of that kind.
 - **`iris.h` is duplicated** into each sketch folder in the ESP32 starter kit
   so students need no install step. After editing the header, run
   `sh sync-iris.sh` there or the copies go stale.
-- **Structure sizes differ by architecture.** `IRIS_ARENA(2,12,1,8)` is 940
-  bytes on the microcontroller and 1,024 on a 64-bit laptop. Never quote one as
-  the other; measure on the target.
+- **Structure sizes differ by architecture.** `IRIS_ARENA(2,12,1,8)` is 944
+  bytes on the ESP32-S3 and 1,032 on a 64-bit laptop. Never quote one as the
+  other; measure on the target. Both of those numbers were 8 bytes smaller in
+  this file until 0.1.0, because `struct iris` grew and the prose did not
+  follow — which is the trap, stated twice.
 - **Comments have been wrong.** One stated a measurement off by a factor of
   eight. Verify a comment before relying on it, and fix it when it is wrong.
 
@@ -144,7 +146,7 @@ negative-results note explaining what it measured.
 
 ## Before you open a pull request
 
-1. `sh build.sh audit` — 41 checks, both hashes unmoved
+1. `sh build.sh audit` — 42 checks, both hashes unmoved
 2. `sh build.sh claims` — documents match the code
 3. `sh build.sh fuzz` — no sanitizer report
 4. `sh build.sh mpe` and `sh build.sh sinks` — zero failures

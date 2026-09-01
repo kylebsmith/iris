@@ -181,5 +181,5 @@ open('build/bench.html','w').write(open('extras/bench/page.html').read().replace
               "$CC" -std=c99 -O1 -g -fsanitize=address,undefined \
                  -fno-sanitize-recover=all -I. -o build/fuzz tests/fuzz.c -lm
                 ./build/fuzz "${2:-400}" ;;
-  *)          echo "usage: ./build.sh [audit|mpe|sinks|claims|fuzz|regressions|mutate|experiment|tiny|bench|golden|clean]"; exit 1 ;;
+  *)          echo "usage: ./build.sh [audit|mpe|sinks|claims|fuzz|regressions|coverage|tu|bloat|sketches|target|mutate|experiment|tiny|bench|golden|clean]"; exit 1 ;;
 esac

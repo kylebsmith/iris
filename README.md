@@ -2,6 +2,8 @@
 
 **Interactive machine learning for handmade instruments, in one C99 header.**
 
+BSD 3-Clause licensed. Version 0.1.0.
+
 You demonstrate a handful of gestures paired with sounds. It learns the mapping
 and fills in everything between. No laptop in the loop, no runtime, no build
 system, no install — you include one file.
@@ -41,7 +43,7 @@ An instrument you cannot rely on is not an instrument.
 
 The tools musicians use to build gestural instruments keep dying. Not from bad
 mathematics — from dependency rot. Wekinator's example patches need Processing 2
-and Kinect SDKs that no longer exist. MnM will not load in 64-bit Max. GRT needs
+and Kinect software development kits that no longer exist. MnM will not load in 64-bit Max. GRT needs
 patching for modern compilers. ml.lib breaks on each Max release. The piece you
 wrote quietly becomes unperformable, and the practice you built around it goes
 with it.
@@ -113,8 +115,11 @@ contract.
 
 There is no mutable state outside the instrument you passed in — no globals, no
 static buffers — so two instruments cannot interact, on any number of cores.
-Verified: four instruments trained interleaved, 8,000 interleaved predictions,
-zero cross-talk.
+Verified by `sh build.sh audit`, the check named "four instruments alive at
+once cannot touch each other": four instruments trained alone, then the same
+four alive simultaneously with every record, training and prediction
+interleaved round-robin, 8,000 interleaved predictions. All four save to
+byte-identical state either way.
 
 So this is fine: any number of instruments on one core called one after
 another; one instrument per thread across many cores; one instrument living
@@ -138,7 +143,8 @@ period at 48 kHz. It fits inside a sample, but with about 1.4x of margin, not th
 comfortable multiple an earlier version of this line claimed — that figure was
 7.4–7.8 µs, which was a host measurement scaled by an estimated ratio and
 presented as if it had been taken on the part. Measured on the board:
-`device_torture.ino` test 9, 20,000 predictions in 298,915 µs on an ESP32-S3 at
+`device_torture.ino` (in the ESP32 starter kit) test 9, 20,000 predictions in
+298,915 µs on an ESP32-S3 at
 240 MHz, 2 inputs / 12 hidden / 3 outputs. Reproduced within 0.001 µs across
 runs and across two different boards.
 
@@ -153,9 +159,9 @@ the blocking call, and never from an interrupt.
 ## Run the tests
 
 ```sh
-sh build.sh audit     # 41 correctness checks, including the golden hashes
-sh build.sh mpe       # the MPE encoder, byte level
-sh build.sh sinks     # the CC and OSC output ports
+sh build.sh audit     # 42 correctness checks, including the golden hashes
+sh build.sh mpe       # the polyphonic-expression encoder, byte level
+sh build.sh sinks     # the control-change and Open Sound Control ports
 ```
 
 One command, no flags, no packages. If `audit` prints `ALL CHECKS PASSED
@@ -188,7 +194,8 @@ principle, not merely unachieved.
 
 It implements **two** of Wekinator's nine algorithm families — the default of
 each registry. The other seven are absent, including every temporal model
-(DTW), and so is the analyst's toolkit: no cross-validation, no dataset table,
+(dynamic time warping, which matches gestures of differing speed), and so is
+the analyst's toolkit: no cross-validation, no dataset table,
 no algorithm chooser, no per-output input selection.
 
 ## Honest limitations
@@ -208,7 +215,7 @@ no algorithm chooser, no per-output input selection.
 ## Next to the field
 
 **Wekinator** is the ancestor and remains the richer tool; frozen since 2016,
-needs a JVM and a screen. **RapidLib** is its C++ successor and the learner
+needs a Java virtual machine and a screen. **RapidLib** is its C++ successor and the learner
 inside MIMIC and InteractML; smaller and more portable than this. **FluCoMa**
 is the live, funded, BSD-licensed regressor in this domain and the most serious
 comparator. **MEMLNaut** is doing on-device training for musical mapping first,
@@ -231,7 +238,8 @@ be changed again:**
   43% more training time. It is a chosen function, not a compromise.
 - The update rule, per-example with classical momentum at 0.10 / 0.85.
 - The output scaling to [0.1, 0.9] and the input scaling to [−1, +1].
-- The save format's meaning: weights, demonstrations, RNG state, scaling version.
+- The save format's meaning: weights, demonstrations, random-number-generator
+  state, scaling version.
 
 **Free to change, because they do not alter a saved instrument:** anything
 additive to the API, the stopping rule's internals, diagnostics, ports, and the

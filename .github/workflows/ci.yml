@@ -59,8 +59,11 @@ jobs:
           if [ -n "$UNDEF" ]; then echo "FAIL: external symbols: $UNDEF"; exit 1; fi
           echo "PASS: zero external symbols"
 
-  # Determinism is a contract, not a hope. 20 flag combinations; the four that
-  # legitimately fail are -ffp-contract=fast, which the header documents.
+  # Determinism is a contract, not a hope. This job runs FIVE combinations --
+  # -O0 -O1 -O2 -O3 -Os, all with -ffp-contract=off -- and every one must
+  # produce the pinned hashes. (The wider 20-combination sweep that includes
+  # -ffp-contract=fast, where four legitimately differ, is documented in the
+  # header and is not what runs here.)
   determinism:
     name: golden hashes across optimisation levels
     runs-on: ubuntu-latest

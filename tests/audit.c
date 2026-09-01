@@ -618,9 +618,13 @@ int main(void) {
             own assertion: fnv1a is taken over exactly n1 bytes, so a wrong
             length gives a wrong hash. The hash is the check. */
          n1 > 0 && h == want && (pass != 0 ? 1 : hl == wantl),
+         /* Print wantl, do not retype it. This message used to hardcode
+            0xFB5BE623 while wantl was 0x1648FA1E, so a student debugging a real
+            failure was told to expect a number the check was not asking for. */
          "%zu v1-layout bytes, fnv1a 0x%08X (want 0x%08X); L-BFGS weights "
-         "0x%08X%s", n1, h, want, hl,
-         pass == 0 ? " (want 0xFB5BE623, re-pinned after the 2026-08-26 L-BFGS repair)" : "");
+         "0x%08X (want 0x%08X%s)", n1, h, want, hl, wantl,
+         pass == 0 ? ", re-pinned after the 2026-08-26 L-BFGS repair"
+                   : " -- not compared on this path");
     }
   }
 
@@ -1794,6 +1798,74 @@ int main(void) {
        diverged, refused, recovered, drift);
   }
 
+
+  /* README.md says "Verified: four instruments trained interleaved, 8,000
+     interleaved predictions, zero cross-talk." Until now nothing in this suite
+     verified it -- a line beginning "Verified:" with no evidence attached, in a
+     project whose stated rule is that every claim carries its evidence. This is
+     that evidence, and it re-runs.
+
+     The design is the only one that proves the claim: each instrument must see
+     the IDENTICAL sequence of its own operations in both phases, so that any
+     difference in the saved bytes can only have come from the other three
+     being alive. Four separate arenas, four different seeds, four different
+     example counts. */
+  {
+    static unsigned char xt_a[IRIS_ARENA(NI, NH, NO, CAP)];
+    static unsigned char xt_b[IRIS_ARENA(NI, NH, NO, CAP)];
+    static unsigned char xt_c[IRIS_ARENA(NI, NH, NO, CAP)];
+    static unsigned char xt_d[IRIS_ARENA(NI, NH, NO, CAP)];
+    unsigned char *ar[4] = { xt_a, xt_b, xt_c, xt_d };
+    const size_t arsz[4] = { sizeof xt_a, sizeof xt_b, sizeof xt_c, sizeof xt_d };
+    const unsigned seed[4] = { 1234u, 99u, 40507u, 7u };
+    const int nex[4] = { 12, 20, 31, 8 };
+    uint32_t alone[4], together[4];
+    int preds = 0;
+
+    /* Phase 1: strictly one at a time. Nothing else is alive. */
+    for (int i = 0; i < 4; ++i) {
+      iris *z = iris_init(ar[i], arsz[i], NI, NH, NO, CAP, seed[i]);
+      load_examples(z, nex[i]);
+      iris_train(z);
+      for (int p = 0; p < 2000; ++p) {
+        float in[NI] = { (float)(p % 97) / 97.0f, (float)(p % 89) / 89.0f }, o[NO];
+        iris_predict(z, in, o);
+      }
+      alone[i] = fnv1a(ar[i], iris_save_size(z));
+    }
+
+    /* Phase 2: all four alive at once, every operation interleaved
+       round-robin, same per-instrument sequence as above. */
+    iris *q[4];
+    for (int i = 0; i < 4; ++i)
+      q[i] = iris_init(ar[i], arsz[i], NI, NH, NO, CAP, seed[i]);
+    for (int i = 0; i < 4; ++i) iris_clear(q[i]);
+    for (int e = 0; e < 31; ++e)          /* records, interleaved */
+      for (int i = 0; i < 4; ++i) {
+        if (e >= nex[i]) continue;
+        float u = (float)((e * 7919) % 97) / 97.0f;
+        float v = (float)((e * 6131) % 89) / 89.0f;
+        float in[NI] = { u, v }, o[NO];
+        truth(u, v, o);
+        iris_record(q[i], in, o);
+      }
+    for (int i = 0; i < 4; ++i) iris_train(q[i]);
+    for (int p = 0; p < 2000; ++p)         /* 8,000 predictions, interleaved */
+      for (int i = 0; i < 4; ++i) {
+        float in[NI] = { (float)(p % 97) / 97.0f, (float)(p % 89) / 89.0f }, o[NO];
+        iris_predict(q[i], in, o); ++preds;
+      }
+    for (int i = 0; i < 4; ++i) together[i] = fnv1a(ar[i], iris_save_size(q[i]));
+
+    int same = 1;
+    for (int i = 0; i < 4; ++i) if (alone[i] != together[i]) same = 0;
+    ok("four instruments alive at once cannot touch each other",
+       same,
+       "%d interleaved predictions; saved state alone vs four-alive: "
+       "0x%08X/0x%08X 0x%08X/0x%08X 0x%08X/0x%08X 0x%08X/0x%08X",
+       preds, alone[0], together[0], alone[1], together[1],
+       alone[2], together[2], alone[3], together[3]);
+  }
 
   printf("TRAINING COST  (this machine; the S3 is roughly 25-40x slower)\n\n");
   printf("  * S3 columns are the HOST time x270, not board readings. Only\n"
