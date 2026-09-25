@@ -29,7 +29,7 @@ comments included, and merged line counts go wrong.
 
 Usage:
   python3 tools/coverage.py --llvm-cov LLVM_COV --source iris.h --dir build/cov \\
-      --min-lines 97.5 --min-branches 88.0 PROGRAM...
+      --min-lines 98.0 --min-branches 89.5 PROGRAM...
 reads DIR/bin/PROGRAM and DIR/prof/PROGRAM.profdata for each PROGRAM, prints the
 totals, each program's own share, and every line no program executed, and exits
 1 when lines or branch outcomes fall under their minimum.
@@ -174,7 +174,7 @@ def main():
         print(f"  iris.h:{n:<5d} {text[n - 1].strip()[:90]}")
     by_fn = collections.Counter(where[k[:3]][1] for k in all_branch - hit_branch if k[:3] in where)
     print(f"\nbranch outcomes never taken ({len(all_branch - hit_branch)}), by function:")
-    for fn, c in by_fn.most_common():
+    for fn, c in sorted(by_fn.items(), key=lambda item: (-item[1], item[0])):
         print(f"  {c:4d}  {fn}")
 
     ok = lp >= a.min_lines and bp >= a.min_branches

@@ -357,7 +357,7 @@ arm_fuzz_load() {
 # (98.30%) with Apple clang 17, Homebrew clang 22 and Debian clang 19 alike.
 # Branch outcomes depend on the LLVM version, which decides how many there
 # are: 885 of 968 (91.43%) with Apple clang 17, 886 of 968 (91.53%) with
-# clang 19, 909 of 1,012 (89.82%) with clang 22. So: lines at least 98.0%,
+# clang 19, 907 of 1,012 (89.62%) with clang 22. So: lines at least 98.0%,
 # branch outcomes at least 89.5%. COV_MIN_LINES and COV_MIN_BRANCHES
 # override them.
 arm_cov() {
