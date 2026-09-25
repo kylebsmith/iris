@@ -14,12 +14,12 @@ void setup() {
   Serial.begin(115200);
   delay(400);
   iris *k = iris_init(arena, sizeof arena, 1, 12, 1, 8, /*seed=*/1234);
-  if (!k) { Serial.println(F("arena too small")); return; }
+  if (!k) { Serial.println(F("iris_init refused the shape")); return; }
 
   float in, out;
   in = 0.0f; out = 0.0f; iris_record(k, &in, &out);   /* here, be silent */
   in = 1.0f; out = 1.0f; iris_record(k, &in, &out);   /* there, be loud  */
-  iris_train(k);
+  if (!iris_train(k)) { Serial.println(F("training refused")); return; }
 
   for (int i = 0; i <= 10; ++i) {
     in = i / 10.0f;

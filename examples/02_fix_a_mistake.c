@@ -1,20 +1,25 @@
 /* ============================================================================
    02_fix_a_mistake.c — the thing this library is actually for.
 
-   Every account of how musicians use tools like this says the same thing: they
-   do not tune the algorithm, they FIX THE EXAMPLES. Fiebrink's 2011 study found
-   composers never once used cross-validation; they deleted the bad take and
-   recorded it again. So the library is built around editing demonstrations, and
-   this example is that loop end to end.
+   People who build instruments with tools like this spend their time on the
+   demonstrations, not on the algorithm's settings. In the composers' study
+   of Fiebrink, Cook and Trueman, "Human model evaluation in interactive
+   supervised learning" (the conference on human factors in computing
+   systems, CHI 2011), none of the composers used cross-validation (a
+   statistical score of the model); they judged the instrument by playing it
+   and repaired it by changing its demonstrations. So the library is built
+   around editing demonstrations, and this example is that loop end to end:
+   record, train, spot the bad take, delete it, train again.
 
    It also shows the two guards that make the loop safe to be inside of:
    a glitched sensor frame is refused at the door, and an instrument that has
-   never been fitted refuses to play rather than emitting noise.
+   never been fitted plays a neutral value rather than noise.
 
-       cc -std=c99 -O2 -I.. -o fix 02_fix_a_mistake.c -lm && ./fix
+       cc -std=c99 -O2 -Wall -Wextra -I.. -o fix 02_fix_a_mistake.c && ./fix
    ============================================================================ */
 
 #include "../iris.h"
+#include <math.h>     /* NAN only: a glitched sensor reading */
 #include <stdio.h>
 
 static unsigned char memory[IRIS_ARENA(2, 12, 3, 64)];
@@ -29,18 +34,20 @@ static void play(iris *k, const char *label) {
 
 int main(void) {
   iris *k = iris_init(memory, sizeof memory, 2, 12, 3, 64, 1234);
+  if (!k) { printf("iris_init refused the shape\n"); return 1; }
 
-  /* 1. IT REFUSES TO PLAY BEFORE IT HAS LEARNED ANYTHING.
-        Status 4 is IRIS_NOT_FITTED. Without this guard you would get the
-        forward pass over random weights: plausible numbers, no symptom. */
+  /* 1. IT DOES NOT PLAY NOISE BEFORE IT HAS LEARNED ANYTHING.
+        Status 4 is IRIS_NOT_FITTED, and the outputs are the centre of what
+        was demonstrated, 0 with nothing recorded. Without this guard you
+        would get the network's answer from random weights: plausible
+        numbers, no symptom. */
   play(k, "before any training:");
 
   /* 2. FOURTEEN honest demonstrations along a diagonal.
         Why fourteen and not six: the residual ledger in step 5 refuses to
         accuse anything below IRIS_STRESS_MIN_EX (12) demonstrations, because
         with fewer than that the ranking is not meaningful. It returns -1
-        instead of guessing. Ask it too early and it will say nothing — which
-        is correct, and is the kind of refusal you want. */
+        instead of guessing. */
   for (int i = 0; i < 14; ++i) {
     float u = (float)i / 13.0f;
     float in[2] = { u, 1.0f - u };
@@ -50,60 +57,56 @@ int main(void) {
 
   /* 3. A GLITCHED SENSOR FRAME IS REFUSED AT THE DOOR.
         It never enters the store, so it can never poison a fit. */
-  { float bad[2] = { 0.0f / 0.0f, 0.5f }, any[3] = { 0.5f, 0.5f, 0.5f };
+  { const float bad[2] = { NAN, 0.5f }, any[3] = { 0.5f, 0.5f, 0.5f };
     int id = iris_record(k, bad, any);
-    printf("  glitched frame -> id %d, status %d, still %d examples\n\n",
-           id, (int)iris_get_status(k), iris_count(k)); }
+    int status = (int)iris_get_status(k);
+    int count = iris_count(k);
+    printf("  glitched frame -> id %d, status %d, still %d demonstrations\n\n",
+           id, status, count); }
 
-  iris_train(k);
-  play(k, "trained on 14 good demos:");
+  if (!iris_train(k)) { printf("training refused\n"); return 1; }
+  play(k, "trained on 14 good takes:");
 
-  /* 4. NOW THE MISTAKE. A seventh demonstration that contradicts the others —
-        the take where your hand slipped. */
+  /* 4. NOW THE MISTAKE. A fifteenth demonstration that contradicts the
+        others: the take where your hand slipped. Training on it pulls the
+        mapping toward it, and here it pulls hard enough that a weight runs
+        into the safety limit: status 1, IRIS_TRAINING_DIVERGED. */
   { float in[2] = { 0.60f, 0.40f }, out[3] = { 0.05f, 0.95f, 0.05f };
     iris_record(k, in, out); }
-  iris_train(k);
+  if (!iris_train(k)) { printf("training refused\n"); return 1; }
   play(k, "after the bad take:");
 
-  /* 5. THE LIBRARY TELLS YOU WHICH ONE IS WRONG. It ranks every demonstration
-        by how hard it is fighting the others, and hands back the id. */
-  { float margin = 0.0f;
-    int id = iris_worst_example_id(k, &margin);
-    if (id < 0) { printf("\n  ledger declined to accuse (needs >= %d examples)\n",
-                         IRIS_STRESS_MIN_EX); return 1; }
-    printf("\n  the residual ledger says: example id %d is fighting the others"
-           " (margin %.2f, flag threshold %.2f)\n", id, margin, (double)IRIS_STRESS_FLAG);
+  /* 5. THE LIBRARY TELLS YOU WHICH ONE IS WRONG. It ranks every
+        demonstration by how hard it fought the others during training, and
+        hands back the identifier. Below IRIS_STRESS_FLAG the ranking is a
+        hint to listen again rather than an accusation; a sketch would show
+        it quietly. */
+  float margin = 0.0f;
+  int id = iris_worst_example_id(k, &margin);
+  if (id < 0) { printf("\n  the ledger declined to accuse (needs >= %d demonstrations)\n",
+                       IRIS_STRESS_MIN_EX); return 1; }
+  printf("\n  the residual ledger says: id %d is fighting the others"
+         " (margin %.2f, flag threshold %.2f)\n", id, (double)margin, (double)IRIS_STRESS_FLAG);
 
-    /* 6. DELETE IT — and now the part worth knowing.
-          A contradictory demonstration can DIVERGE the weights: they run past
-          the safety limit, the guard clamps them and stops. The examples are
-          fine. The weights are not, and no amount of retraining fixes them,
-          because one clamped weight trips the guard again on the first epoch.
-          So the library refuses, with a status you can act on, instead of
-          quietly doing nothing. */
-    iris_delete_id(k, id);
-    int ok = iris_train(k);
-    printf("  deleted id %d, %d examples remain\n", id, iris_count(k));
-    printf("  re-fit %s, status %d%s\n\n", ok ? "worked" : "was REFUSED", (int)iris_get_status(k),
-           iris_get_status(k) == IRIS_DIVERGED_STUCK
-             ? "  <- IRIS_DIVERGED_STUCK: reroll to recover" : ""); }
+  /* 6. DELETE IT, AND TRAIN AGAIN. The delete removes the take from the
+        store, but not from the weights: they were bent by it, and here one
+        of them sits on the safety limit. A warm trainer, which carries on
+        from the weights it has, refuses them outright (status 5,
+        IRIS_DIVERGED_STUCK), and even without the pinned weight it would
+        keep the take's influence. */
+  iris_delete_id(k, id);
+  { float e = iris_continue(k, 100);
+    int status = (int)iris_get_status(k);
+    printf("  deleted id %d, %d demonstrations remain\n", id, iris_count(k));
+    printf("  iris_continue (warm) returns %.0f, status %d\n", (double)e, status); }
 
-  /* 7. THE CURE.
-        Ordinarily deleting the bad take is the whole cure: iris_train fits the
-        demonstrations you have now, from a defined start, so the deleted take
-        leaves nothing behind. That is the path this run takes.
-
-        If the bad take damaged the weights badly enough to stop training
-        outright, the instrument says so and the cure is the same act made
-        explicit -- a fresh start over the same examples. Note there is no
-        epoch count to invent: reseed, then train to the plateau. */
-  if (iris_get_status(k) == IRIS_DIVERGED_STUCK) {
-    iris_reseed(k, 1234);
-    iris_train(k);
-    play(k, "after a fresh start:");
-  } else {
-    play(k, "after deleting it:");
-  }
-  printf("\n  (compare row 2 and the last row — the instrument came back.)\n");
+  /* 7. THE CURE IS iris_train. It starts over from the instrument's own seed
+        and fits only the demonstrations stored now, so the deleted take
+        leaves nothing behind: the same seed and the same fourteen takes give
+        the same weights, bit for bit, as the first iris_train above. */
+  if (!iris_train(k)) { printf("training refused\n"); return 1; }
+  play(k, "after iris_train:");
+  printf("\n  (compare the \"trained on 14 good takes\" row with the last row:"
+         " the instrument came back.)\n");
   return 0;
 }
