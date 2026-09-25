@@ -12,7 +12,7 @@ promised about saved instruments, is in
 | 0.2.0 | 7 | 7 |
 | 0.1.0 | 5 (6 for an instrument never fitted) | 1 to 6 |
 
-## 0.2.0 — unreleased
+## 0.2.0 — 2026-09-25
 
 The first release whose saved files are promised to keep playing: format 7 is
 read by every later release, and what a saved instrument plays is frozen within
