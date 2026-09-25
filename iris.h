@@ -1357,8 +1357,9 @@ IRIS_API int iris_record(iris *k, const float *in, const float *out) { if (!k) r
      here too would be over-broad: iris_record is one of several calls that
      raise it -- the trainers, the playing and neighbour functions and the
      setters raise it as well -- and storing one good number does not
-     disprove a not-a-number that TRAINING trapped. Only iris_record can raise IRIS_STORE_FULL, so only
-     iris_record can retract it; that is the whole rule.
+     disprove a not-a-number that TRAINING trapped. Only iris_record can
+     raise IRIS_STORE_FULL, so only iris_record can retract it; that is the
+     whole rule.
      A bad reading therefore does not alarm for ever either: iris_train clears
      the status on success, and every sketch here trains straight after
      recording, so the flag lifts at the point the instrument is actually
