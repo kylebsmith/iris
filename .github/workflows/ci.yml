@@ -39,7 +39,7 @@ jobs:
     env:
       COMPILER: ${{ matrix.compiler }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Linux packages (compilers, LLVM tools, Cortex-M and AVR cross compilers)
         if: runner.os == 'Linux'
@@ -150,7 +150,7 @@ jobs:
     env:
       CC: clang
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Linux packages
         run: |
           sudo apt-get update -qq
@@ -173,7 +173,7 @@ jobs:
     env:
       CC: clang
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Linux packages
         run: |
           sudo apt-get update -qq
@@ -199,7 +199,7 @@ jobs:
       AVR_CORE: arduino:avr@1.8.7
       ESP32_INDEX: https://espressif.github.io/arduino-esp32/package_esp32_index.json
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: arduino-cli
         run: |
           mkdir -p "$RUNNER_TEMP/arduino-cli"
@@ -253,8 +253,8 @@ jobs:
       CC: gcc
       IRIS_REQUIRE_REFERENCE: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: the pinned packages
