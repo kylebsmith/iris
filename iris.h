@@ -433,7 +433,12 @@ typedef enum {
                                 The way out is iris_train, which starts over
                                 from the instrument's own seed (as does
                                 iris_train_begin): the demonstrations are
-                                intact, only the weights are damaged.
+                                intact, only the weights are damaged. That
+                                fresh run is deterministic, so if the same
+                                demonstrations diverge from the same seed
+                                again, the weights are pinned again; a reroll
+                                (iris_reseed with a new seed, then iris_train)
+                                is a different run.
                                 iris_train_elm also reports this status when
                                 its solve collapsed to a near-constant output
                                 (PART 8d); that report alone does not make the
@@ -476,23 +481,25 @@ IRIS_API int iris_isbad(float x) {
    IRIS_TRAINING_DIVERGED and stops the run, and a trainer that would continue
    from a weight sitting on it refuses with IRIS_DIVERGED_STUCK. iris_tanh is
    exactly ±1 beyond |s| = 3, so one weight of 16 on its own saturates its
-   hidden unit whenever its input is more than 3/16 of the way from the centre of its
-   range to either end.
+   hidden unit whenever its input is more than 3/16 of the way from the centre
+   of its range to either end.
 
    IT FIRES ON SOME GOOD FITS. Measured with iris_train at the defaults on
    2,304 fits (6 target shapes x 5, 10, 20, 50 demonstrations x noise 0, 0.05,
    0.10 x 32 seeds; 2 inputs, 12 hidden, 3 outputs): the healthy fits' largest
-   weight has a median of 4.07 and a 99th percentile of 14.4, and the limit
-   fired on 40, every one at 50 demonstrations and 39 of them on sharp
-   targets (cliffs and ridges). Those 40 are usable instruments, and stopping them helped: allowed
-   to run on (a limit of 32 or 64 gives the same runs; none passes 31.2) they
-   train longer and end 7.6% worse on held-out error (geometric mean; 27 of
-   the 40 are worse). Their status still says they diverged.
+   weight has a median of 4.07, a 99th percentile of 14.4 and a maximum of
+   15.9953, and the limit fired on 40, every one at 50 demonstrations and 39
+   of them on sharp targets (cliffs and ridges). Those 40 are usable
+   instruments, and stopping them helped: allowed to run on (a limit of 32 or
+   64 gives the same runs; none passes 31.2) they train longer and end 7.6%
+   worse on held-out error (geometric mean; 27 of the 40 are worse). Their
+   status still says they diverged, and the warm trainers refuse them.
 
    WHY IT IS NOT RAISED. A higher limit clears those 40 and blinds the guard
-   to real runaways. Same 2,304 datasets with the learning rate and momentum
-   forced through iris_internal_set_learning; of the fits whose held-out error
-   came out more than twice the default fit's, how many the guard reported:
+   to real runaways. Same 2,304 datasets with the learning rate (lr) and
+   momentum forced through iris_internal_set_learning; of the fits whose
+   held-out error came out more than twice the default fit's, how many the
+   guard reported:
 
                                   limit 16       limit 32       limit 64
      lr 2.0,  momentum 0.85     512 of 1,718    60 of 1,720     0 of 1,720
@@ -1636,7 +1643,9 @@ typedef int (*iris_progress_fn)(void *user, int done, int ceiling, float err);
    epoch. iris_record already refuses one at the door, so that last test is
    defence in depth, for a store that arrived some other way -- a file written
    by a -DIRIS_NO_GUARDS build, say. The bad demonstration stays in the store
-   where the musician can find it and delete it. */
+   where the musician can find it and delete it. The finiteness test is one of
+   the guards, so a -DIRIS_NO_GUARDS build compiles it out, as it does
+   iris_record's, and then nothing stops a not-a-number reaching the weights. */
 IRIS_API int iris_internal_trainable(const iris *k) {
   if (!iris_shape_fits(k) || k->n_ex < 1) return 0;
 #ifndef IRIS_NO_GUARDS
@@ -1703,17 +1712,21 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
      weights to exactly ±IRIS_W_LIMIT and stops. A run that continues from
      those weights starts with them sitting on the clamp: epoch 1 pushes one of
      them past, the guard fires again, and training stops after a single epoch.
-     Measured: 14 good demonstrations plus one contradictory take diverge and
-     pin ONE weight of 60; without this refusal, a warm run after the bad take
-     is deleted does exactly 1 epoch per call and leaves the instrument frozen
-     at its damaged output, reporting nothing. Zeroing the momentum does not help -- it is the pinned weight,
-     not the velocity.
+     Measured on the demonstrations of examples/02_fix_a_mistake.c: 14 good
+     ones plus one contradictory take diverge and pin ONE weight of 60.
+     Without this refusal, a warm run after the bad take is deleted does
+     exactly 1 epoch per call, diverges again on it, and returns an
+     ordinary-looking error each time, while the first output creeps 0.087,
+     0.091, 0.106 over three calls against the 0.618 it played before the take.
+     Zeroing the momentum does not help -- it is the pinned weight, not the
+     velocity.
 
      The demonstrations are fine; the WEIGHTS are damaged. Refitting from the
-     seed recovers the instrument (measured: 0.621 against the 0.618 it played
-     before the damage). So a run that would continue from pinned weights
-     refuses, loudly and distinguishably, with IRIS_DIVERGED_STUCK, rather than
-     pretending to train. It does NOT reseed on its own: a warm trainer is
+     seed recovers the instrument: on the same demonstrations iris_train plays
+     0.618 again, exactly what it played before the damage. So a run that
+     would continue from pinned weights refuses, loudly and distinguishably,
+     with IRIS_DIVERGED_STUCK, rather than pretending to train. It does NOT
+     reseed on its own: a warm trainer is
      asked to keep the performer's weights, and replacing them silently would
      hand the performer a different instrument, which is the failure mode
      Fiebrink & Sonami describe.
@@ -2341,15 +2354,15 @@ IRIS_API float iris_loo_error(iris *k, int epochs) { return iris_internal_loo(k,
    instrument's seed, NOT the plateau run iris_train makes and you then play:
    a plateau fit costs about 25 times more, averaging 14,000 to 15,600 epochs
    at 20 demonstrations over the runs behind the error-floor table in the
-   engine (clean to noise sigma 0.10). The proxy has a price. Measured on 36 datasets (six target
-   shapes, three noise levels, two draws of 20 demonstrations) with 8 rerolls
-   each, against held-out error on a clean grid: the pick was the best of the
-   five settings for the 600-epoch fit it scores 41% of the time, and for the
-   plateau-trained instrument 35% of the time; following it cost a
-   geometric-mean 6.6% over the best setting for the 600-epoch fit, and 16.2%
-   for the plateau-trained instrument. So it is a noisy selector even for the
-   model it scores, and the budget mismatch more than doubles what following
-   it costs.
+   engine (clean to noise sigma 0.10). The proxy has a price. Measured on 36
+   datasets (six target shapes, three noise levels, two draws of 20
+   demonstrations) with 8 rerolls each, against held-out error on a clean
+   grid: the pick was the best of the five settings for the 600-epoch fit it
+   scores 41% of the time, and for the plateau-trained instrument 35% of the
+   time; following it cost a geometric-mean 6.6% over the best setting for
+   the 600-epoch fit, and 16.2% for the plateau-trained instrument. So it is a
+   noisy selector even for the model it scores, and the budget mismatch more
+   than doubles what following it costs.
 
    UNITS DO NOT MATTER. Each output's miss on the hidden demonstration is
    divided by that output's demonstrated range before it is squared, so an
