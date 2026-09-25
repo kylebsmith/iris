@@ -105,9 +105,11 @@ ties the export to the instrument `tests/audit.c` pins.
 1. *Every epoch, replayed from iris's own state.* The reference starts from
    iris's weights and velocities after epoch e − 1, runs epoch e in binary64
    with iris's order, and compares every weight and velocity with iris's after
-   epoch e. This is the check that iris computes the documented update. Run for
-   all epochs at once, it covers every epoch of every run: 22,050 of them in
-   0.2 s for golden-plateau.
+   epoch e. This is the check that iris computes the documented update. The
+   same replay's mean squared error for the epoch is compared with the error
+   iris reports for it: the number `iris_continue` returns and the error floor
+   and the plateau test read. Run for all epochs at once, it covers every
+   epoch of every run: 22,050 of them in 0.2 s for golden-plateau.
 2. *The whole run, free-running.* From iris's starting weights the reference
    trains alone, in binary64, for as many epochs as iris ran, with iris's
    shuffle orders, and every epoch's weights are compared. Every 1,000 epochs
@@ -191,6 +193,14 @@ rounding bound.
   each was settled.
 - Large shapes: the recipes have 2 to 5 inputs, 12 to 16 hidden units and 1 to 4
   outputs.
+- A change the size of one rounding, made once. Every tolerance above is a
+  few binary32 roundings wide, so a constant moved by one unit in the last
+  place passes all of them. Measured on scratch copies of `iris.h`: the
+  learning rate or the momentum one unit up fails the exact constants check
+  and the golden hash and nothing else; the output band's 0.9 one unit up, or
+  every hidden activation one unit up, fails the golden hash alone. A
+  one-unit error made at every weight update does accumulate, and fails
+  checks (a)1 and (a)2 (the table at the end).
 
 The golden recipe's demonstrations are computed in `run.py` with the header's
 rational function evaluated in binary32. That is how the data is made, not part
@@ -249,6 +259,15 @@ weights, and the factor 2 covers those terms and their spread through the rest
 of the epoch. A velocity is held to its weight's bound. Measured: at worst 0.372
 of the bound (grid), between 0.36u and 0.75u per visit, because roundings
 partly cancel.
+
+**The epoch's error from the same replay (derived form, calibrated
+constant).** Within 8u(√err + n × m × err), with m the number of outputs.
+Each error y − t is a few u from its binary64 value, through the forward
+pass and the target scaling, and that moves the mean of the squares by at
+most twice as much times √err (the mean of |y − t| is at most √err); adding
+n × m squares in binary32 and dividing adds up to (n × m + 1)u relative. The
+constant is measured: at worst 1.39 (grid, where the error sits near the
+floor), so 8 leaves 5.8 times.
 
 **The whole run (calibrated).** With d(e) the largest weight difference after e
 epochs relative to max(1, largest weight),
@@ -382,21 +401,25 @@ harness:
 
 | Broken in the copy | Recipe | What fails, and by how much |
 |---|---|---|
-| momentum 0.85 → 0.80 | golden | the constants (iris holds 0.800000012); every epoch replayed, at 16,200 times its bound; the whole run; the golden hash |
-| hidden error signal × 0.99 | golden | every epoch replayed, 407 times its bound; the whole run, 553 times; the golden hash |
-| weight decay l2 × lr → l2 / lr | noisy-smoothing | every epoch replayed, 107,000 times its bound; the whole run, predictions 0.61 of the range apart |
+| momentum 0.85 → 0.80 | golden | the constants (iris holds 0.800000012); every epoch replayed, at 16,200 times its bound, and its error at 1,660 times; the whole run; the golden hash |
+| hidden error signal × 0.99 | golden | every epoch replayed, 407 times its bound, and its error 15.4 times; the whole run, 553 times; the golden hash |
+| weight decay l2 × lr → l2 / lr | noisy-smoothing | every epoch replayed, 107,000 times its bound, and its error 8,460 times; the whole run, predictions 0.61 of the range apart |
+| weight decay applied before the velocity is added instead of after | noisy-smoothing | every epoch replayed, 23.6 times its bound, and its error 4.52 times; the whole run, 42.2 times |
 | shuffle draw mod (i + 1) → draw mod i | golden | the shuffle order: 0 of 900 epochs re-derive; the golden hash |
-| output error signal y(1 − y) → y(1.001 − y) | golden | every epoch replayed, 170 times its bound; the whole run, 203 times; the golden hash |
+| output error signal y(1 − y) → y(1.001 − y) | golden | every epoch replayed, 170 times its bound, and its error 12.6 times; the whole run, 203 times; the golden hash |
+| epoch error divided by the demonstration count alone, not by demonstrations times outputs | every recipe | every epoch's error, 44,300 to 65,300 times its bound, on the six recipes with three outputs; nothing else |
+| epoch error divided by one more than demonstrations times outputs | every recipe | every epoch's error, 243 to 15,700 times its bound, on all seven trained recipes; nothing else |
 | plateau tolerance 0.10 → 0.12 | plateau-edge | iris stops at epoch 6,000, where its documented rule does not; the reference's margin there is 0.015, against 4 × 1e-6 |
 | error floor 1e-6 → 2e-6 | grid | iris stops at epoch 5,213, where its documented rule does not; margin 0.99 |
 | neighbour guard 1e-9 → 1e-6 | classes | the 3-, 5- and 8-nearest blends, 34 to 50 times the tolerance; the tie check |
 | neighbour distance squared → absolute | classes | every neighbour check; blends up to 1.11 of an output's largest magnitude apart |
-| input scaling 2t − 1 → 2t − 0.99 | golden | every epoch replayed, 3,470 times its bound; the forward pass, 3,310 times; the whole run; the golden hash |
+| input scaling 2t − 1 → 2t − 0.99 | golden | every epoch replayed, 3,470 times its bound, and its error 2,070 times; the forward pass, 3,310 times; the whole run; the golden hash |
 | output clamp removed from `iris_predict` | golden | the forward pass, 25,800 times its bound (0.072 outside the range) |
-| `iris_continue` zeroes the velocities first | golden | every epoch replayed (the warm ones), 1,150 times its bound; the whole run |
-| rational 27 + 9s² → 27 + 9.001s² | golden | the forward pass, 9.45 times its bound; every epoch replayed, 4.18 times; the whole run; the golden hash |
-| starting weights × 1.0001 | golden | the starting weights: 51 of 75 match; the golden hash |
+| `iris_continue` zeroes the velocities first | golden | every epoch replayed (the warm ones), 1,150 times its bound, and its error 1,340 times; the whole run |
+| rational 27 + 9s² → 27 + 9.001s² | golden | the forward pass, 9.45 times its bound; every epoch replayed, 4.18 times, and its error 3.26 times; the whole run; the golden hash |
+| first-layer starting weights × 1.0001 | golden | the starting weights: 51 of 75 match; the golden hash |
 | velocity flush below 1e-30 → below 1e-6 | golden-plateau | every epoch replayed, 11 times its bound; the whole run, 1.94 times |
+| every weight update rounded up by one unit in the last place | golden | every epoch replayed, 1.13 times its bound (1.23 on golden-plateau); the whole run on golden-plateau, 30.8 times; the golden hash |
 | still-input threshold 1e-5 → 1e-4 | classes | the fitted ranges (3 still inputs where there are 2) |
 | still-input threshold 1e-5 → 1e-6 | classes | the fitted ranges (1 still input where there are 2) |
 | k-nearest ties go to the latest recorded | grid | the tie check: blends 0.5 of the output's magnitude apart |

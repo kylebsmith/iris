@@ -41,6 +41,14 @@ U = ref.U
 # within ONE_EPOCH_C * n_ex * u * max(|w|, 1), plus n_ex * u * max(|w|, 1)
 # more when weight decay is on (a second rounding per visit). Derived.
 ONE_EPOCH_C = 2.0
+# (a) the same replay's epoch error, against the error iris reports for the
+# epoch: within ERR_C * u * (sqrt(err) + n_ex * n_out * err). Each error
+# y - t is a few u from binary64's, which moves the mean of the squares by
+# at most twice that times sqrt(err); adding n_ex * n_out squares in binary32
+# adds up to n_ex * n_out * u relative. The form is derived, ERR_C
+# calibrated: the worst is 1.39 (grid, near the error floor), 5.8 times
+# inside 8.
+ERR_C = 8.0
 # (a) the free-running trajectory: after e epochs the largest weight
 # difference, relative to max(1, largest weight), within
 # min(TRAJ_C * e * roundings_per_epoch * u, TRAJ_CEILING).
@@ -394,7 +402,7 @@ def check_trajectory(rep, r, ex, rg, tag, stats):
     W0 = np.vstack([ref.floats(ex["initial"]["w"]), Wx[:-1]])
     V0 = np.vstack([ref.floats(ex["initial"]["v"]), Vx[:-1]])
     t0 = time.perf_counter()
-    W1s, V1s, _ = ref.replay_epochs_batched(shape, W0, V0, orders, X, T, lr, mom, wd)
+    W1s, V1s, E1s = ref.replay_epochs_batched(shape, W0, V0, orders, X, T, lr, mom, wd)
     scale = np.maximum(np.abs(Wx), 1.0)
     c_eff = ONE_EPOCH_C + (1.0 if wd > 0 else 0.0)
     bound = c_eff * n * U * scale
@@ -407,6 +415,13 @@ def check_trajectory(rep, r, ex, rg, tag, stats):
               f"{len(eps)} epochs; worst {fmt(worst)} of the bound "
               f"{fmt(c_eff)}*n*u*max(|w|,1) ({fmt(per_visit)}u per visit); "
               f"{fmt(time.perf_counter() - t0)} s")
+    # the epoch's error: what iris_continue returns, and what the error floor
+    # and the plateau test read
+    ratio_e = np.abs(errs - E1s) / (ERR_C * U * (np.sqrt(E1s) + n * O * E1s))
+    stats["epoch_error"].append((tag, ratio_e.max()))
+    rep.check(f"{tag}: every epoch's error, replayed", ratio_e.max() <= 1.0,
+              f"{len(eps)} epochs; worst {fmt(ratio_e.max())} of "
+              f"{ERR_C:g}*u*(sqrt(err)+n*outputs*err) (epoch {int(ratio_e.argmax()) + 1})")
 
     # --- the whole run, free-running in binary64 ------------------------
     # A second binary64 run starts from the same weights with w1[0] moved by
@@ -711,7 +726,8 @@ def main():
     print(f"iris against its binary64 reference (numpy {np.__version__})")
     exe = build_export(args.cc, workdir)
     rep = Report()
-    stats = {k: [] for k in ("one_epoch", "trajectory", "error_rel", "forward", "knn")}
+    stats = {k: [] for k in ("one_epoch", "epoch_error", "trajectory", "error_rel", "forward",
+                             "knn")}
     t_all = time.perf_counter()
     for r in recipes():
         if args.only and args.only not in r["name"]:
@@ -739,6 +755,9 @@ def main():
         o_obs = max(t[1] for t in stats["one_epoch"])
         v_obs = max(t[2] for t in stats["one_epoch"])
         print(f"    one epoch: worst {o_obs:.3g} of its bound, {v_obs:.3g}u per visit")
+        e_obs = max(t[1] for t in stats["epoch_error"])
+        print(f"    one epoch's error: worst {e_obs:.3g} of its bound; ERR_C = {ERR_C:g}, "
+              f"margin {1.0 / e_obs:.3g}x")
         print(f"    epoch error, relative difference, largest: "
               f"{max(t[1] for t in stats['error_rel']):.3g}")
         print(f"    forward pass: worst {max(t[1] for t in stats['forward']):.3g} "
