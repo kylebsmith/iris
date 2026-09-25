@@ -152,7 +152,7 @@ static int refusals_change_nothing(iris *k, char *why, size_t whylen) {
 }
 
 int main(void) {
-  char d[256], why[160];
+  char d[512], why[160];
 
   /* ---- 1. a refusal changes nothing ------------------------------------ */
   {
@@ -171,7 +171,7 @@ int main(void) {
         if (poison == 1) k->ex[(size_t)1 * stride] = __builtin_inff();
         if (poison == 2) k->ex[(size_t)(k->n_ex - 1) * stride] = -__builtin_inff();
         int b = refusals_change_nothing(k, why, sizeof why);
-        if (b && !where[0]) snprintf(where, sizeof where, "shape %d poison %d:%s", s, poison, why);
+        if (b && !where[0]) snprintf(where, sizeof where, "shape %d poison %d:%.100s", s, poison, why);
         bad += b; cases++;
       }
     }
