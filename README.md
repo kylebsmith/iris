@@ -196,18 +196,19 @@ the main loop.
 | `iris_train`, 50 demonstrations | laptop | 12,000 epochs, 52 ms | same |
 | `iris_train_elm`, 50 demonstrations | laptop | 8.5 µs | same |
 | `iris_knn_predict`, 256 demonstrations | laptop | 1.2 µs | same |
-| One prediction, 2-12-3 | ESP32-S3, 240 MHz | 14.9 µs, mean of 20,000 | starter kit, `device_torture` test 9, two boards; no log recorded yet |
-| `iris_train`, 4 demonstrations | ESP32-S3 | 595 ms | `device_torture` test 5; no log recorded yet |
-| `iris_train`, 8 to 20 demonstrations | ESP32-S3 | 2.7–3.0 s | same |
+| One prediction, 2-12-3 | ESP32-S3, 240 MHz | 14.95 µs (median of batches, empty loop subtracted); 99.9% of calls within 19.8 µs, worst 47 µs | `board_probe`, [board log](docs/board/2026-09-25-es3c28p.txt) |
+| One prediction, 6-16-8 / 12-32-8 | ESP32-S3 | 35.7 µs / 74.2 µs (medians) | same |
+| `iris_train`, 20 demonstrations of the reference task | ESP32-S3 | 18,000 epochs, 13.4 s | same |
+| `iris_train`, 10 / 50 demonstrations | ESP32-S3 | 10.6 s / 22.1 s | same |
+| One slice of 64 epochs, 20 demonstrations | ESP32-S3 | 48 ms | same |
+| `iris_train_elm`, 20 / 50 demonstrations | ESP32-S3 | 1.5 ms / 3.5 ms | same |
 
 "Laptop" is the development machine, an Apple M4 Max, with Apple clang `-O2`.
-The board figures were taken with iris 0.1.0. On the host, 0.2.0 trains and
-plays those recipes bit for bit as 0.1.0 did, but it has not itself been timed
-on the board. The prediction figure is a mean, not a worst case, and the
-training figures come from a recipe whose two inputs move together and which
-stops after 3,800 to 9,300 epochs, where the reference task of `tests/audit.c`
-takes 18,000 at 20 demonstrations. **Representative training time on the
-board is not yet measured.**
+The board figures are iris 0.2.0 on an ES3C28P (ESP32-S3 revision 2, 240 MHz,
+Arduino-ESP32 3.3.3, gcc 14.2, `-Os`), measured on 2026-09-25 by the starter kit's
+`board_probe` sketch; the [board log](docs/board/2026-09-25-es3c28p.txt) names the
+build. Training on the board is slow: a sketch that must keep drawing trains in
+slices (48 ms per 64 epochs), or uses the closed-form trainer.
 
 For audio, 14.9 µs against the 20.8 µs of one sample at 48 kHz is 1.4 times of
 margin: 72% of a core spent on playing alone. It is enough to run per sample and
@@ -326,21 +327,14 @@ every byte back.
   `iris_train` it reaches its threshold on 3–8% of clean sessions, and after
   the closed-form trainer on 7–13%; a take offset on one output is ranked
   first in 18 to 20 sessions of 20 after `iris_train`.
-- **Representative on-device training time is not yet measured**, and neither
-  is the closed-form trainer on the board. The board figures above have no
-  recorded log yet.
-- **The on-board determinism check has not been published.** The starter kit's
-  `device_torture` test 1 compares the board's result with the host hash
-  `0xB7FC47A0`, which `tests/starter_recipes.c` still reproduces; no run of it
-  on a board has been recorded.
-
-The board test plan closes the last two: `device_torture` run twice on each
-of two boards with its raw serial log kept; the determinism sketch; and a timing
-probe that reads the cycle counter with the empty loop subtracted, reports
-per-call percentiles and an interrupts-masked batch for three shapes, times
-every trainer on representative data, checks the golden hashes, the chip's
-division and square-root rounding and whether it flushes subnormal numbers to
-zero, and prints the clock, core, compiler and commit with every log.
+- **The board results come from one board.** On 2026-09-25 an ES3C28P
+  reproduced every host hash bit for bit: `determinism_check` (`0x203834ED`, and
+  the saved file's `0xD8666A69`), `device_torture` test 1 (`0xB7FC47A0`) and the
+  golden recipe of `tests/audit.c` (`0x6805FB0D`) in `board_probe`
+  ([board log](docs/board/2026-09-25-es3c28p.txt)). A second board has not been run.
+- **The ESP32-S3 does not flush subnormal numbers to zero** (measured by
+  `board_probe`). iris flushes its own decaying tails below `IRIS_TINY`, so
+  host and board agree either way.
 
 ## Next to the field
 

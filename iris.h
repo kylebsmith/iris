@@ -97,14 +97,13 @@
                about 31 ms; 50 demonstrations take 12,000 epochs and about
                52 ms. `sh build.sh audit` prints these in its training-cost
                table.
-     board     The only ESP32-S3 figures come from the starter kit's
-               device_torture sketch, run with iris 0.1.0 on two boards at
-               240 MHz, and no log of those runs is recorded yet. Test 5
-               timed iris_train at 595 ms for 4 demonstrations and 2.7-3.0 s
-               for 8 to 20, on data whose two inputs move together and whose
-               runs stop after 3,800 to 9,300 epochs. Data that needs 18,000
-               epochs has not been timed on the board, so representative
-               on-device training time is not yet measured.
+     board     Measured on an ES3C28P (ESP32-S3, 240 MHz) on 2026-09-25 by
+               the starter kit's board_probe sketch (log in
+               docs/board/2026-09-25-es3c28p.txt): iris_train takes 10.6 s
+               for 10 demonstrations of the reference task, 13.4 s for 20
+               (18,000 epochs) and 22.1 s for 50; one slice of 64 epochs at
+               20 demonstrations takes 48 ms; iris_train_elm takes 1.5 ms
+               for 20 and 3.5 ms for 50.
 
    A sketch that must keep drawing while it trains takes the same run in
    slices, iris_train_begin and iris_train_slice, which is bit-identical to
@@ -809,8 +808,8 @@ IRIS_API int iris_internal_isbad(float x) {
    weights smoothing's decay shrinks (PART 8), to zero keeps both decaying
    tails out of subnormal numbers, which some processors flush to zero in
    hardware and others compute slowly or exactly, so a tail cannot make a
-   host and a board disagree. Whether the ESP32-S3's floating-point unit flushes
-   subnormals has not been measured on the chip. 1e-30 is about eight powers
+   host and a board disagree. The ESP32-S3's floating-point unit does not flush
+   subnormals (measured by the starter kit's board_probe on 2026-09-25). 1e-30 is about eight powers
    of ten above the smallest normal float (about 1.2e-38), so every processor
    evaluates the comparison identically.                                     */
 #define IRIS_TINY 1e-30f
@@ -1207,10 +1206,10 @@ struct iris {
    does save the floating-point registers.
 
    TIMING, for the audio case. One prediction of a 2-12-3 instrument takes
-   14.9 microseconds on an ESP32-S3 at 240 MHz: the mean of 20,000 calls in
-   the starter kit's device_torture sketch, test 9, run with iris 0.1.0 on
-   two boards. No log of that run is recorded yet, and a mean is not a worst
-   case. Against the 20.8 microseconds of one audio sample at 48 kHz that is
+   14.95 microseconds on an ESP32-S3 at 240 MHz (the median over repeated
+   batches; 99.9% of single calls finish within 19.8 and the worst took 47),
+   measured by the starter kit's board_probe on 2026-09-25, log in
+   docs/board/2026-09-25-es3c28p.txt. Against the 20.8 microseconds of one audio sample at 48 kHz that is
    1.4 times of margin, 72% of a core spent on playing alone. At a control
    rate of 1,000 predictions a second it is 1.5% of a core. On the
    development laptop one prediction takes about 0.04 microseconds. Training

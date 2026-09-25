@@ -233,17 +233,17 @@ training-cost table `sh build.sh audit` prints:
 One prediction takes 0.036 µs; `iris_knn_predict` takes 0.30 µs at 64
 demonstrations and 1.2 µs at 256.
 
-On the ESP32-S3, the only figures come from the starter kit's `device_torture`
-sketch, run with iris 0.1.0 on two boards at 240 MHz; no log of those runs is
-recorded yet. Test 9: one prediction of a 2-12-3 instrument takes 14.9 µs, the
-mean of 20,000 calls (298,915 µs in total), with loop overhead of about 1–2%
-folded in and no worst case reported. Test 5: `iris_train` takes 595 ms at 4
-demonstrations and 2.7–3.0 s at 8 to 20, on a recipe whose two inputs are
-exactly collinear and one output constant, which stops after 3,823 to 9,343
-epochs. Data like the reference task of `tests/audit.c`, which takes 18,000
-epochs at 20 demonstrations, has not been timed on the board; nor has the
-closed-form trainer. No ratio
-between host and board timings is stable enough to scale one into the other.
+On the ESP32-S3 (an ES3C28P at 240 MHz, iris 0.2.0, measured on 2026-09-25 by
+the starter kit's `board_probe`; [log](board/2026-09-25-es3c28p.txt)): one
+prediction of a 2-12-3 instrument takes 14.95 µs, the median over repeated
+batches with the empty loop's 12 cycles subtracted; 99.9% of single calls
+finish within 19.8 µs and the worst took 47 µs. 6-16-8 takes 35.7 µs and
+12-32-8 74.2 µs. `iris_train` on the reference task takes 10.6 s at 10
+demonstrations, 13.4 s at 20 (18,000 epochs) and 22.1 s at 50; one slice of 64
+epochs at 20 demonstrations takes 48 ms; `iris_train_elm` takes 1.5 ms at 20 and
+3.5 ms at 50. `device_torture`'s test 5 recipe (inputs that move together,
+stopping after 3,823 to 9,343 epochs) takes 0.6 to 3.2 s. No ratio between host
+and board timings is stable enough to scale one into the other.
 
 Fit quality on the reference task of `tests/audit.c` (20 demonstrations, 2-12-3):
 600 epochs recall the demonstrations to a root-mean-square 0.0066; the plateau
@@ -268,8 +268,8 @@ These are load-bearing, not caveats.
    on sharp targets at 50 demonstrations, report `IRIS_TRAINING_DIVERGED`
    although they play as well as the healthy ones (a study whose program is
    not in this repository).
-5. **Hardware figures** are as scoped in section 6: no representative
-   training time on the board, and no recorded log for any board figure.
+5. **Hardware figures come from one board**: an ES3C28P measured on
+   2026-09-25 ([log](board/2026-09-25-es3c28p.txt)); a second board has not been run.
 6. **Recording order matters a little.** Recording the same demonstrations in
    a different order gives a bit-different instrument, because the shuffle
    works on positions: over 60 random orders the largest difference on the
