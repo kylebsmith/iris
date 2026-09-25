@@ -17,9 +17,10 @@
    BUT NOT EVERY TRAINER MOVES AS FAR. This program prints the mean absolute
    difference between seed 7 and seed 99 over a 101 x 101 grid of the gesture
    square, for both trainers: about 0.024 for iris_train and 0.155 for
-   iris_train_elm, six times more. Training to a plateau drives toward the
-   same surface whatever the seed, so the randomness gets washed out on the
-   way. The closed-form trainer (ELM) freezes its hidden layer instead of
+   iris_train_elm, six times more. Backpropagation trains every weight
+   toward the demonstrations, so it drives toward the same surface whatever
+   the seed, and the randomness gets washed out on the way. The closed-form
+   trainer (an extreme learning machine) freezes its hidden layer instead of
    training it, so a new seed really is a new instrument. If you want the
    reroll to mean something, reroll the closed-form trainer: iris_reseed,
    then iris_train_elm.

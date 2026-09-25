@@ -12,7 +12,7 @@
    ============================================================================ */
 
 #include "../iris.h"
-#include <math.h>     /* NAN only: a glitched sensor reading, for the last step */
+#include <math.h>     /* NAN, not-a-number: a glitched reading, for the last step */
 #include <stdio.h>
 
 static unsigned char mem[IRIS_ARENA(2, 12, 1, 16)];
@@ -60,7 +60,7 @@ int main(void) {
     int id = iris_record(k, bad, &any);
     int status = (int)iris_get_status(k);
     int count = iris_count(k);
-    printf("\n  NaN input -> record returns %d, status %d (IRIS_NAN_TRAPPED), still %d demonstrations\n",
-           id, status, count); }
+    printf("\n  not-a-number input -> record returns %d, status %d (IRIS_NAN_TRAPPED),"
+           " still %d demonstrations\n", id, status, count); }
   return 0;
 }

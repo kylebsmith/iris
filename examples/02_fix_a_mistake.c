@@ -19,7 +19,7 @@
    ============================================================================ */
 
 #include "../iris.h"
-#include <math.h>     /* NAN only: a glitched sensor reading */
+#include <math.h>     /* NAN, not-a-number: a glitched sensor reading */
 #include <stdio.h>
 
 static unsigned char memory[IRIS_ARENA(2, 12, 3, 64)];
