@@ -302,6 +302,25 @@ int main(void) {
           nonzero == 0 && touched == 0 && large == 0
           && k->in_hi[1] == k->in_lo[1] && iris_get_status(k) == IRIS_STATUS_OK, d); }
 
+  /* ---- ranges reach every finite demonstration ----------------------------
+     The ranges are the smallest and largest value each column takes, however
+     large: a search that started from a round number such as 1e30 would miss
+     demonstrations beyond it. Both signs, inputs and outputs, and the largest
+     finite float itself. */
+  { iris *k = iris_init(A, sizeof A, 2, 12, 2, 64, 1u);
+    float a[2] = { 2e30f, -3.4028235e38f }, b[2] = { 3e30f, -1e38f };
+    float oa[2] = { -3e30f, 1e38f }, ob[2] = { -2e30f, 3.4028235e38f };
+    iris_record(k, a, oa); iris_record(k, b, ob);
+    iris_fit_ranges(k);
+    const int in_ok = k->in_lo[0] == 2e30f && k->in_hi[0] == 3e30f
+                   && k->in_lo[1] == -3.4028235e38f && k->in_hi[1] == -1e38f;
+    const int out_ok = k->out_lo[0] == -3e30f && k->out_hi[0] == -2e30f
+                    && k->out_lo[1] == 1e38f && k->out_hi[1] == 3.4028235e38f;
+    snprintf(d, sizeof d, "inputs [%g, %g] [%g, %g], outputs [%g, %g] [%g, %g]",
+             (double)k->in_lo[0], (double)k->in_hi[0], (double)k->in_lo[1], (double)k->in_hi[1],
+             (double)k->out_lo[0], (double)k->out_hi[0], (double)k->out_lo[1], (double)k->out_hi[1]);
+    check("ranges reach demonstrations beyond 1e30", in_ok && out_ok, d); }
+
   /* ---- the rule's threshold, from both sides -----------------------------
      Still means a width of at most 1e-5 of the magnitude, or at most 1e-6.
      Just inside that must be ignored; twice as wide must count. */

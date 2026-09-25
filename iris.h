@@ -1485,15 +1485,16 @@ IRIS_API void iris_clear(iris *k) {
 
 /* The smallest and largest value that column c of the example store takes
    across the demonstrations (c counts the inputs first, then the outputs).
+   Called only with at least one demonstration.
 
-   The search starts from the largest finite float rather than from a big round
-   number, so every finite value takes part however large it is; a not-a-number
-   compares false with everything and never takes part. With no demonstrations
-   the answer is lo > hi, and no caller uses it. */
+   The search starts from the first demonstration's value, not from a big
+   round number standing in for "larger than anything", so every finite value
+   takes part however large it is (tests/playing.c records values beyond
+   1e30, and the largest float itself). */
 IRIS_API void iris_internal_span(const iris *k, int c, float *lo, float *hi) {
   const int stride = k->n_in + k->n_out;
-  float a = IRIS_FLT_MAX, b = -IRIS_FLT_MAX;
-  for (int r = 0; r < k->n_ex; ++r) {
+  float a = k->ex[c], b = a;
+  for (int r = 1; r < k->n_ex; ++r) {
     const float v = k->ex[(size_t)r * stride + c];
     if (v < a) a = v;
     if (v > b) b = v;
