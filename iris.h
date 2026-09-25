@@ -3268,7 +3268,10 @@ IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int k
      eventually forget it. */
   if (!k->fitted && k->n_ex > 0) iris_fit_ranges((iris *)k);
   const int NIn = k->n_in, NOut = k->n_out;
-  if (k->n_ex == 0) { for (int o = 0; o < NOut; ++o) out[o] = 0.0f; return; }
+  /* <= 0, not == 0: only then can the compiler see that kk below is at least
+     1, so the loop that fills bi[] runs; gcc-15 otherwise warns that bi may be
+     read uninitialised, in some translation units and not others. */
+  if (k->n_ex <= 0) { for (int o = 0; o < NOut; ++o) out[o] = 0.0f; return; }
   if (kk < 1) kk = 1;
   if (kk > IRIS_KNN_MAXK) kk = IRIS_KNN_MAXK;
   if (kk > k->n_ex) kk = k->n_ex;
