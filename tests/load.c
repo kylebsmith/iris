@@ -14,6 +14,8 @@
        is refused -- and every byte of the receiving arena, its status
        included, is the same afterwards. Boundary values that obey the rules
        are loaded, so no rule can pass by refusing everything;
+     - a file with the largest next_id leaves one identifier to hand out,
+       and the record after it refuses instead of overflowing;
      - a buffer at any alignment works;
      - a translation unit that shrank IRIS_MAX_IN refuses an instrument too
        big for it instead of overflowing its own stack;
@@ -616,6 +618,32 @@ static void unfitted_and_emptied(void) {
     free(f); drop(&a); drop(&b); }
 }
 
+/* The largest next_id a file may carry leaves exactly one identifier to hand
+   out. The record after that one must refuse rather than overflow next_id
+   (UndefinedBehaviorSanitizer reports the overflow), and the instrument, its
+   identifiers spent, no longer saves. */
+static void identifiers_run_out(void) {
+  char d[200];
+  box a = make(S2, 1234u);
+  demos(a.k, S2, 2, 0);
+  size_t n = 0; unsigned char *f = save(a.k, &n);
+  wr32(f, 36, 0x7FFFFFFEu); fixcrc(f, n);
+  box b = make(S2, 99u);
+  const int ok = iris_load(b.k, f, n);
+  const float in[2] = { 0.1f, 0.2f }, out[3] = { 0.3f, 0.4f, 0.5f };
+  const int last = iris_record(b.k, in, out);
+  const int count = iris_count(b.k);
+  const int none = iris_record(b.k, in, out);
+  unsigned char *g = (unsigned char *)xmalloc(iris_save_size(b.k));
+  const size_t saved = iris_save(b.k, g, iris_save_size(b.k));
+  snprintf(d, sizeof d, "load %d, last identifier %d, then %d (count %d -> %d, status %d), save %zu",
+           ok, last, none, count, iris_count(b.k), (int)iris_get_status(b.k), saved);
+  check("identifiers run out: the next record refuses",
+        ok && last == 0x7FFFFFFE && none == 0 && count == 3 && iris_count(b.k) == 3
+        && iris_get_status(b.k) == IRIS_STATUS_OK && saved == 0, d);
+  free(g); free(f); drop(&a); drop(&b);
+}
+
 static void save_side(void) {
   char d[200];
   box a = make(S2, 1234u);
@@ -781,6 +809,7 @@ int main(int argc, char **argv) {
   save_after_record();
   unfitted_and_emptied();
   after_load_at_rest();
+  identifiers_run_out();
   save_side();
   alignment();
   rules();

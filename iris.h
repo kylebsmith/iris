@@ -1057,6 +1057,9 @@ IRIS_API int iris_capacity(const iris *k) { if (!k) return 0; return k->cap; }
    Reads exactly n_in floats from `in` and n_out from `out`. */
 IRIS_API int iris_record(iris *k, const float *in, const float *out) { if (!k) return 0;
   if (k->n_ex >= k->cap) { k->status = IRIS_STORE_FULL; return 0; }
+  /* Identifiers are never reused, so they can run out: once next_id is the
+     largest int32_t, handing it out and adding one would overflow. */
+  if (k->next_id >= 0x7FFFFFFF) return 0;
 
 #ifndef IRIS_NO_GUARDS
   /* REFUSE A POISONED DEMONSTRATION AT THE DOOR. A NaN or Inf from a glitched
@@ -2793,8 +2796,10 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
        IRIS_MAX_IN (see the note above iris_shape_fits).
      - Unsigned throughout: a count with its top bit set is a large number
        that fails "at most the capacity", not a negative one that passes it.
-     - next_id stays below 2^31 - 1 so that iris_record, which hands it out
-       and adds one, never counts past the largest int32_t.
+     - next_id stays below 2^31 - 1, the largest int32_t, so a loaded
+       instrument has at least one identifier left to hand out. iris_record
+       hands out next_id and adds one, and refuses once next_id reaches the
+       largest int32_t, so the count never overflows.
      - A weight past IRIS_W_LIMIT is past the clamp backpropagation enforces
        (see the note at IRIS_W_LIMIT), and a unit driven that hard is
        saturated anyway.
