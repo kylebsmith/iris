@@ -86,7 +86,7 @@ extern "C"
 int iris_probe(void);
 int iris_probe(void) {
   iris_rng r;
-  float margin = 0.0f;
+  float margin = 0.0f, lo = 0.0f, hi = 0.0f, inv[NI];
   int i;
   size_t n;
   iris *k, *k2;
@@ -145,6 +145,11 @@ int iris_probe(void) {
   iris_knn_predict(k, in, out, 3);
   SINKF += out[1];
   SINKI += iris_classify_1nn(k, in, out);
+  iris_internal_span(k, 0, &lo, &hi);
+  iris_internal_neighbour_scale(k, inv);
+  SINKF += lo + hi + iris_internal_centre(k, 0)
+         + iris_internal_distance2(k, inv, xn, in);
+  SINKI += iris_internal_nearest(k, in);
   SINKU += (unsigned long)iris_save_size(k);
   n = iris_save(k, file, sizeof file);
   SINKU += iris_crc32(file, n);
