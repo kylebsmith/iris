@@ -23,7 +23,7 @@
 
      -ffreestanding        clang otherwise turns the loops that zero or copy
                            an array into C library calls: memset, memcpy,
-                           bzero.
+                           bzero and, on macOS, memset_pattern16.
      -fno-stack-protector  where stack protection is on by default (clang on
                            macOS), every function with an array otherwise
                            calls __stack_chk_fail.
@@ -33,7 +33,8 @@
 
    -fno-math-errno is not on the list: the square root is integer arithmetic
    (PART 1), so there is no sqrtf call for errno to need. tests/freestanding.sh
-   checks all of this, including that each flag is still needed.
+   checks all of this, and rebuilds without each flag to show what it still
+   keeps out.
 
    ON THE CHIP IT IS ACTUALLY FOR, THE LIST IS NOT EMPTY. With the ESP32-S3's
    own compiler (xtensa-esp32s3-elf-gcc, the flags above, -O0, -O2 or -Os):
@@ -242,7 +243,8 @@
                  -std=gnu17 -mcpu=cortex-a76, the Raspberry Pi 5's core; the
                  golden hash in tests/audit.c holds there (measured).
         1, 2     float carried as double, or as the 80-bit x87 format. 32-bit
-                 x86 without SSE reports 2, and there the golden hash and
+                 x86 doing its float arithmetic on the x87 unit
+                 (-mfpmath=387) reports 2, and there the golden hash and
                  every other instrument hash measured come out different,
                  with no diagnostic (measured: clang 22
                  --target=i686-linux-gnu -mno-sse -mfpmath=387).
@@ -595,8 +597,9 @@ IRIS_API float iris_sigmoid(float x) { return 0.5f * (iris_tanh(0.5f * x) + 1.0f
 
 /* THE SQUARE ROOT, in integers, correctly rounded.
 
-   Four places take a square root: iris_reseed (the starting weight scale,
-   1/sqrt(inputs)), iris_novelty (the distance it reports), and the instant
+   Four places take a square root: iris_reseed (the starting weight scales,
+   1/sqrt(inputs) and 1/sqrt(hidden units)), iris_novelty (the distance it
+   reports, and the sqrt(inputs) it divides that by), and the instant
    trainer (its gain, 2/sqrt(inputs), and the diagonal of every Cholesky
    step). A compiler's square root is one instruction on a laptop, but on the
    ESP32-S3 it is a call to the C library's sqrtf, and on GCC and Linux clang
@@ -633,8 +636,9 @@ IRIS_API float iris_sigmoid(float x) { return 0.5f * (iris_tanh(0.5f * x) + 1.0f
 
    Special values follow IEEE 754: sqrt(+0) = +0, sqrt(-0) = -0, sqrt(+infinity)
    = +infinity, a NaN comes back as the same NaN made quiet, and any other
-   negative input gives NaN. None of the four callers passes a negative
-   number.
+   negative input gives NaN. None of the four places passes a negative
+   number: the Cholesky step checks that its diagonal is positive first, and
+   the others take the root of a count or of a sum of squares.
 
    THE PRICE IS SPEED: about 45 nanoseconds a call on an Apple M4, where the
    instruction takes about 5. That adds about 45 nanoseconds to iris_novelty,

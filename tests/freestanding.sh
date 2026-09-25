@@ -52,6 +52,9 @@
 #                      and memcpy, which GCC for this processor uses to copy
 #                      the constant five-entry table in iris_suggest_smoothing
 #                      onto the stack.
+# Section 5 requires exactly these lists, the ones the masthead of iris.h
+# states, so a symbol that appears or disappears fails here until the
+# masthead and EVERY below are brought up to date together.
 # sqrtf is not on the list: the square root is in the header.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -289,8 +292,9 @@ if [ -z "$XT" ] || [ -z "$XNM" ]; then
   echo "  SKIP  no ESP32-S3 toolchain installed (install the esp32 Arduino core)"
 else
   XF="-std=c99 -ffreestanding -fno-stack-protector -fno-tree-loop-distribute-patterns -mlongcalls"
-  # libgcc's floating-point routines: arithmetic, conversions, comparisons
-  LIBGCC='^__((add|sub|mul|div|neg)(sf|df)3|(extend|trunc)(sf|df)(df|sf)2|float(un)?(si|di)(sf|df)|fix(uns)?(sf|df)(si|di)|(eq|ne|lt|le|gt|ge|unord|cmp)(sf|df)2)$'
+  # every function: the list the masthead of iris.h states, in nm's order
+  EVERY=$(printf '%s\n' __divsf3 __adddf3 __divdf3 __extendsfdf2 __floatsidf \
+    __muldf3 __subdf3 __truncdfsf2 memcpy | sort -u | tr '\n' ' ' | sed 's/ *$//')
   for O in -O0 -O2 -Os; do
     if ! "$XT" $XF $O -I"$ROOT" -c "$T/play.c" -o "$T/x.o" 2> "$T/err"; then
       echo "  FAIL  playing path $O did not compile: $(head -1 "$T/err")"; fail=1; continue
@@ -304,15 +308,9 @@ else
         echo "  FAIL  every function $O did not compile: $(head -1 "$T/err")"; fail=1; continue
       fi
       U=$("$XNM" -u "$T/x.o" | awk '{print $NF}' | sort -u | tr '\n' ' ' | sed 's/ *$//')
-      other=""
-      for s in $U; do
-        echo "$s" | grep -Eq "$LIBGCC" && continue
-        [ "$s" = memcpy ] && continue
-        other="$other $s"
-      done
       [ $api = every ] && label="every definition" || label="every function  "
-      if [ -z "$other" ]; then printf '  PASS  %s %-4s %s\n' "$label" "$O" "$U"
-      else printf '  FAIL  %s %-4s not libgcc:%s\n' "$label" "$O" "$other"; fail=1; fi
+      if [ "$U" = "$EVERY" ]; then printf '  PASS  %s %-4s %s\n' "$label" "$O" "$U"
+      else printf '  FAIL  %s %-4s want the masthead'"'"'s list, got: %s\n' "$label" "$O" "$U"; fail=1; fi
     done
   done
   "$XT" $(echo "$XF" | sed 's/-fno-tree-loop-distribute-patterns//') -Os -I"$ROOT" \
