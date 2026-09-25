@@ -7,14 +7,15 @@ abstract: >-
   between them filled in. It is a single C99 header with no dependencies, no
   dynamic allocation and no build system, and it trains on the device rather
   than on a host computer. Behaviour is bit-pinned across compilers and
-  optimisation levels so that a saved instrument plays the same way twice.
+  optimisation levels, and a saved instrument, in a checksummed file format
+  that later releases keep reading, plays the same way in every later release
+  with the same major version.
 type: software
 authors:
   - given-names: Kyle
     family-names: Smith
     email: kyle@jefflisa.com
-version: 0.1.0
-date-released: "2026-09-01"
+version: 0.2.0
 license: BSD-3-Clause
 repository-code: "https://github.com/kylebsmith/iris"
 keywords:

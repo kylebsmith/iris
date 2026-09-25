@@ -2,200 +2,415 @@
    Copyright (c) 2026 Kyle Smith */
 /* ============================================================================
    iris.h  —  interactive machine learning for handmade instruments
-   v0.1.0 · single file · C99 · no dependencies · no malloc · no libc
+   v0.2.0 · one file · C99 · no dependencies · no allocation · no C library
 
    You show it a handful of examples of "when I do THIS, it sounds like THAT".
    It learns a mapping and fills in everything in between.
 
    This is the whole brain of the instrument. The same file compiles for a
-   laptop, a web browser, and an ESP32-S3, because it contains no hardware,
-   no operating system, and no library calls. It is pure arithmetic on
-   memory you hand it.
-
-   THE ZERO-DEPENDENCY CLAIM, STATED EXACTLY. A translation unit that calls
-   every public function, compiled with -std=c99 -ffreestanding
-   -fno-stack-protector (GCC also -fno-tree-loop-distribute-patterns) at -O0
-   to -Os, as C or as C++, has ZERO undefined symbols and links with
-   -nostdlib -static and no C library at all: Apple clang, Homebrew clang 22
-   and gcc-15 on a 64-bit ARM Mac, and Debian's gcc 14 and clang 19 on 64-bit
-   ARM Linux. None of the flags changes an output bit. Each stops the
-   COMPILER reaching for the C library on its own account:
-
-     -ffreestanding        clang otherwise turns the loops that zero or copy
-                           an array into C library calls: memset, memcpy,
-                           bzero and, on macOS, memset_pattern16.
-     -fno-stack-protector  where stack protection is on by default (clang on
-                           macOS), every function with an array otherwise
-                           calls __stack_chk_fail.
-     -fno-tree-loop-distribute-patterns   GCC turns the same loops into
-                           memset, memcpy and memmove calls even under
-                           -ffreestanding.
-
-   -fno-math-errno is not on the list: the square root is integer arithmetic
-   (PART 1), so there is no sqrtf call for errno to need. tests/freestanding.sh
-   checks all of this, and rebuilds without each flag to show what it still
-   keeps out.
-
-   ON THE CHIP IT IS ACTUALLY FOR, THE LIST IS NOT EMPTY. With the ESP32-S3's
-   own compiler (xtensa-esp32s3-elf-gcc, the flags above, -O0, -O2 or -Os):
-
-     the playing path        __divsf3
-     + iris_loo_error        + __adddf3 __divdf3 __extendsfdf2 __floatsidf
-                               __muldf3 __subdf3 __truncdfsf2, and __ledf2
-                               at -O0
-     + iris_suggest_smoothing  + __ledf2, a comparison of doubles in its
-                               scoring
-     + iris_train_elm        adds nothing
-
-   __divsf3 is single-precision DIVISION: the S3's floating-point unit has
-   divide-step instructions but no single divide instruction, so every float
-   division is a routine in libgcc, the compiler's own support library, as
-   are the double-precision routines. None of it is a C library function,
-   none of it is a call this source writes, and all of it is present on every
-   Arduino build anyway; tests/freestanding.sh checks this list too.
-
-   THE DOUBLES ARE REAL AND THEY ARE ONE SWEEP. The double-precision
-   routines above are 64-bit soft float, which rule 3 below says this library
-   does not use. iris_loo_error and iris_suggest_smoothing share one
-   leave-one-out sweep (PART 8), which accumulates its error sum in double on
-   purpose and, for iris_suggest_smoothing, divides each miss by an output's
-   range held in double. That is a deliberate numerical choice in a
-   diagnostic that is not on the playing path, and it is the ONLY exception
-   -- the playing path has no doubles anywhere. Rule 3 is restated
-   below with that exception named, because a rule with a silent exception is
-   worse than no rule.
-
-   THE THREE RULES THIS FILE OBEYS
-     1. No malloc.  You give it one block of memory; it never asks for more.
-        You always know exactly how much RAM the instrument uses.
-     2. No libc.    No printf, no math.h. Everything it needs is in here.
-     3. No doubles ON THE PLAYING PATH. The ESP32-S3 does 32-bit float in
-        hardware and 64-bit float in slow software emulation. The one
-        exception is iris_loo_error (and iris_suggest_smoothing, which shares
-        its sweep), a diagnostic that accumulates in double deliberately;
-        measured above.
+   laptop, a web browser and an ESP32-S3 microcontroller, because it contains
+   no hardware, no operating system and no library calls. It is arithmetic on
+   memory you hand it. It is also meant to be read: the PARTS below explain
+   the mathematics as they implement it, and the words it uses are defined at
+   the end of this block.
 
    USAGE
      static unsigned char mem[IRIS_ARENA(2, 12, 3, 64)];
      iris *k = iris_init(mem, sizeof mem, 2, 12, 3, 64, 12345);
 
      iris_record(k, gesture, sound);     // do this a few times
-     iris_train(k);                      // trains until the error plateaus
+     iris_train(k);                      // fit them, starting from the seed
      iris_predict(k, gesture, sound);    // now play
 
-   THE WORDS THIS FILE USES, defined once, here, before it uses them.
-   CONTRIBUTING.md asks for no bare acronyms and the audience includes musicians and first-year
-   students, so:
+   A bad take is repaired the same way: iris_delete_id, then iris_train
+   again. iris_train starts over from the instrument's seed every time, so a
+   deleted take leaves nothing behind in the weights.
 
-     EPOCH        one pass over every demonstration you have recorded. Training
-                  is thousands of these. "9,000 epochs" means the network saw
-                  each of your takes 9,000 times.
-     ELM          extreme learning machine. A second, instant way to train:
-                  freeze the random middle layer and solve the output layer
-                  exactly, in one step, instead of nudging it thousands of
-                  times. PART 8d.
-     RIDGE        a small number added down the diagonal of a matrix before
-                  solving it, which stops the solve failing when two
-                  demonstrations are nearly identical. PART 8d.
-     SGD          stochastic gradient descent — nudging the weights after each
-                  single demonstration rather than after all of them.
-     ULP          unit in the last place: the smallest change you can make to a
-                  floating-point number. "1 ulp" means one step, the smallest
-                  difference two floats can have.
+   THE THREE RULES THIS FILE OBEYS
+     1. No allocation. You give it one block of memory, the arena, and it
+        never asks for more, so you know exactly how much memory the
+        instrument uses before the program runs.
+     2. No C library. No printf, no math.h: the square root, the
+        nonlinearity and the checksum are written out in this file.
+     3. Single precision on the playing path. The ESP32-S3 does 32-bit
+        float arithmetic in hardware and 64-bit double arithmetic in slow
+        software. The one place that uses doubles is the leave-one-out sweep
+        shared by iris_loo_error and iris_suggest_smoothing (PART 8), a
+        diagnostic that never runs while you play, which adds up its squared
+        misses in double on purpose so that the small ones keep their
+        precision.
+
+   NO DEPENDENCIES, EXACTLY. The file includes <stddef.h> and <stdint.h>,
+   which define types and nothing else. A translation unit that calls every
+   function in it, compiled with
+
+       -std=c99 -ffreestanding -fno-stack-protector              (clang)
+       -std=c99 -ffreestanding -fno-stack-protector
+                -fno-tree-loop-distribute-patterns                (GCC)
+
+   at -O0, -O1, -O2, -O3 and -Os, as C and as C++, has no undefined symbol
+   and links with -nostdlib -static, with no C library at all: Apple clang,
+   Homebrew clang 22 and gcc-15 on a 64-bit ARM Mac, and Debian's gcc 14 and
+   clang 19 on 64-bit ARM Linux (as C). No flag changes an output bit. Each
+   stops the COMPILER, not this code, from reaching for the C library:
+
+     -ffreestanding        without it clang turns the loops that zero or
+                           copy an array into calls to memset, memcpy, bzero
+                           and, on macOS, memset_pattern16.
+     -fno-stack-protector  where stack protection is on by default (clang on
+                           macOS), every function with an array calls
+                           __stack_chk_fail.
+     -fno-tree-loop-distribute-patterns   GCC turns the same loops into
+                           memset, memcpy and memmove calls even under
+                           -ffreestanding.
+
+   tests/freestanding.sh checks all of this, and rebuilds without each flag
+   to show what that flag keeps out.
+
+   ON THE ESP32-S3 THE LIST IS NOT EMPTY, AND EVERY ENTRY IS THE COMPILER'S.
+   With the chip's own compiler (xtensa-esp32s3-elf-gcc, the GCC flags above,
+   at -O0, -O2 and -Os):
+
+     the playing path     __divsf3 and nothing else. That path is iris_init,
+                          iris_record, iris_train, iris_predict, iris_novelty,
+                          the neighbour functions, the deletes and iris_clear.
+     the whole file       also __adddf3 __divdf3 __extendsfdf2 __floatsidf
+                          __ledf2 __muldf3 __subdf3 __truncdfsf2, the
+                          double-precision routines of the leave-one-out
+                          sweep (rule 3).
+
+   __divsf3 is single-precision division. The chip's floating-point unit has
+   divide-step instructions but no single instruction that divides two
+   floats, so every float division is a call to this routine in libgcc, the
+   compiler's own support library (an Arduino build calls a copy in the
+   chip's read-only memory). None of these is a C library function, none is
+   a call this source writes, and all of them are in every Arduino build
+   anyway. tests/freestanding.sh requires exactly this list.
+
+   HOW LONG TRAINING TAKES, AND WHERE EACH NUMBER COMES FROM. iris_train runs
+   until the error stops improving, under a ceiling (PART 8). The epochs it
+   takes depend on the data:
+
+     host      On the development laptop (an Apple M4 Max, Apple clang -O2),
+               20 demonstrations of the reference task in tests/audit.c
+               (2 inputs, 12 hidden units, 3 outputs) take 18,000 epochs and
+               about 31 ms; 50 demonstrations take 12,000 epochs and about
+               52 ms. `sh build.sh audit` prints these in its training-cost
+               table.
+     board     The only ESP32-S3 figures come from the starter kit's
+               device_torture sketch, run with iris 0.1.0 on two boards at
+               240 MHz, and no log of those runs is recorded yet. Test 5
+               timed iris_train at 595 ms for 4 demonstrations and 2.7-3.0 s
+               for 8 to 20, on data whose two inputs move together and whose
+               runs stop after 3,800 to 9,300 epochs. Data that needs 18,000
+               epochs has not been timed on the board, so representative
+               on-device training time is not yet measured.
+
+   A sketch that must keep drawing while it trains takes the same run in
+   slices, iris_train_begin and iris_train_slice, which is bit-identical to
+   iris_train.
+
+   iris_continue(k, n) and iris_continue_to_plateau carry on from the
+   weights the instrument already holds: the warm trainers. iris_continue is
+   the fixed-epoch update of Weka's MultilayerPerceptron, the network
+   Wekinator ships, and tests/audit.c pins its output to the bit. Read their
+   hazard in PART 8 before using either.
+
+   THE WORDS THIS FILE USES, defined once, here.
+
+     ACTIVATION   what a unit of the network outputs after its squashing
+                  function; also used for the squashing function itself.
+     ARENA        the one block of memory you give iris_init. Everything the
+                  instrument knows lives inside it; IRIS_ARENA computes its
+                  size.
+     BACKPROPAGATION  the training method of PART 8: run a demonstration
+                  forward, measure the miss, and work backwards to how much
+                  each weight contributed to it.
+     BINARY32, BINARY64  the 32-bit and 64-bit floating-point formats of
+                  IEEE 754, the floating-point standard of the Institute of
+                  Electrical and Electronics Engineers, which every processor
+                  iris targets follows. C calls them float and double.
+     BIT-IDENTICAL  equal in every bit, not merely close.
+     C99, ISO C   the 1999 edition of the C standard, which this file is
+                  written to; "ISO C" means a compiler mode that follows the
+                  standard without GNU extensions (-std=c99, not -std=gnu99).
      CHOLESKY     a standard, fast way to solve a symmetric system of linear
-                  equations. Used once, in the ELM path.
-     NORMAL MATRIX  the square matrix that least-squares fitting produces and
-                  Cholesky then solves.
-     ODR          the one-definition rule: C and C++ require that a thing is
+                  equations, by factoring its matrix into a triangular matrix
+                  times that triangle's mirror image. Used once, in PART 8d.
+     CLAMP        hold a value inside limits: below the lower limit it becomes
+                  the lower limit, above the upper it becomes the upper.
+     CLANG, GCC   the two C compiler families the tests use; GCC is the GNU
+                  Compiler Collection, and "GNU mode" means its -std=gnu...
+                  settings, which the Arduino build uses. The ESP32-S3,
+                  Cortex-M and AVR toolchains are GCC. Apple clang is the
+                  clang that ships with macOS.
+     CRC-32       a cyclic redundancy check: a 32-bit checksum over a saved
+                  file, which catches accidental corruption but not
+                  deliberate editing. PART 9.
+     DEMONSTRATION  one recorded pair: these sensor readings go with those
+                  output values. Also called an example or a take.
+     ELM          extreme learning machine, the closed-form trainer: the
+                  hidden layer keeps its random starting weights and only the
+                  output layer is solved, exactly, in one step. PART 8d.
+     EPOCH        one pass over every demonstration you have recorded.
+                  Training is thousands of these: "9,000 epochs" means the
+                  network saw each of your takes 9,000 times.
+     ERROR        how far the network's outputs are from the demonstrated
+                  ones. MEAN SQUARED ERROR is the average of the squared
+                  misses; ROOT-MEAN-SQUARE error is its square root, in the
+                  units of the miss. Training errors in this file are in the
+                  network's own output units, where each output's
+                  demonstrated range spans 0.1 to 0.9 (PART 5).
+     FLOAT        a number stored in binary32: a sign, an 8-bit exponent and
+                  24 significant bits, about seven significant decimal digits.
+     FNV-1a       the Fowler-Noll-Vo hash, a simple byte-by-byte hash. The
+                  tests use it to reduce an instrument to one 32-bit number.
+     FUSED MULTIPLY-ADD  one instruction that computes a*b + c with a single
+                  rounding instead of two. It changes the last bit of a
+                  result, so this file forbids it in its own code (the
+                  determinism contract below). CONTRACTION is the compiler
+                  turning a*b + c into one.
+     GEOMETRIC MEAN  the average of a set of ratios taken by multiplying
+                  them and taking the root, so that twice as good and twice
+                  as bad cancel. The comparisons below that give one average
+                  ratios of errors this way.
+     GOLDEN HASH  the FNV-1a hash of the bits a fixed recipe produces,
+                  compared in the tests, so any change to the arithmetic
+                  fails a check. tests/audit.c pins 0x6805FB0D.
+     GRADIENT     for each weight, how much the error would change if that
+                  weight moved a little. Training steps every weight against
+                  its gradient, which is downhill (PART 8).
+     HELD-OUT ERROR  the error at points the instrument was not trained on,
+                  measured against the target a test knows is true: how well
+                  it fills the gaps between your takes, which is what you
+                  play. Compare RECALL.
+     HIDDEN LAYER  the middle layer of the network, between the inputs and
+                  the outputs (PART 6); its units are HIDDEN UNITS.
+     IDE          integrated development environment: the Arduino IDE is the
+                  program most students write and upload sketches with.
+     k-NN, 1-NN   k-nearest-neighbour: answer a gesture with a blend of the
+                  k stored demonstrations nearest to it. 1-nearest-neighbour
+                  (k = 1) returns the single nearest one. PART 10.
+     LEAVE-ONE-OUT  hide one demonstration, train on the rest, see how far
+                  off the hidden one you land; repeat for each and average.
+     LEARNING RATE, MOMENTUM  how big each training step is, and how much of
+                  the previous step it carries on with (PART 8). Internal:
+                  every instrument trains with 0.10 and 0.85.
+     LOGIT        the inverse of the sigmoid: the sum a unit must reach for its
+                  sigmoid to output a given value (PART 8d solves in it).
+     MLP          multilayer perceptron: the network of PARTS 6 and 8, here
+                  with one hidden layer.
+     NIME         the International Conference on New Interfaces for Musical
+                  Expression. "Fiebrink and Sonami, NIME 2020" is Rebecca
+                  Fiebrink and Laetitia Sonami, "Reflections on Eight Years of
+                  Instrument Creation with Machine Learning", its 2020
+                  proceedings, pages 237-242.
+     NaN          not-a-number: the value a float takes after 0/0 or
+                  infinity minus infinity. Every comparison with it is false
+                  and any arithmetic with it gives NaN again, so one of them
+                  spreads through everything it touches. The comments spell
+                  it out as not-a-number.
+     NORMAL MATRIX  the square matrix that least-squares fitting produces
+                  and Cholesky then solves.
+     NORMALISED   put on a fixed scale: every input onto -1..+1 across its
+                  demonstrated range, every output onto 0.1..0.9 (PART 5).
+     ODR          the one-definition rule: C and C++ require a thing to be
                   defined identically everywhere it appears.
+     PLATEAU      the stretch of a training run where the error has stopped
+                  falling by much; iris_train stops at one unless its error
+                  floor or its ceiling stops it first (PART 8).
+     PRE-ACTIVATION  the weighted sum a unit computes before its squashing
+                  function is applied.
+     RECALL       how closely a trained instrument plays back its own
+                  demonstrations: the error at the demonstrated points.
+                  Good recall with a poor HELD-OUT ERROR means the network
+                  has fitted the noise in the takes rather than the mapping.
+     RIDGE        a small number added down the diagonal of the normal matrix
+                  before solving it, which stops the solve failing when two
+                  demonstrations nearly repeat and pulls the answer toward
+                  smaller weights. PART 8d.
+     SANITIZER    compiler instrumentation that stops a program at a fault:
+                  AddressSanitizer at an out-of-bounds memory access,
+                  UndefinedBehaviorSanitizer at an operation C leaves
+                  undefined (a misaligned access, a signed overflow).
+     SATURATE     a squashing function saturates when its input is so far
+                  from zero that its output sits at, or nearly at, its limit,
+                  where a small change to the input no longer moves it.
+     SEED         the number the random starting weights are drawn from. The
+                  same seed always gives the same weights; a new seed is a
+                  reroll. A seed of 0 is taken as 1.
+     SIGMOID, TANH  the two S-shaped squashing functions (PART 1): tanh runs
+                  from -1 to +1 and the sigmoid from 0 to 1.
+     STOCHASTIC GRADIENT DESCENT  nudging the weights after each single
+                  demonstration, visited in a shuffled order, rather than
+                  once after all of them. It is how PART 8 trains.
+     SUBNORMAL    a float so close to zero that the format gives up
+                  precision to represent it (also called denormal). Some
+                  processors flush them to zero in hardware.
+     TRANSLATION UNIT  one .c file together with everything it includes.
+     ULP          unit in the last place: the gap between a float and the
+                  next one. "1 ulp" is the smallest change a float can make.
+     WEIGHT, BIAS  the numbers the network learns. A weight scales one
+                  connection; a bias shifts a unit's sum whatever comes in.
+     WEKA, WEKINATOR  Weka is a Java machine-learning toolkit; Wekinator,
+                  Rebecca Fiebrink's tool for building instruments from
+                  demonstrations, trains Weka's MultilayerPerceptron and
+                  nearest-neighbour classifier. iris rebuilds that loop for
+                  boards with no operating system.
 
-   ON TRAINING TIME. iris_train runs until the training error stops
-   improving, with a hard ceiling — typically 9,000-18,000 epochs, which is
-   ~25-45 ms on a laptop and ~1-4 s on an ESP32-S3 at 20-50 examples. That is
-   twenty times the old fixed 600-epoch recommendation and it buys a 5.9x
-   better recall of your own demonstrations; the table is in PART 8. If you
-   need the UI to stay alive across those seconds, take the same run in
-   slices: iris_train_begin / iris_train_slice / iris_train_progress, which is
-   bit-identical to the blocking call.
-
-   iris_continue(k, n) runs n more epochs from the current weights: the
-   fixed-epoch backprop that Wekinator's Weka MultilayerPerceptron does, and
-   the audit pins its output to the bit. It and iris_continue_to_plateau are
-   the warm trainers; read their hazard in PART 8 before using either.
-
+   The hardware named in comments: Arduino, the family of microcontroller
+   boards (and the IDE) most students start with; the ESP32 family and the
+   ESP32-S3, the Espressif microcontroller the starter kit uses, with an
+   Xtensa LX7 processor core; AVR, the 8-bit processor of the Arduino Uno and
+   Mega; RP2040 and STM32, other 32-bit microcontrollers; ARM, the processor
+   family of phones, Apple-silicon Macs and the Raspberry Pi, whose
+   Cortex-M cores are its microcontrollers; x86 and x86-64, the processors of
+   most other laptops, and x87, the old floating-point unit of 32-bit x86;
+   RISC-V and PowerPC, two more processor families; and WebAssembly, the
+   portable instruction format web browsers run.
    ============================================================================ */
 
 #ifndef IRIS_H
 #define IRIS_H
 
 /* ============================================================================
-   THE WHOLE INTERFACE, ON ONE SCREEN
+   THE WHOLE INTERFACE
 
-   Eleven functions. Everything else in this file is detail you can reach for
-   later. `k` is the instrument. `in` and `out` are plain float arrays you own.
+   Forty-one functions, three types, and the macros listed at the end. `k` is
+   the instrument. `in` and `out` are plain float arrays you own: `in` holds
+   n_in floats and `out` n_out, and nothing checks their length, so an array
+   shorter than the instrument's shape is read or written past its end.
+   Anything named iris_internal_ is part of how the file works, not of what
+   it promises, and can change in any release.
 
-     iris *iris_init(mem, sizeof mem, n_in, n_hid, n_out, cap, seed)
-         Hands back an instrument built inside YOUR memory. The four numbers
-         are: how many sensor values come in, how wide the hidden layer is
-         (12 is a good answer; 8 is the minimum), how many things you control,
-         and how many demonstrations you can store. They must match the four
-         you gave IRIS_ARENA. Returns 0 if they do not.
+   LIFECYCLE
+     size_t   iris_size(n_in, n_hid, n_out, cap)   arena bytes for a shape; 0
+                                                    if the shape is refused
+     iris    *iris_init(mem, bytes, n_in, n_hid, n_out, cap, seed)
+                                                    build an instrument in your
+                                                    memory; 0 if refused
+     void     iris_reseed(k, seed)                  new random weights from a
+                                                    new seed: the reroll
+     uint32_t iris_seed(k)                          the seed in use
 
-     int   iris_record(k, in, out)     in: n_in floats     out: n_out floats
-         Stores one demonstration: this gesture goes with that sound.
-         Returns its identifier (1 or higher). Returns 0 if it refused.
+     The four numbers are how many sensor values come in, how wide the
+     hidden layer is (12 is a good answer, 8 the minimum), how many values
+     go out, and how many demonstrations can be stored. They must match the
+     four you gave IRIS_ARENA.
 
-     int   iris_train(k)
-         Fits the demonstrations you have now, from a defined start.
-         Returns 1, or 0 if it refused. How WELL it fits is a separate
-         question: iris_last_error(k).
+   DEMONSTRATIONS
+     int  iris_record(k, in, out)         store one; its identifier (1 or
+                                          more), or 0 if refused
+     int  iris_count(k)                   how many are stored
+     int  iris_capacity(k)                how many can be
+     int  iris_get(k, idx, in, out)       copy one out; its identifier, or 0
+     int  iris_index_of(k, id)            position of an identifier, or -1
+     int  iris_id_at(k, idx)              identifier at a position, or -1
+     int  iris_delete_id(k, id)           delete by identifier; 1, or 0
+     int  iris_delete_index(k, idx)       delete by position; 1, or 0
+     int  iris_delete_last(k)             delete the newest; 1, or 0
+     int  iris_delete_nearest(k, in)      delete the one nearest this
+                                          reading; 1, or 0
+     void iris_clear(k)                   delete them all
 
-     int   iris_is_trained(k)          did the last fit actually happen?
-         1 if this instrument is fitted, 0 if it is not. Correct after EVERY
-         trainer in this file -- which matters, because `if (iris_train_elm(...))`
-         is FALSE on its best outcome and `if (iris_continue(...))` is TRUE
-         on refusal. See "HOW EVERY FUNCTION REPORTS FAILURE" for the
-         measured table. If you only ever ask one question about training,
-         ask this one.
+   TRAINING
+     int   iris_train(k)                  fit the demonstrations, starting
+                                          from the seed; 1, or 0 if refused.
+                                          THE ONE TO CALL.
+     int   iris_train_begin(k, ceiling)   the same run, in slices: start it
+     int   iris_train_slice(k, epochs)    run up to `epochs` more; 1 while
+                                          there is more to do
+     float iris_train_progress(k)         0.0 to 1.0, never ahead of the truth
+     int   iris_train_busy(k)             1 while a sliced run is going
+     int   iris_train_epochs_done(k)      epochs the last run actually did
+     int   iris_is_trained(k)             1 if the fit matches the stored
+                                          demonstrations
+     float iris_last_error(k)             the training error of the fit
+     void  iris_set_smoothing(k, amount)  0 sticks to the demonstrations, 1
+                                          smooths confidently between them
+     float iris_get_smoothing(k)
 
-     void  iris_predict(k, in, out)    READS n_in, WRITES n_out floats
-         The playing call. It writes exactly n_out floats into `out`; if your
-         array is shorter than that, it writes past the end and nothing warns
-         you. This is the one thing to get right.
+   TRAINING, ADVANCED: THE WARM TRAINERS (read their hazard in PART 8)
+     float iris_continue(k, epochs)       more epochs from the current
+                                          weights; the error, or -1
+     float iris_continue_to_plateau(k, ceiling, cb, user)
+                                          the same, until the error stops
+                                          improving; the error, or -1
 
-     int   iris_count(k)               how many demonstrations are stored
-     int   iris_delete_id(k, id)       remove one, by the identifier above
-     int   iris_worst_example_id(k, m) which demonstration fights the others
-     iris_status iris_get_status(k)    is the INSTRUMENT unwell? 0 is healthy
-     size_t iris_save(k, buf, cap)     bytes written, or 0
-     int   iris_load(k, buf, n)        1, or 0
+   TRAINING, CLOSED FORM
+     int   iris_train_elm(k, lam0, scratch, bytes)
+                                          solve the output layer in one step;
+                                          ridge doublings used (0 is best), or
+                                          -1 if refused
 
-   FAILURE, in two rules and no exceptions:
+   PLAYING
+     void  iris_predict(k, in, out)       THE PLAYING CALL: the network's
+                                          answer
+     void  iris_knn_predict(k, in, out, kk)  a blend of the kk nearest
+                                          demonstrations
+     int   iris_classify_1nn(k, in, out)  the nearest demonstration's outputs
+                                          exactly; its identifier, or -1
+     float iris_novelty(k, in)            0 on a demonstration, rising to 1
+                                          away from them
+
+   DIAGNOSTICS
+     iris_status iris_get_status(k)       is the INSTRUMENT unwell? 0 is
+                                          healthy
+     float iris_example_stress(k, idx)    how hard one demonstration fought
+                                          the others; 1.0 is ordinary
+     int   iris_worst_example(k, margin)  position of the one that fought
+                                          hardest, or -1
+     int   iris_worst_example_id(k, margin)  its identifier, or -1
+     float iris_loo_error(k, epochs)      a leave-one-out held-out error, or -1
+     float iris_suggest_smoothing(k, scratch, bytes)
+                                          a smoothing value to audition, or -1
+
+   PERSISTENCE
+     size_t iris_save_size(k)             exactly the bytes iris_save writes
+     size_t iris_save(k, buf, cap)        bytes written, or 0
+     int    iris_load(k, buf, bytes)      1, or 0 with k untouched
+
+   TYPES: iris (the instrument), iris_status (what iris_get_status returns),
+   iris_progress_fn (the callback iris_continue_to_plateau calls).
+
+   MACROS: IRIS_ARENA(n_in, n_hid, n_out, cap), the arena size at compile
+   time; IRIS_ELM_SCRATCH(n_hid, n_out), the closed-form trainer's scratch;
+   IRIS_ARENA_ELM, the two added together; IRIS_MAX_IN, IRIS_MAX_OUT and
+   IRIS_MAX_HID, which you may lower before the #include, and IRIS_MAX_EX;
+   IRIS_VERSION_MAJOR, _MINOR, _PATCH and _STRING; IRIS_STRESS_MIN_EX and
+   IRIS_STRESS_FLAG (PART 8f); IRIS_KNN_MAXK (PART 10); the iris_status
+   values; and IRIS_NO_GUARDS, which compiles the guards out and is for
+   measuring them, not for instruments.
+
+   FAILURE, in two rules:
      A call that either works or does not returns 0 for "did nothing".
      A call that returns a MEASUREMENT returns it, or -1 if it refused.
-   iris_get_status answers a different question -- whether the INSTRUMENT is in
-   trouble. Zero means opposite things in the two places, so do not carry one
-   habit across: a RETURN VALUE of 0 is bad news (the call did nothing), and a
-   STATUS of 0 is good news (IRIS_STATUS_OK, nothing is wrong). Two of these
-   sentences used to say "0 is the good news in both" and "0 is the bad news in
-   both", and neither was right about both.
+   iris_get_status answers a different question: whether the INSTRUMENT is
+   in trouble. Zero means opposite things in the two places. A RETURN VALUE
+   of 0 is bad news (the call did nothing); a STATUS of 0 is good news
+   (IRIS_STATUS_OK, nothing is wrong). The full account, with the one test
+   that answers "did it train?" after every trainer, is above
+   iris_get_status.
 
-   THREADING: never touch the same instrument from two places at once. That is
-   the entire contract; see the note above iris_get_status for why.
+   THREADING: never touch the same instrument from two places at once. The
+   note above iris_get_status says why, and what that allows.
 
-   Units: none. Feed it raw sensor readings. It fits its own range to whatever
-   you actually give it, so scaling, centring and normalising are not merely
-   unnecessary, they are the wrong thing to do.
+   Units: none. Feed it raw sensor readings. It fits its own range to
+   whatever you actually give it, so scaling, centring or normalising them
+   first gains nothing, and is one more thing to repeat exactly at play
+   time.
    ========================================================================= */
 
 
 /* --------------------------------------------------------------------------
    FLOAT DETERMINISM CONTRACT
 
-   "Same seed, same instrument" is a bitwise promise, and fused multiply-add
-   contraction breaks it: the same source at -ffp-contract=off / on / fast
-   produces three DIFFERENT weight blobs on Apple clang 17 / M4 (measured).
-   Four defences, cheapest first:
+   "Same seed, same demonstrations, same instrument" is a promise about
+   every bit, and it holds only if every float operation is done in single
+   precision, in the order written, with nothing fused. Without the defences
+   below, the golden recipe of tests/audit.c built at -ffp-contract=off, on
+   and fast gives three different instruments on Apple clang 17. Four
+   defences, cheapest first:
 
    1. Tripwires for the flags that change the arithmetic. -ffast-math implies
       contract=fast AND removes the NaN semantics the guards below depend on.
@@ -207,29 +422,27 @@
    it does NOT set __FAST_MATH__, so it needs a tripwire of its own. Without
    one, every guard in the library is optimised away: iris_internal_isbad
    folds to false, poisoned demonstrations are accepted, and a broken sensor
-   produces a plausible number and a healthy status. Measured on Apple clang
-   17 with this tripwire removed. */
+   produces a plausible number and a healthy status (Apple clang 17, with
+   this tripwire removed). */
 #if defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__
 #error "iris: -ffinite-math-only tells the compiler no NaN or infinity can exist, which deletes every guard in this library. Build without it."
 #endif
 /* THE COMPONENT FLAGS, which -ffast-math turns on and which also work alone.
    -freciprocal-math, -funsafe-math-optimizations and -fassociative-math each
-   change the instrument with no diagnostic of any kind (measured). GCC
-   announces them and clang does not, so this catches them on GCC only --
-   which is the compiler for every ESP32, AVR and RP2040 build, and is where
-   it matters most.
+   change the instrument with no diagnostic of any kind. GCC announces them
+   with macros and clang does not, so this catches them on GCC only, which
+   is the compiler for every ESP32, AVR and RP2040 build.
    No Arduino core passes any of these: checked platform.txt for arduino:avr,
    esp32:esp32, rp2040:rp2040 and STMicroelectronics:stm32. Reaching this
    #error takes a deliberate flag.
 
-   WHAT THIS DOES NOT CATCH, stated so the coverage is not overstated:
-   -freciprocal-math and -funsafe-math-optimizations are caught on GCC (the
-   latter defines all four macros). -fassociative-math passed DIRECTLY defines
-   no macro at all on gcc-15 -- measured with -dM -E -- so it is undetectable
-   here and it does change the instrument. On clang no component flag is
-   detectable, because clang defines none of these macros, and clang 22's
-   -ffp-model=fast defines only __FINITE_MATH_ONLY__ as 0: it compiles without
-   a word and moves the golden hash in tests/audit.c (measured). */
+   WHAT THIS CANNOT CATCH. -fassociative-math passed on its own defines no
+   macro at all on gcc-15 (gcc-15 -dM -E lists none), so it cannot be seen
+   here, and it does change the instrument. On clang no component flag can
+   be seen, because clang defines none of these macros; clang 22's
+   -ffp-model=fast defines only __FINITE_MATH_ONLY__, as 0, so it compiles
+   without a word and moves the golden hash in tests/audit.c. Do not build
+   with them. */
 #if defined(__RECIPROCAL_MATH__) && __RECIPROCAL_MATH__
 #error "iris: -freciprocal-math rewrites division as multiplication by a reciprocal and changes the instrument. Build without it."
 #endif
@@ -245,14 +458,16 @@
         16, 32   the same as 0 for float: only the half-precision type
                  _Float16 is widened. GCC reports 16 on 64-bit ARM in GNU mode
                  when half-precision arithmetic is enabled, for example
-                 -std=gnu17 -mcpu=cortex-a76, the Raspberry Pi 5's core; the
-                 golden hash in tests/audit.c holds there (measured).
+                 -std=gnu17 -mcpu=cortex-a76, the Raspberry Pi 5's core, and
+                 tests/audit.c built that way with gcc-15 still gives its
+                 golden hash.
         1, 2     float carried as double, or as the 80-bit x87 format. 32-bit
                  x86 doing its float arithmetic on the x87 unit
-                 (-mfpmath=387) reports 2, and there the golden hash and
-                 every other instrument hash measured come out different,
-                 with no diagnostic (measured: clang 22
-                 --target=i686-linux-gnu -mno-sse -mfpmath=387).
+                 (-mfpmath=387) reports 2, and there every instrument comes
+                 out different with no diagnostic: clang 22
+                 --target=i686-linux-gnu -mno-sse -mfpmath=387, run in a
+                 32-bit Linux container, gives the golden recipe the hash
+                 0x2B53B02B instead of 0x6805FB0D.
         -1       not known. There is nothing to pin.
 
       Anything but 0, 16 or 32 refuses to compile. tests/targets.sh checks
@@ -267,16 +482,16 @@
 /* 3. Forbid contraction in this file's code, and only there.
 
       Clang honours #pragma STDC FP_CONTRACT OFF at its default and at
-      -ffp-contract=on: the blob becomes bit-identical to a -ffp-contract=off
-      build (measured). Clang IGNORES it under -ffp-contract=fast, so a
-      -ffp-contract=fast clang build must also pass -ffp-contract=off.
+      -ffp-contract=on: the instrument is then bit-identical to a
+      -ffp-contract=off build. Clang IGNORES it under -ffp-contract=fast, so
+      a -ffp-contract=fast clang build must also pass -ffp-contract=off.
 
       GNU compilers ignore the standard pragma and contract by default in
       every GNU mode (-std=gnu17; the Arduino IDE's -std=gnu++2a) and in ISO
       C++; only ISO C (-std=c99) leaves contraction off. They do honour
       #pragma GCC optimize ("fp-contract=off"), even under -ffp-contract=fast:
       built with gcc-15 -O2 -ffp-contract=fast, the golden hash in
-      tests/audit.c holds with it and moves without it (measured), and the
+      tests/audit.c holds with it and moves without it, and the
       ESP32-S3 compiler emits no fused instruction in this file with it and
       dozens without it (tests/pragma_leak.sh prints the count).
 
@@ -317,31 +532,39 @@
 #pragma GCC push_options
 #pragma GCC optimize ("fp-contract=off")
 #endif
-/* 4. Golden-blob audit vector (in tests/audit.c) — the runtime backstop.   */
+/* 4. The golden hashes, the backstop for everything above. tests/audit.c
+      trains a fixed recipe and compares an FNV-1a hash of the instrument's
+      bytes with 0x6805FB0D; tests/starter_recipes.c does the same for the
+      starter kit's two recipes; tests/load.c loads a committed saved
+      instrument and compares what it plays, bit for bit, with what it
+      played before it was saved. A build that changes one bit of the
+      arithmetic fails there.                                               */
 
 #include <stddef.h>
 #include <stdint.h>
 
-/* THE ONLY VERSION NUMBER FOR THIS LIBRARY. Nothing else may state one.
+/* The library's version, MAJOR.MINOR.PATCH. library.properties,
+   CITATION.cff and the release tag state the same number.
 
-   SEPARATE AXIS: the SAVE FILE format version is NOT this number. It is
-   written into every saved file and changes only when the file's layout or
-   meaning changes; see PART 9. */
+   The SAVE FILE has a format number of its own, written into every file
+   (PART 9). It changes only when the bytes of a file or their meaning
+   change, never merely because the library's version does. */
 #define IRIS_VERSION_MAJOR 0
-#define IRIS_VERSION_MINOR 1
+#define IRIS_VERSION_MINOR 2
 #define IRIS_VERSION_PATCH 0
-#define IRIS_VERSION_STRING "0.1.0"
+#define IRIS_VERSION_STRING "0.2.0"
 
 /* THE MAXIMA ARE THE SIZE OF EVERY WORKING ARRAY, SO ON A SMALL BOARD THEY
    ARE THE STACK BUDGET.
 
-   Nine arrays inside this file are sized by these numbers rather than by the
-   shape you actually asked for -- iris_internal_train_run alone reserves
+   Every working array in this file is sized by these numbers rather than by
+   the shape you asked for: iris_internal_train_run alone reserves
    float x[IRIS_MAX_IN] and float t[IRIS_MAX_OUT], 192 bytes, whether your
-   instrument has 32 inputs or 2. Measured with avr-gcc -Os -fstack-usage on
-   an atmega328p: iris_internal_train_run 286 bytes, iris_predict 164. An Uno has
-   2 KB of memory in total and the getting-started sketch leaves a few hundred
-   bytes of stack, so the defaults below do not fit it with room to spare.
+   instrument has 32 inputs or 2. avr-gcc 7.3.0 -mmcu=atmega328p -Os
+   -fstack-usage gives iris_internal_train_run a frame of 288 bytes and
+   iris_predict 164. An Uno has 2 KB of memory in total and a sketch leaves a
+   few hundred bytes of it for the stack, so the defaults do not fit it with
+   room to spare.
 
    They are #ifndef so you can shrink them. Define them BEFORE including this
    file and every working array shrinks with them:
@@ -351,13 +574,13 @@
        #define IRIS_MAX_HID 12
        #include "iris.h"
 
-   Measured, same compiler and flags (avr-gcc 7.3.0, -mmcu=atmega328p -Os
-   -fstack-usage): the deepest frame on the record/train/predict path falls
-   from 308 bytes to 148 -- a saving of 160. Two documents used to quote 340
-   and 132 for this; that pair no longer reproduces, and the 160-byte saving
-   does. A bare caller with no locals of its own measures 288 and 128.
-   The only rule is that they must be at least as large as the n_in, n_out and
-   n_hid you pass to iris_init -- which iris_init checks, and refuses if not.
+   With the same compiler and flags iris_internal_train_run, the deepest
+   frame on the record/train/predict path, falls from 288 bytes to 128, a
+   saving of 160, and iris_predict from 164 to 52; a caller into which the
+   compiler inlines that whole path measures 280 and 120. These are
+   single frames as the compiler reports them, not a measured run-time
+   stack depth. The only rule is that the maxima must be at least the n_in,
+   n_out and n_hid you pass to iris_init, which iris_init checks.
    On a 32-bit board (ESP32, RP2040, STM32) leave them alone; the defaults cost
    nothing you have. */
 #ifndef IRIS_MAX_IN
@@ -368,28 +591,23 @@
 #endif
 /* THE CAP HAS TO FIT THE MACHINE'S SIZE TYPE.
 
-   4,096 demonstrations is the right ceiling on a 32-bit or 64-bit target: it
-   is the point where the arena arithmetic would start to overflow. On a 16-bit
-   size type -- every Arduino AVR board -- overflow arrives far sooner, and it
-   arrives IDENTICALLY in IRIS_ARENA and in iris_size, so the arena bound wraps
-   to the same wrong number and cannot see the problem it was written to catch.
-   Compiled for a Mega, IRIS_ARENA(8,8,8,894) came out around 4,000 bytes
-   instead of 69,672 and the build succeeded.
+   The bound exists to stop an overflow, not because 4,096 is musically
+   special. iris_size multiplies cap by (n_in + n_out) and by sizeof(float),
+   and on a 32-bit target (the ESP32-S3) size_t is 32 bits: a large enough
+   cap would wrap, iris_size would return a SMALL number, the arena check
+   would pass, and the demonstration store would run off the end of the
+   caller's buffer. At the maxima (32 in, 16 out) 4,096 demonstrations are
+   786,432 bytes on their own, already past the S3's 512 KB of internal
+   memory, so nothing a board can hold is refused.
 
-   So the cap scales with the machine rather than assuming one. 255 keeps the
-   largest legal arena comfortably inside a 16-bit size type, and 255 takes is
-   already far more than anyone records by hand. */
-#define IRIS_MAX_EX   ((int)(sizeof(size_t) >= 4 ? 4096 : 255)) /* demonstrations. THE BOUND EXISTS TO STOP AN
-                            OVERFLOW, not because 4096 is musically special.
-                            iris_size multiplies cap by (n_in+n_out) and by
-                            sizeof(float); on a 32-bit target (the ESP32-S3)
-                            size_t is 32 bits, so a large enough cap wraps,
-                            iris_size returns a SMALL number, the arena check
-                            passes, and the example store runs off the end of
-                            the caller's buffer. At the maxima (32 in, 16 out)
-                            4096 examples is ~786 KB of examples alone, already
-                            past the S3's 512 KB, so nothing legitimate is being
-                            refused. Added 2026-08-27 (gap C11).            */
+   On a 16-bit size type, every Arduino AVR board, the overflow arrives far
+   sooner, and IDENTICALLY in IRIS_ARENA and in iris_size, so the bound
+   would wrap to the same wrong number and could not see it: with a cap of
+   4,096, IRIS_ARENA(8,8,8,894) compiled for a Mega comes out around 4,000
+   bytes instead of 69,672 and the build succeeds. So the cap follows the
+   machine. 255 keeps the largest legal arena comfortably inside a 16-bit
+   size type, and 255 takes is already more than anyone records by hand. */
+#define IRIS_MAX_EX   ((int)(sizeof(size_t) >= 4 ? 4096 : 255))  /* stored takes */
 #ifndef IRIS_MAX_HID
 #define IRIS_MAX_HID  64   /* hidden units         */
 #endif
@@ -397,12 +615,12 @@
 #ifndef IRIS_API
 /* `static inline`, not plain `static`. A single-header library defines every
    function in every translation unit that includes it, and a caller who uses
-   five of them is not doing anything wrong. With plain `static`, -Wall -Wextra
-   then emits an unused-function warning for each of the other sixty — measured
-   2026-08-27: THIRTY warnings compiling the minimal example, examples/00_minimal.c.
-   That is a terrible first thirty seconds for someone who just cloned this.
-   `inline` tells the compiler the definition is expected to be unused here,
-   silencing that without changing linkage, ODR behaviour or codegen. */
+   five of them is not doing anything wrong. With plain `static`, -Wall
+   -Wextra warns about every function the caller leaves unused: 26 warnings
+   for examples/00_minimal.c with Apple clang 17 or gcc-15, a bad first
+   minute for someone who has just cloned this. `inline` tells the compiler
+   the definition may go unused here, which silences that without changing
+   linkage, ODR behaviour or the generated code. */
 #define IRIS_API static inline
 #endif
 
@@ -414,19 +632,21 @@
 
        static unsigned char mem[IRIS_ARENA(2, 12, 3, 64)];
 
-   and put it in .bss instead of on a heap. On an MCU this is the difference
-   between "I know this fits" and "I hope this fits".
+   and have the linker reserve it with the program's other static memory
+   instead of asking a heap for it at run time. On a microcontroller that is
+   the difference between "I know this fits" and "I hope this fits".
    -------------------------------------------------------------------------- */
 
 /* EVERY PRODUCT IS COMPUTED IN unsigned long, WHICH C GUARANTEES IS AT LEAST
    32 BITS, AND NOT IN size_t.
 
-   On a 16-bit size_t target -- every Arduino AVR board -- these products wrap.
-   That on its own would be survivable if anything noticed, but iris_size wrapped
-   IDENTICALLY, so iris_init compared a wrapped need against an equally wrapped
-   array size and could not refuse: IRIS_ARENA(24,63,16,254) came out as 88
-   bytes for an instrument that needs 65,624, and the first loop of iris_reseed
-   then wrote 6,048 bytes into those 88. Verified with avr-gcc for atmega328p.
+   On a 16-bit size_t target, every Arduino AVR board, products taken in
+   size_t wrap. That alone would be survivable if anything noticed, but
+   iris_size would wrap IDENTICALLY, so iris_init would compare a wrapped
+   need against an equally wrapped array size and could not refuse: computed
+   in size_t, IRIS_ARENA(24,63,16,254) comes out as 88 bytes for an
+   instrument that needs 65,624, and the first loop of iris_reseed writes
+   6,048 bytes into those 88 (avr-gcc for the atmega328p).
 
    Computing wide makes the true number appear. In C, that number is then too
    large for an array and the COMPILER refuses the declaration -- a build error
@@ -434,8 +654,8 @@
 
    IN C++ IT IS A RUNTIME REFUSAL INSTEAD, AND ARDUINO COMPILES .ino AS C++.
    An array declarator's size in C++ converts to std::size_t, 16 bits on AVR, so
-   the bound wraps silently where C errors. Measured with avr-g++ on an
-   atmega328p, all four as compile-time assertions:
+   the bound wraps silently where C errors. avr-g++ for the atmega328p, each
+   line checked as a compile-time assertion:
 
      IRIS_ARENA(24,63,16,254)          65624   (wide, correct)
      sizeof mem                           88   (the ARRAY narrowed)
@@ -445,9 +665,8 @@
    every shape the array silently shrinks is a shape iris_size refuses: the
    `need == 0` test in iris_init returns 0 and the sketch gets a null pointer,
    which every example in this repository checks. So the failure is loud, just
-   later than it should be -- a message at run time rather than a build error.
-   Do not read this as memory corruption; an audit reported it as such and the
-   assertions above are why that is wrong. */
+   later than it should be: a refusal at run time rather than a build error,
+   and never a write past the array. */
 #define IRIS_ARENA(NI, NH, NO, NEX)                                              \
   ( (unsigned long)sizeof(iris)                                                  \
   + (unsigned long)sizeof(float)                                                 \
@@ -464,14 +683,21 @@ typedef struct iris iris;
 /* --------------------------------------------------------------------------
    HEALTH REPORTING (guard rails)
 
-   Guards never mutate silently: anything they do is announced here. The
-   healthy state is 0, so `if (iris_get_status(k))` reads as "is something
-   wrong?". (It is spelled IRIS_STATUS_OK, not IRIS_OK: the sink boundary's
-   shared error vocabulary in iris_sink.h already owns the bare name
-   IRIS_OK — same value, same meaning, different boundary.)
+   Guards never change anything silently: whatever they do is reported
+   here. The healthy state is 0, so `if (iris_get_status(k))` reads as "is
+   something wrong?". (It is spelled IRIS_STATUS_OK, not IRIS_OK, because
+   extras/iris_sink.h, the interface for output ports, already uses the bare
+   name, with the same value and meaning.)
+
+   A status stays until something clears it. Every training run that gets
+   past its refusals, a successful closed-form solve, iris_reseed and a
+   successful iris_load set it back to IRIS_STATUS_OK, and iris_record
+   clears IRIS_STORE_FULL. A later healthy call does not: after a
+   not-a-number reading, iris_predict goes on reporting IRIS_NAN_TRAPPED on
+   good readings until the next training run.
    -------------------------------------------------------------------------- */
 typedef enum {
-  IRIS_STATUS_OK         = 0,  /* healthy — guards provably touched nothing    */
+  IRIS_STATUS_OK         = 0,  /* healthy: nothing to report                  */
   IRIS_TRAINING_DIVERGED = 1,  /* a run pushed a weight or bias past
                                 ±IRIS_W_LIMIT. The guard clamped it to exactly
                                 the limit and stopped the run at that epoch.
@@ -480,7 +706,8 @@ typedef enum {
                                 but from weights that stopped where the guard
                                 stopped them. Every trainer that continues from
                                 the current weights now refuses: see
-                                IRIS_DIVERGED_STUCK.                         */
+                                IRIS_DIVERGED_STUCK. On a sharp target this
+                                can mark a good fit: see IRIS_W_LIMIT.       */
   IRIS_NAN_TRAPPED       = 2,  /* a not-a-number or an infinity was caught by
                                 the call that set this, and contained. For
                                 example: a reading refused at iris_record's
@@ -488,7 +715,8 @@ typedef enum {
                                 output replaced by the centre of the
                                 demonstrated range, a training run that met
                                 one in the error or a weight partway through
-                                and re-seeded to a finite start, or a trainer
+                                and re-seeded to a finite, unfitted start, or
+                                a trainer
                                 or diagnostic (PART 8, closed-form included)
                                 that found one in a stored demonstration and
                                 refused. That refusal writes this status and
@@ -507,11 +735,11 @@ typedef enum {
                                 range (0 with no demonstrations), never the
                                 forward pass over random weights.            */
   IRIS_STORE_FULL        = 6,  /* iris_record was refused because the store is
-                                full. Distinguished from a poisoned reading,
-                                which reports IRIS_NAN_TRAPPED: both return 0,
-                                and a sketch that printed "full" for either sent
-                                the student to delete demonstrations they did
-                                not have.                                    */
+                                full. A poisoned reading reports
+                                IRIS_NAN_TRAPPED instead: both return 0, and
+                                the status is how a sketch tells a student
+                                whether to delete a demonstration or to check
+                                the sensor.                                  */
   IRIS_DIVERGED_STUCK    = 5,  /* a trainer that continues from the current
                                 weights (iris_continue or
                                 iris_continue_to_plateau) refused, because
@@ -540,28 +768,30 @@ typedef enum {
                                 (IRIS_DIVERGED_STUCK).                       */
 } iris_status;
 
-/* NaN or Inf, by bit pattern — exponent field all ones. No libc, no fenv,
-   and immune to -ffinite-math-only style optimisations on the comparison. */
+/* Not-a-number or infinity, by bit pattern: the exponent field all ones. No
+   C library, and no comparison for an optimiser to assume away. */
 IRIS_API int iris_internal_isbad(float x) {
   /* Read the bits through a copy the compiler must actually make, not through
-     a union it can see through. With a union, clang propagated "this value is
-     finite" across the type pun and folded the test to false. Routing it
-     through a volatile forces a real store and load, which the optimiser may
-     not reason across. (__builtin_memcpy also works on clang but GNU compilers
-     turn it into a call to the C library's memcpy -- an undefined symbol, which
-     breaks the no-dependency claim. Measured both ways.) */
+     a union it can see through: through a plain union, clang carries "this
+     value is finite" across the type pun and folds the test to false. A
+     volatile forces a real store and load, which the optimiser may not reason
+     across. (__builtin_memcpy works on clang, but GNU compilers turn it into
+     a call to the C library's memcpy, an undefined symbol in a freestanding
+     build.) */
   volatile float v = x;      /* a store the compiler must actually perform */
   union { float f; uint32_t u; } c; c.f = v;
   return (c.u & 0x7F800000u) == 0x7F800000u;
 }
 
-/* Any velocity smaller than this is musically and numerically dead: it can
-   never move a weight by even one ulp again. Flushing it to zero (a) matches
-   the ESP32-S3 LX7 FPU, which flushes denormals in hardware while the host
-   does gradual underflow — closing a real host-vs-device bit divergence —
-   and (b) keeps the momentum tail out of denormal territory on hosts that
-   stall on denormal arithmetic. 1e-30 is ~8 decades above FLT_MIN, so both
-   platforms evaluate the comparison identically.                            */
+/* Any momentum velocity smaller than this is musically and numerically dead:
+   added to a weight of ordinary size it cannot move it by even one ulp.
+   Flushing it to zero keeps the decaying tail of the momentum out of
+   subnormal numbers, which some processors flush to zero in hardware and
+   others compute slowly or exactly, so the tail cannot make a host and a
+   board disagree. Whether the ESP32-S3's floating-point unit flushes
+   subnormals has not been measured on the chip. 1e-30 is about eight powers
+   of ten above the smallest normal float (about 1.2e-38), so every processor
+   evaluates the comparison identically.                                     */
 #ifndef IRIS_TINY
 #define IRIS_TINY 1e-30f
 #endif
@@ -625,56 +855,70 @@ IRIS_API int iris_internal_isbad(float x) {
 /* ==========================================================================
    PART 1 — MATH WE PROVIDE OURSELVES
 
-   We can't call math.h, so these are here. They are also *faster* than the
-   library versions, which matters more than you'd think: the network calls
-   tanh once per hidden unit per direction per example per epoch. With 12
-   hidden units, 20 examples and 16,000 epochs that is 7.7 million calls.
+   This file cannot call math.h, so the few functions the network needs are
+   written here: a squashing function, a square root and a random number
+   generator. The squashing function is the hot one. With 2 inputs, 12
+   hidden units and 3 outputs the network calls it 15 times per
+   demonstration per epoch (once per hidden unit, and once inside each
+   output's sigmoid), so 20 demonstrations trained for 18,000 epochs make
+   5.4 million calls.
 
-   ON THE COST. The primary reason this routine exists is the no-libc rule,
-   not speed. On the ESP32-S3, newlib's tanhf is ESTIMATED at 150-400 cycles
-   (briefs/03-esp32s3-feasibility.md:112, marked [E] — not measured on the
-   part). On a laptop the measured margin over libm tanhf is about 2x, not
-   30x. Do not repeat an unqualified "300 cycles" or "worth more than every
-   other optimization combined": neither figure survives scrutiny.
+   The reason for writing them here is the no-library rule, not speed, but
+   the squashing function below also happens to be cheaper than the C
+   library's: on the development laptop, the same network trained with
+   tanhf takes 53% longer per epoch. It has not been timed on the ESP32-S3.
    ========================================================================== */
 
-/* THE NONLINEARITY. Chosen, measured, and now permanent.
+/* THE NONLINEARITY, AND WHY IT IS FROZEN.
 
-   p(x) = x(27+x^2)/(27+9x^2), clamped to tanh's codomain.
+   p(x) = x(27+x^2)/(27+9x^2), clamped to [-1, +1].
 
-   THIS IS NOT A CHEAP STAND-IN FOR tanh THAT WE REGRET. It was measured
-   against a far more accurate approximant and against true tanh itself, over
-   6 target shapes and 2,304 paired runs, and it WON on held-out error. The
-   reason is that accuracy is not the objective: this function overshoots tanh
-   in the mid-range, which makes it a steeper sigmoid with a hard floor on
-   gradient flow past |s| = 3, and that is capacity control. It is doing useful
-   work, not merely approximating. Design, arms and numbers: docs/FREEZE.md.
+   This is a rational approximation to tanh, the S-shaped curve that runs
+   from -1 to +1. Near zero it is almost a straight line and far out it
+   flattens against its limits, and that bend is what lets a network of
+   these units draw a curved mapping instead of a flat one. Its largest
+   distance from true tanh is 0.0235, near x = 1.566 (every float from 0 to
+   20 compared with tanhf).
 
-   Two exact facts make the clamp correct rather than arbitrary:
+   Two exact facts make the clamp the right one:
    p(x) - 1 = (x-3)^3/(27+9x^2), so p(3) = 1 EXACTLY, and
-   p'(x) = ((x^2-9)/(3(3+x^2)))^2 >= 0, so p is monotone and p'(3) = 0 exactly.
-   Clamping the RETURN VALUE is therefore identical to clamping the argument at
-   |x| = 3, and strictly better: an argument clamp leaves a 1-ulp escape (10,220
-   floats in [2.5,3.0] still evaluate above 1.0f). It is also branch-free, so
-   its cost does not depend on the data.
+   p'(x) = ((x^2-9)/(3(3+x^2)))^2 >= 0, so p only ever rises and is flat at 3.
+   Past |x| = 3 the formula would climb above 1, so the RETURN VALUE is
+   clamped, which keeps every output inside [-1, +1] whatever rounding does.
+   Clamping the argument at 3 instead would not: rounding lets 10,220 floats
+   between 2.5 and 3 evaluate above 1.0f. The two clamps give different
+   answers for 20,671 non-negative floats (and as many negative ones), each
+   time by one ulp. The clamp is branch-free, so its cost does not depend on
+   the data.
 
-   CONSEQUENCE, STATED PLAINLY AND PERMANENTLY. (1 - a*a) is the derivative of
-   TRUE tanh, not of this function, so the backward pass is a surrogate
-   gradient -- under-scaled by 2.4-3.3% in aggregate, never wrong-signed. It is
-   not a defect being tolerated; it is a described property of a chosen
-   nonlinearity, and it can be revisited any time it earns its measured 1.4%
-   without changing what a saved instrument means.
+   WHY THIS FUNCTION AND NOT TRUE tanh. It is cheaper and no worse. Measured
+   against true tanh and against a rational approximation 245 times more
+   accurate, on 2,304 paired runs (6 synthetic target shapes, 5 to 50
+   demonstrations, 3 noise levels, 32 seeds, iris_train, held-out error on a
+   41 x 41 grid): the accurate function's held-out error is 1.3% higher as a
+   geometric mean, higher on 57.1% of the pairs, and only 0.2% higher with
+   the one saturating target left out, which is far less than a reroll of
+   the seed changes on the same data. It costs 12% more per epoch and 18%
+   more per prediction. So it did not win a contest by much, and it is not a
+   compromise either. It is FROZEN because saved instruments depend on it: a
+   file's weights mean what they mean only through this exact function.
 
-   The +/-1e9 test only keeps x*(27+x^2) finite; it is not the saturation point.
-   It was documented here as never firing, on the reasoning that pre-activations
-   are bounded by IRIS_W_LIMIT. That is wrong, and the guard is load-bearing:
-   iris_predict does NOT clamp its input, iris_internal_norm_in scales it, so
-   a reading of 1e20 arrives at iris_internal_tanh as 2e20. There x*(27+x^2)
-   overflows to inf and 27+9x^2 overflows to inf, and inf/inf is a
-   not-a-number -- every hidden unit would be NaN. Measured: with the test,
-   iris_predict(1e20) returns 1.000000; the bare ratio at that argument is
-   nan.
-   Full workings: docs/FREEZE.md, docs/negative-results/. */
+   CONSEQUENCE. (1 - a*a) is the derivative of TRUE tanh, not of this
+   function, so the backward pass in PART 8 is a surrogate gradient: it
+   points downhill, never with the wrong sign (the clamp keeps a inside
+   [-1, +1]), and it is under-scaled by 2.4-3.3% in aggregate
+   (docs/MATH-FIXES.md, defect 1). Training with the exact derivative instead
+   makes no measurable difference on the same 2,304 pairs (geometric mean of
+   held-out error 0.997, with a 95% confidence interval, the range the true
+   ratio lies in at 95% confidence, of 0.988 to 1.005).
+
+   The +/-1e9 test keeps x*(27+x^2) finite; it is not where p saturates,
+   which is |x| = 3. It is needed because iris_predict does not clamp its
+   input: a reading of 1e20 on an input demonstrated between 0 and 1 arrives
+   here as a sum near 1e20, where both halves of the ratio overflow to infinity
+   and infinity over infinity is not-a-number, so every hidden unit would be
+   not-a-number. With the test that reading plays an ordinary output with a
+   healthy status. */
 IRIS_API float iris_internal_tanh(float x) {
   if (x >  1.0e9f) return  1.0f;
   if (x < -1.0e9f) return -1.0f;
@@ -683,8 +927,9 @@ IRIS_API float iris_internal_tanh(float x) {
   return p > 1.0f ? 1.0f : (p < -1.0f ? -1.0f : p);
 }
 
-/* Logistic / sigmoid, squashes anything into (0,1). Built from tanh so we
-   only have to be fast once. */
+/* The sigmoid, or logistic function: an S-curve from 0 to 1, built from the
+   function above as 0.5 * (tanh(x/2) + 1), which is exact for true tanh. It
+   reaches 0 and 1 exactly once |x| >= 6, where the rational saturates. */
 IRIS_API float iris_internal_sigmoid(float x) {
   return 0.5f * (iris_internal_tanh(0.5f * x) + 1.0f);
 }
@@ -693,11 +938,12 @@ IRIS_API float iris_internal_sigmoid(float x) {
 
    Four places take a square root: iris_reseed (the starting weight scales,
    1/sqrt(inputs) and 1/sqrt(hidden units)), iris_novelty (the distance it
-   reports, and the sqrt(inputs) it divides that by), and the instant
+   reports, and the sqrt(inputs) it divides that by), and the closed-form
    trainer (its gain, 2/sqrt(inputs), and the diagonal of every Cholesky
    step). A compiler's square root is one instruction on a laptop, but on the
    ESP32-S3 it is a call to the C library's sqrtf, and on GCC and Linux clang
-   it also calls sqrtf for a negative input so that errno can be set. A call
+   it also calls sqrtf for a negative input so that errno, the C library's
+   error variable, can be set. A call
    is an undefined symbol in a freestanding build, and it makes the answer
    belong to whichever C library is linked. This function needs nothing and
    gives the same bits on every target.
@@ -734,13 +980,14 @@ IRIS_API float iris_internal_sigmoid(float x) {
    number: the Cholesky step checks that its diagonal is positive first, and
    the others take the root of a count or of a sum of squares.
 
-   THE PRICE IS SPEED: about 45 nanoseconds a call on an Apple M4, where the
-   instruction takes about 5. That adds about 45 nanoseconds to iris_novelty,
-   60 to iris_reseed, and 0.6 microseconds to an instant-trainer fit of 20
-   demonstrations with 12 hidden units (4.3 before, so 15%). It adds nothing
-   to the neighbour searches (iris_knn_predict, iris_classify_1nn,
+   THE PRICE IS SPEED: about 50 nanoseconds a call on the development laptop
+   (an Apple M4 Max, Apple clang -O2), where the hardware instruction takes
+   about 6. That adds about 45 nanoseconds to iris_novelty, 60 to
+   iris_reseed, and 0.6 of the 5.0 microseconds a closed-form fit of 20
+   demonstrations with 12 hidden units takes. It adds nothing to the
+   neighbour searches (iris_knn_predict, iris_classify_1nn,
    iris_delete_nearest), which compare squared distances and never take a
-   root. Measured with Apple clang -O2. */
+   root. */
 IRIS_API float iris_internal_sqrt(float x) {
   union { float f; uint32_t u; } v;
   v.f = x;
@@ -783,7 +1030,10 @@ IRIS_API float iris_internal_clampf(float v, float lo, float hi) {
 
    Repeatable is the important word. The same seed always produces the same
    sequence, so the same seed always produces the same instrument. That is
-   what makes "reroll" a real control rather than a shrug: you can go back. */
+   what makes "reroll" a real control rather than a shrug: you can go back.
+   Each step mixes the 32-bit state with shifted copies of itself; a state
+   of 0 would stay 0 for ever, which is why iris_reseed takes a seed of 0 as
+   1. */
 typedef struct { uint32_t s; } iris_internal_rng;
 
 IRIS_API uint32_t iris_internal_rand_u32(iris_internal_rng *r) {
@@ -791,7 +1041,10 @@ IRIS_API uint32_t iris_internal_rand_u32(iris_internal_rng *r) {
   x ^= x << 13; x ^= x >> 17; x ^= x << 5;
   return (r->s = x ? x : 0x9E3779B9u);
 }
-/* uniform in [-1, 1) */
+/* Uniform over [-1, +1]: a random 32-bit pattern read as a signed integer and
+   divided by 2^31. A float holds 24 significant bits, so the integers within
+   64 of the largest round up to 2^31 when converted: exactly +1.0 comes out
+   for 64 of the 2^32 patterns, and exactly -1.0 for 65. */
 IRIS_API float iris_internal_rand_sym(iris_internal_rng *r) {
   return (float)(int32_t)iris_internal_rand_u32(r) * (1.0f / 2147483648.0f);
 }
@@ -804,11 +1057,11 @@ struct iris {
   int32_t n_in, n_hid, n_out, cap;
 
   /* --- the network -------------------------------------------------------
-     One hidden layer. Wekinator uses exactly this shape, and there is a good
-     reason beyond tradition: with ten or twenty training examples, a deeper
-     network has far more capacity than data and simply memorises noise. One
-     layer with a modest number of units is the right size for the amount of
-     information a musician actually gives it.
+     One hidden layer. Wekinator's default network has this shape, and there
+     is a good reason beyond tradition: with ten or twenty training examples,
+     a deeper network has far more capacity than data and simply memorises
+     noise. One layer with a modest number of units is the right size for the
+     amount of information a musician actually gives it.
 
      Weights are stored flat and row-major — w1[h*n_in + i] — so that the
      inner loop walks straight through memory. Pointer-chasing through a
@@ -859,9 +1112,10 @@ struct iris {
                               this (the instrument still plays). iris_predict
                               guards on this one.                           */
   float   last_error;
-  int32_t status;          /* iris_status of the last train/predict */
+  int32_t status;          /* an iris_status; it stays until cleared (see
+                              HEALTH REPORTING)                             */
 
-  /* --- training progress, so a progress bar can be honest ----------------
+  /* --- training progress, so a progress bar can tell the truth -----------
      Written by every trainer entry point. tr_ceiling is the budget the
      caller asked for; tr_done is how much of it has been spent. A converged
      run stops early, so tr_done/tr_ceiling is a LOWER bound on completion —
@@ -872,127 +1126,144 @@ struct iris {
   float   tr_ref;          /* error one plateau-window ago */
 };
 
-/* WHAT THIS DOES AND DOES NOT COVER.
+/* WHAT THE STATUS DOES AND DOES NOT COVER.
 
-   It reports NUMERICAL HEALTH ONLY: a poisoned value trapped at the door or
-   before an output, a diverged or stuck run, a ridge escalation, a prediction
-   from an instrument that was never fitted, a closed-form solve that collapsed
-   to a constant. Those are the conditions a caller cannot detect for itself.
+   It reports NUMERICAL HEALTH, and a full store: a poisoned value trapped at
+   the door or before an output, a diverged or stuck run, a ridge escalation,
+   a prediction from an instrument that was never fitted, a closed-form solve
+   that collapsed to a constant. Those are the conditions a caller cannot
+   detect for itself.
 
-   It does NOT report an argument mistake -- asking for demonstration 5,000 of
-   twelve, say. Those come back through the RETURN VALUE and leave the status
-   alone, deliberately, so that one out-of-range query cannot leave a polled
-   user interface showing a fault for ever. So: check the return value of the
-   call you made, and check this for whether the instrument itself is in
-   trouble. Two questions, two answers. (CHANGELOG.md, 0.1.0.) */
+   It does NOT report an argument mistake: asking for demonstration 5,000 of
+   twelve, say, or handing the closed-form trainer too little scratch. Those
+   come back through the RETURN VALUE and leave the status alone, so that one
+   out-of-range query cannot leave a polled screen showing a fault for ever.
+   Check the return value of the call you made, and check the status for
+   whether the instrument itself is in trouble. Two questions, two answers. */
 
 /* THREADING, IN ONE SENTENCE.
 
        Never touch the same instrument from two places at once.
 
-   That is the whole contract, and it is short because there is no mutable
-   state anywhere outside the instrument you passed in -- no globals, no static
-   buffers, no shared scratch -- so two instruments cannot interact on any
-   number of cores.
+   That is the whole contract, and it is short because this file keeps no
+   writable state outside the instrument you pass in: no global or static
+   variables, no shared scratch. (Its one static object is a constant table
+   in iris_suggest_smoothing, which nothing writes.) So two instruments
+   cannot interact, on any number of cores.
 
    SAFE: many instruments on one core, one after another; one instrument per
    thread across as many cores as you have; one instrument used only inside an
-   interrupt -- but read the PLATFORM CAVEAT below before you do that last one.
+   interrupt, but read the PLATFORM CAVEAT below before you do that last one.
 
-   NOT SAFE: the SAME instrument from an interrupt and the main loop.
-   iris_predict writes its working values inside the instrument, so an
-   interrupt landing mid-call leaves both answers wrong. Give the interrupt its
-   own instrument. The full table and the cross-talk verification are in
-   README.md under "Threading".
+   NOT SAFE: the SAME instrument from two threads, or from an interrupt and
+   the main loop, even if both only play it. iris_predict, iris_knn_predict
+   and iris_classify_1nn write inside the instrument (the network's working
+   values, the status, and on an instrument never fitted the neighbour
+   ranges), which is why they take a non-const iris *. An interrupt landing
+   mid-call leaves both answers wrong. Give the interrupt its own instrument.
+   Functions that take a const iris * write nothing, but reading an
+   instrument while another thread writes it is still a race.
 
    PLATFORM CAVEAT, and it decides the interrupt case on the board this library
-   is usually run on. Everything above is a statement about THIS CODE: iris
-   keeps no global or static state, so separate instruments cannot interfere.
-   It is not a promise about your chip. On an ESP32 under FreeRTOS the
-   floating-point registers are not saved when an interrupt is taken, so any
-   float arithmetic inside an interrupt handler -- iris or anyone else's --
-   can corrupt the interrupted task's registers, silently. iris is float
-   throughout. So on that platform, do not call any iris_ function from an
-   interrupt handler: read the sensor there, set a flag, and call iris from the
-   main loop. The C-level statement above stands wherever interrupt entry does
-   save the floating-point registers.
+   is usually run on. Everything above is a statement about THIS CODE. It is
+   not a promise about your chip. On an ESP32 under FreeRTOS, the real-time
+   operating system its Arduino core runs on, the floating-point registers are
+   not saved when an interrupt is taken (the core's configuration leaves
+   CONFIG_FREERTOS_FPU_IN_ISR unset), so float arithmetic inside an interrupt
+   handler, iris's or anyone's, can corrupt the interrupted task. iris is
+   float throughout. So on that platform, do not call any iris_ function from
+   an interrupt handler: read the sensor there, set a flag, and call iris from
+   the main loop. The statement about the code stands wherever interrupt entry
+   does save the floating-point registers.
 
-   TIMING, for the audio case. One prediction is 14.9 microseconds on an
-   ESP32-S3 against a 20.8 microsecond audio sample at 48 kHz -- 1.4x of
-   margin, enough to run per-sample and not enough to also do anything
-   expensive in the same callback. That figure is measured on the part, not
-   scaled: device_torture.ino test 9, two boards. This line said 7.4-7.8 until
-   2026-08-30, which was a host measurement multiplied by an estimated 270 and
-   printed as if taken on the part; the provenance is in README.md and
-   docs/SYSTEM-technical.md. TRAINING does not fit and is not close: 595 ms at
-   4 demonstrations, 2.7-3.0 s at 8 to 20. Train in slices from the main loop
-   -- see iris_train_slice -- and never from an interrupt. */
+   TIMING, for the audio case. One prediction of a 2-12-3 instrument takes
+   14.9 microseconds on an ESP32-S3 at 240 MHz: the mean of 20,000 calls in
+   the starter kit's device_torture sketch, test 9, run with iris 0.1.0 on
+   two boards. No log of that run is recorded yet, and a mean is not a worst
+   case. Against the 20.8 microseconds of one audio sample at 48 kHz that is
+   1.4 times of margin, 72% of a core spent on playing alone. At a control
+   rate of 1,000 predictions a second it is 1.5% of a core. On the
+   development laptop one prediction takes about 0.04 microseconds. Training
+   does not fit inside an audio callback: train in slices from the main loop
+   (iris_train_slice), and never from an interrupt. */
 
-/* HOW EVERY FUNCTION IN THIS FILE REPORTS FAILURE — two rules, and only two.
+/* HOW EVERY FUNCTION IN THIS FILE REPORTS FAILURE: two rules.
 
    BEFORE THE RULES, THE ONE LINE THAT ANSWERS "DID IT TRAIN?"
 
        trainer_of_your_choice(k);
        if (!iris_is_trained(k)) { ...it did not fit... }
 
-   Use that, and stop reading here if that is all you need. It is correct after
-   EVERY trainer in this file, and no other test is.
+   It is correct after EVERY trainer in this file, and no other test is.
 
-   Here is why it has to exist. The two rules below are each individually sound,
-   but they meet badly in C, and `if (trainer(...))` is wrong in BOTH directions
-   depending on which trainer you called. Measured, all four on the same data:
+   Here is why it has to exist. The two rules below are each sound, but they
+   meet badly in C, and `if (trainer(...))` is wrong in BOTH directions
+   depending on which trainer you called. The four trainers on the same 20
+   demonstrations (2-12-3; the refusal is an empty store):
 
      on a fit that WORKED        return   if(return)   iris_is_trained
-       iris_train                 1.0000    true            1
-       iris_continue              0.0002    true            1
-       iris_continue_to_plateau   0.0000    true            1
-       iris_train_elm             0.0000    FALSE           1   <-- best case
+       iris_train                 1          true            1
+       iris_continue(k, 600)      0.00038    true            1
+       iris_continue_to_plateau   0.000011   true            1
+       iris_train_elm             0          FALSE           1   <-- best case
 
      on a fit that REFUSED
-       iris_train                 0.0000    false           0
-       iris_continue             -1.0000    TRUE            0   <-- -1 is truthy
-       iris_continue_to_plateau  -1.0000    TRUE            0
-       iris_train_elm            -1.0000    TRUE            0
+       iris_train                 0          false           0
+       iris_continue(k, 600)     -1          TRUE            0   <-- -1 is truthy
+       iris_continue_to_plateau  -1          TRUE            0
+       iris_train_elm            -1          TRUE            0
 
-   iris_train_elm returns the number of ridge escalations, so 0 is its BEST
-   outcome and reads as false. The rest return a measurement, and -1 is a
-   perfectly ordinary non-zero float, so a refusal reads as true. Neither is a
-   bug in the rules; it is what happens when "did it work" is asked of a number
-   that was never meant to answer it.
-
-   iris_is_trained reads one flag that every trainer sets on success and no
-   trainer sets on refusal. It is the same answer whichever door you came in.
+   iris_train_elm returns the number of ridge doublings it needed, so 0 is
+   its BEST outcome and reads as false. The warm trainers return a
+   measurement, and -1 is an ordinary non-zero float, so a refusal reads as
+   true. And one path answers with neither rule: when a warm trainer meets a
+   not-a-number partway through a run (demonstrations spread wider than the
+   largest float can span, say), it reseeds to a finite start, sets
+   IRIS_NAN_TRAPPED and returns 1.0, with iris_is_trained 0. iris_is_trained
+   reads one flag that every trainer sets on success and none sets otherwise,
+   so it gives the same answer whichever door you came in by. What it
+   answers is whether the fit matches the demonstrations stored now: a call
+   refused for a mistake in its arguments changes nothing, so an instrument
+   trained before that call still reads 1 after it.
 
    RULE 1, for a call that either works or does not:
        0 means the call did nothing. Non-zero means it worked.
-   That covers iris_record, iris_train, the delete functions, iris_load,
-   iris_save, iris_size and iris_train_begin. Nothing to look up: zero is bad.
-   iris_record returns the new demonstration's identifier on success, which is
-   naturally non-zero because identifiers start at 1 -- so it obeys the rule
-   AND hands you the number you need later to delete or re-map that specific
-   take.
+   That covers iris_init (a null pointer), iris_size, iris_record,
+   iris_get, iris_train, iris_train_begin, the delete functions, iris_save
+   and iris_load. iris_record returns the new demonstration's identifier,
+   which is never 0 because identifiers start at 1, so it obeys the rule AND
+   hands you the number you need later to delete that take; iris_get returns
+   the identifier of the row it copied.
 
    RULE 2, for a call that returns a MEASUREMENT you asked for:
        the measurement on success, -1 on refusal.
-   That covers the detailed trainers (which return the training error),
-   iris_loo_error, iris_suggest_smoothing, iris_worst_example, iris_index_of
-   and iris_classify_1nn. These cannot use rule 1 because zero is often a
-   perfectly good answer -- iris_train_elm returns the number of ridge
-   escalations, and none needed is the best possible outcome.
+   That covers iris_continue, iris_continue_to_plateau, iris_train_elm,
+   iris_loo_error, iris_suggest_smoothing, iris_worst_example,
+   iris_worst_example_id, iris_index_of, iris_id_at and iris_classify_1nn.
+   These cannot use rule 1 because 0 is often a good answer: a training
+   error of 0 is a perfect fit, and no ridge doublings is the best a solve
+   can do.
+
+   THE READERS cannot fail and so answer every question: iris_count,
+   iris_capacity, iris_seed, iris_is_trained, iris_last_error,
+   iris_train_progress, iris_train_busy, iris_train_epochs_done,
+   iris_get_smoothing, iris_novelty and iris_example_stress answer a null
+   instrument with 0 (iris_get_status with IRIS_NOT_FITTED, iris_novelty an
+   empty store with 1), and iris_example_stress answers an index out of
+   range with 0. iris_train_slice returns 1 while its run has more to do and
+   0 once the run is over, whatever ended it.
 
    And a separate question, with a separate answer: is the INSTRUMENT in
    trouble? That is iris_get_status, below. A call can succeed on an
    instrument that is unwell, and a call can fail on a perfectly good one.
-   Two questions, two answers -- and zero means the OPPOSITE thing in each. A
-   return value of 0 says the call did nothing; a status of 0 (IRIS_STATUS_OK)
-   says nothing is wrong. See the note in PART 1, which says the same thing.
+   A return value of 0 says the call did nothing; a status of 0
+   (IRIS_STATUS_OK) says nothing is wrong.
 
    ---------------------------------------------------------------------- */
 
 IRIS_API iris_status iris_get_status(const iris *k) {
-  /* A null instrument is not healthy. The header says "if (iris_get_status(k))
-     reads as 'is something wrong?'", and for the one input where something is
-     definitely wrong it used to answer no. */
+  /* A null instrument is not healthy: `if (iris_get_status(k))` reads as "is
+     something wrong?", and for a null pointer the answer is yes. */
   if (!k) return IRIS_NOT_FITTED;
   return (iris_status)k->status;
 }
@@ -1008,27 +1279,18 @@ IRIS_API iris_status iris_get_status(const iris *k) {
    READ THIS BEFORE USING THE RETURN VALUE. 0 is a SENTINEL and it does not
    protect you on its own: size_t is unsigned, so `bytes < iris_size(...)` is
    FALSE when iris_size returns 0, and a caller using that idiom alone would
-   sail past a bad shape rather than stop at it. iris_init is safe because it
-   validates every dimension INCLUDING cap before it ever calls iris_size
-   (see the guard block at the top of iris_init). Any other caller must test
-   for 0 explicitly. */
-/* How many bytes a shape occupies. Arithmetic only, no opinion about whether
-   the shape is a good idea — iris_size below adds that. They are separate
-   because conflating them cost us a memory-safety bug: iris_size returned 0
-   for widths under its quality floor, iris_init compared `bytes < 0` on
-   unsigned types, and the arena bound silently ceased to exist. A size
-   function that can refuse is not a size function. */
+   sail past a bad shape rather than stop at it. iris_init does not use it
+   (see the bound inside iris_init). Any other caller must test for 0
+   explicitly. */
+/* Bytes a shape occupies: IRIS_ARENA evaluated at run time, so the macro and
+   this cannot disagree (the note on IRIS_ARENA says why it computes in
+   unsigned long). 0 when the total does not fit a size_t on this machine. No
+   opinion on whether the shape is sensible; that is iris_size. iris_init
+   bounds the arena with this, not with iris_size, because a bound written
+   `bytes < iris_size(...)` vanishes whenever iris_size refuses: `bytes < 0`
+   is false on an unsigned type, so a 1-byte arena with n_hid 4 would pass
+   and training would write 611 bytes past it. */
 static size_t iris_internal_bytes(int n_in, int n_hid, int n_out, int cap) {
-  /* Wide arithmetic, then a range check -- see the note on IRIS_ARENA. This is
-     the runtime twin of that macro and it has to agree with it, including about
-     shapes that do not fit. Returning 0 for "cannot be sized on this machine"
-     is what iris_size already promises its callers; before this it returned a
-     small wrong number instead, and every bound built on it was inert. */
-  /* THE MACRO IS THE DEFINITION; THIS CALLS IT RATHER THAN RESTATING IT.
-     These were two hand-kept copies of the same arithmetic that had to agree
-     or iris_init's bound would compare a need against an unrelated number.
-     Now they agree by construction, and the wide-arithmetic note above the
-     macro covers both. */
   unsigned long total = IRIS_ARENA(n_in, n_hid, n_out, cap);
   if (total > (unsigned long)(size_t)-1) return 0;   /* will not fit a pointer */
   return (size_t)total;
@@ -1037,11 +1299,11 @@ static size_t iris_internal_bytes(int n_in, int n_hid, int n_out, int cap) {
 IRIS_API size_t iris_size(int n_in, int n_hid, int n_out, int cap) {
   if (n_in < 1 || n_in > IRIS_MAX_IN)   return 0;
   if (n_out < 1 || n_out > IRIS_MAX_OUT) return 0;
-  /* Floor of 8, not 1. n_hid is written into the file header and iris_load
-     refuses a mismatch, so the width chosen on day one is that instrument's
-     width forever. Below 8 the network cannot represent the mappings this
-     library is for; 8-64 is flat on quality (grid 0.0255-0.0290), so the floor
-     costs nothing and prevents a permanent mistake. */
+  /* Floor of 8, not 1. Below 8 the network cannot represent the mappings
+     this library is for, and the closed-form trainer refuses such a width
+     (PART 8d). n_hid is written into the saved file and iris_load refuses a
+     mismatch, so the width chosen on day one is that instrument's width for
+     ever: the floor prevents a permanent mistake. */
   if (n_hid < 8 || n_hid > IRIS_MAX_HID) return 0;
   if (cap  < 1 || cap  > IRIS_MAX_EX)   return 0;
   return iris_internal_bytes(n_in, n_hid, n_out, cap);
@@ -1067,6 +1329,9 @@ IRIS_API void iris_internal_zero_velocity(iris *k) { if (!k) return;
    inputs keeps the sums in the responsive part of the curve. This is a
    standard trick and it is the difference between "trains in 50 ms" and
    "never trains at all".
+
+   A seed of 0 is taken as 1, because the random number generator cannot
+   start from 0, so seeds 0 and 1 give the same instrument.
 
    TO REROLL a trained instrument, give it a new seed and train again:
    iris_reseed(k, new_seed) then iris_train(k), or iris_train_elm for the
@@ -1104,45 +1369,23 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
   if (!mem) return 0;
   if (n_in  < 1 || n_in  > IRIS_MAX_IN ) return 0;
   if (n_out < 1 || n_out > IRIS_MAX_OUT) return 0;
-  /* Floor of 8, matching iris_size. These two used to disagree: iris_size
-     returned its "impossible shape" answer of 0 for every width below 8 while
-     iris_init happily built one, so `malloc(iris_size(2,4,3,64))` allocated
-     nothing and the obvious next line wrote into it. docs/FREEZE.md has said
-     "raise the floor to 8 in iris_init. NOW." since before this release; n_hid
-     is written into the save file and iris_load refuses a mismatch, so the
-     width chosen on day one is that instrument's width for ever, which is why
-     a permanent mistake is worth refusing rather than accepting. */
+  /* Floor of 8, as in iris_size, so the two agree on which shapes exist. */
   if (n_hid < 8 || n_hid > IRIS_MAX_HID) return 0;
   if (cap   < 1 || cap > IRIS_MAX_EX) return 0;      /* see IRIS_MAX_EX: overflow */
-  /* The floors above now match iris_size exactly, so the two agree on which
-     shapes exist. They did not always, and the way that failed is worth
-     keeping: iris_size floored n_hid at 8 and returned 0 below it, iris_init
-     floored it at 1, and the arena bound was written `bytes < iris_size(...)`.
-     For n_hid in 1..7 that became `bytes < 0` on unsigned types -- false,
-     always -- so the bound was not merely wrong, it was absent.
-     iris_init(a 1-byte arena, n_hid = 4) returned a live instrument and
-     training wrote 611 bytes past the end.
-
-     The bound below therefore goes through iris_internal_bytes, which is arithmetic
-     with no opinion, rather than through iris_size, which has one. A size
-     function that can refuse cannot also be a bound. */
+  /* The arena bound, through iris_internal_bytes (see the note there). */
   { size_t need = iris_internal_bytes(n_in, n_hid, n_out, cap);
-    /* need == 0 means the shape cannot be sized on this machine at all. Test it
-       FIRST: size_t is unsigned, so `bytes < 0` is false for every arena and the
-       bound would wave the impossible shape straight through -- the exact
-       sentinel trap the note above iris_size warns about, which this line was
-       previously walking into. */
+    /* need == 0: this shape cannot be sized on this machine. Test it first;
+       the unsigned comparison below cannot see a 0. */
     if (need == 0) return 0;
     if (bytes < need) return 0; }
 
   unsigned char *p = (unsigned char *)mem;
-  /* Align BEFORE placing the structure, not after. The caller's arena is only
-     guaranteed 1-byte aligned -- the front-page example declares it as
-     `unsigned char mem[...]` -- and this used to align the float arrays while
-     leaving the structure itself wherever the arena happened to start. A
-     sanitizer reports it as a misaligned member access; a chip that faults on
-     unaligned loads reports it as a crash. The 64 bytes of slack in
-     iris_internal_bytes exist for exactly this. */
+  /* Align BEFORE placing the structure, and again after it. The caller's
+     arena is only guaranteed 1-byte aligned (the usage block declares it as
+     `unsigned char mem[...]`), and a structure left wherever the arena
+     starts is a misaligned access: a sanitizer reports it, and a chip that
+     faults on unaligned loads crashes. The 64 bytes of slack in IRIS_ARENA
+     pay for this padding; at most 14 of them are used. */
   p += ((uintptr_t)p & 7u) ? (8u - (size_t)((uintptr_t)p & 7u)) : 0u;
   iris *k = (iris *)p;  p += sizeof(iris);
   p += ((uintptr_t)p & 7u) ? (8u - (size_t)((uintptr_t)p & 7u)) : 0u;
@@ -1168,23 +1411,16 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
      snapshot. tests/train.c compares the whole arena after a suggestion, so
      an array the snapshot misses fails there. */
   k->order = (int32_t *)p;
-  /* FILL IT. This was a pointer into memory nobody had written, and the
-     trainer's shuffle both reads and writes through it: recording a
-     demonstration during a sliced run made the shuffle reach one slot past
-     what iris_train_begin had filled -- a crash on a dirty arena.
-
-     AND IT IS NOW BELT-AND-BRACES, which is worth writing down rather than
-     leaving as a question. The trainer refills order[] at the start of every
-     run and again whenever the example count changes under a running slice, so
-     that path covers the case on its own. Verified: 300 trials of randomised
-     mid-run records, deletes and slices on deliberately dirty arenas, under
-     AddressSanitizer and UndefinedBehaviorSanitizer, produce the identical
-     result hash 0x3920621C with this line and without it.
-
-     It stays because it is one loop at construction and the failure it guards
-     was real and measured. The mutation harness lists it as a survivor for
-     exactly this reason: nothing can observe it, so nothing can test it. That
-     is the honest state, not an oversight. */
+  /* Filled here, so the shuffle buffer never holds memory nobody wrote: the
+     trainer's shuffle reads and writes through it, and an unfilled slot
+     reached by a record made during a sliced run would be a crash on a dirty
+     arena. The trainer also refills order[] at the start of every run and
+     whenever the demonstration count changes under a running slice, so this
+     loop is a second line of defence that no test can observe: 300 trials of
+     random mid-run records, deletes and slices on deliberately dirty arenas,
+     under AddressSanitizer and UndefinedBehaviorSanitizer, give the same
+     result hash, 0x3920621C, with it and without it. It costs one loop at
+     construction. */
   for (int i = 0; i < cap; ++i) k->order[i] = i;
 
   k->n_ex = 0; k->next_id = 1;
@@ -1198,39 +1434,45 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
   return k;
 }
 
-/* INTERNAL. Was public until 2026-08-27; removed from the public surface
-   because it is measurably a footgun and buys nothing.
+/* INTERNAL: the learning rate and momentum are not part of the interface,
+   because a musician cannot choose them well and a wrong choice destroys the
+   instrument. Measured with iris_train's plateau run on six synthetic target
+   shapes, output noise 0.05, 40 seeds each:
 
-   MOMENTUM 0.99 — one nudge from the 0.85 default — DIVERGED 21 of 40 runs and
-   BRICKED 20 of them at the default learning rate (structured target, 40 seeds,
-   sigma=0.05). "Bricked" means the musician lowers it back and every trainer
-   that continues from the current weights answers IRIS_DIVERGED_STUCK, on
-   every call; only iris_train, which starts over from the seed, recovers.
+   MOMENTUM 0.99, one nudge from the 0.85 default, diverges 11 to 39 of 40
+   runs depending on the target, against none at the default. A diverged
+   run leaves a weight pinned on IRIS_W_LIMIT, and every warm trainer then
+   refuses the instrument with IRIS_DIVERGED_STUCK until iris_train starts it
+   over.
 
-   LR 2.0, the old permitted maximum, destroyed 5 of 16: recall 73x worse than
-   default, grid error 6.6x worse. Weka's own documented range for the same
-   parameter is 0-1; we permitted double it.
+   A LEARNING RATE OF 2.0 diverges only 4 of 16 runs on a clean smooth
+   target, but leaves 15 of the 16 more than five times worse than the
+   default on held-out error, 12 of them with a healthy status.
 
-   AND THE SAFE RANGES DO NOTHING. Momentum 0.00 to 0.95 is flat on instrument
-   quality (grid 0.0257 to 0.0290) — it is a SPEED knob, and iris_train
-   already hides speed. lr's safe range is covered entirely by smoothing: tuning
-   lr, tuning l2 and tuning the epoch ceiling land within 2-4% of each other,
-   because they are three spellings of one axis.
+   THE SAFE RANGES BUY LITTLE THAT SMOOTHING DOES NOT. Tuned per task by an
+   oracle (24 synthetic tasks at 3 noise levels), the learning rate, the
+   weight decay and the epoch ceiling each improve held-out error by 22% to
+   59% over the defaults and land within 8-10% of one another: three ways of
+   saying how hard to chase the demonstrations. Smoothing is the one of the
+   three that is exposed.
 
-   WORSE, THE ONLY READOUT A UI CAN SHOW POINTS BACKWARDS. At sigma=0.10:
-   lr=0.001 gives training MSE 1.17e-2 and the BEST instrument (grid 0.0693);
-   lr=0.050 gives training MSE 1.25e-3 and nearly the WORST (grid 0.1472). A
-   student tuning by watching the error readout reliably picks the worst
-   setting on offer.
+   AND THE ONE READOUT A SCREEN CAN SHOW POINTS BACKWARDS. At noise 0.10,
+   across 7 learning rates on each of the 24 tasks, training error and
+   held-out error move in opposite directions (mean rank correlation -0.63,
+   where -1 would mean every step down in one is a step up in the other),
+   and the setting with the lowest training error is the worst or
+   second-worst instrument in 14 of the 24. A student tuning by the error
+   readout picks the worst setting on offer.
 
-   Retained internally for tests/audit.c's Weka-parity check, which sets
-   Weka's own 0.3/0.2 pair. See docs/KNOB-AUDIT.md. */
+   Kept as an internal hook: the tests use it to force divergences and wild
+   settings (tests/audit.c, tests/train.c) and to check that a load puts the
+   defaults back (tests/load.c). The clamps allow Weka's own pair, 0.3 and
+   0.2. */
 IRIS_API void iris_internal_set_learning(iris *k, float lr, float momentum) { if (!k) return;
   /* REFUSE A NOT-A-NUMBER BEFORE CLAMPING IT. iris_internal_clampf is a
-     ternary on two comparisons, and every comparison with NaN is false, so a
-     NaN falls straight through the clamp and into the instrument.
-     docs/FREEZE.md named this mechanism and prescribed exactly this guard; it
-     was applied to three places and not to the setters. */
+     ternary on two comparisons, and every comparison with not-a-number is
+     false, so one would fall straight through the clamp and into the
+     instrument. */
   if (iris_internal_isbad(lr) || iris_internal_isbad(momentum)) {
     k->status = IRIS_NAN_TRAPPED;
     return;
@@ -1239,45 +1481,23 @@ IRIS_API void iris_internal_set_learning(iris *k, float lr, float momentum) { if
   k->momentum = iris_internal_clampf(momentum, 0.0f, 0.99f);
 }
 
-/* WEIGHT DECAY (L2). Off by default, and the default is the finding.
+/* WEIGHT DECAY, the mechanism under smoothing. Each training step shrinks
+   every weight by a small fraction of itself, which pulls the network toward
+   flatter mappings between the demonstrations. The reason to want that: a
+   2-12-3 network has 75 weights and biases, 20 demonstrations give it 60
+   target numbers to fit, and trained to a plateau on noisy takes it has the
+   freedom to bend through the noise. The decay is the price it pays for
+   bending.
 
-   THE PROBLEM IT ADDRESSES, stated as a reviewer states it: this network has
-   ~75 parameters and you are fitting 3xN targets. At N=20 that is more
-   parameters than training scalars, trained to a plateau with no capacity
-   control. With noisy demonstrations — which is what a human produces — it
-   fits the noise.
+   Applied as decoupled decay (to the weight itself, not folded into the
+   gradient, so it does not build up in the momentum) and to the weights
+   only, never the biases: penalising a bias just shifts the function, for no
+   reduction in its freedom. Clamped to 0.3, the value smoothing 1 maps onto.
 
-   MEASURED (32 paired seeds, identical data and identical initial weights,
-   held-out RMSE on a fixed clean grid, docs/MATH-FIXES.md defect 2):
-
-     structured target, N=20, no noise      alpha=1e-3  -19.7%   (better)
-     structured target, N=20, sigma=0.05    alpha=1e-3  -40.3%   (better)
-     smooth target,     N=20, sigma=0.05    best alpha  -65.2%   (better)
-     smooth target,     N=20, NO noise      alpha=1e-2  +34.9%   (WORSE)
-
-   Sign test to p = 4.7e-10, disjoint IQRs in the large cells, surviving
-   Benjamini-Hochberg over 224 arm-by-cell tests. Also: plain plateau training
-   produced 4 IRIS_TRAINING_DIVERGED events at sigma=0.10; alpha >= 1e-3
-   produced zero, anywhere.
-
-   WHY THE DEFAULT IS STILL ZERO. No single alpha is safe across every target
-   and noise level — the same 1e-3 that wins by 40% on a structured noisy target
-   costs 9.3% on a clean smooth one, and 1e-2 costs 34.9%. Shipping a default
-   that is wrong half the time to fix a problem that appears the other half is
-   not an improvement, it is a coin flip with our name on it. So: the mechanism
-   ships, the default does not, and the numbers above tell you when to reach
-   for it. If your demonstrations are noisy — recorded from a human, from a real
-   sensor — start at 1e-3.
-
-   CAVEAT THAT MUST TRAVEL WITH THE NUMBER. This is NOT directly comparable to
-   scikit-learn's alpha, even though the scale looks familiar.
-   iris_internal_fit_ranges derives normalisation from the training data's own
-   observed range, and noise inflates that range by 0.58x to 1.39x across the
-   grid, so the effective penalty moves with N and with noise. Comparable only
-   under matched preprocessing, which no sklearn user has.
-
-   Applied as decoupled decay on the weights only, never the biases: penalising
-   a bias just shifts the function for no capacity benefit. */
+   Not comparable to scikit-learn's alpha, although the scale looks familiar:
+   the ranges this file normalises by come from the demonstrations themselves
+   (PART 5), and noise widens them, so the effective penalty moves with the
+   number of demonstrations and with the noise. */
 IRIS_API void iris_internal_set_l2(iris *k, float l2) { if (!k) return;
   /* See iris_internal_set_learning: a NaN passes straight through a clamp. */
   if (iris_internal_isbad(l2)) { k->status = IRIS_NAN_TRAPPED; return; }
@@ -1290,32 +1510,44 @@ IRIS_API float iris_internal_get_l2(const iris *k) { if (!k) return 0.0f; return
    0 = stick tightly to my demonstrations, whatever they say.
    1 = smooth confidently between them, forgiving my shaky takes.
 
-   This is the ONLY knob in the library that changes how good the instrument is
-   rather than how big or how fast it is, and it is the only one worth a
-   musician's attention. It maps onto weight decay, but nobody should have to
-   know that to use it.
+   It is the only setting that changes how good the instrument is rather
+   than how big or how fast it is. It maps onto weight decay, 0.3 times the
+   smoothing (above), but nobody should have to know that to use it.
 
-   WHY IT EXISTS AT ALL, measured (12 tasks x 3 noise levels, held-out grid
-   error against clean truth):
+   WHAT IT BUYS, AND WHAT IT COSTS. Measured with iris_train on six synthetic
+   target shapes (2 inputs, 12 hidden units, 3 outputs), 12 seeds each, with
+   Gaussian noise of standard deviation sigma added to the demonstrated
+   outputs; root-mean-square error on held-out points against the clean
+   target:
 
-       noise      smoothing 0     tuned smoothing
-       none          0.0693           0.0601
-       light         0.1312           0.0755
-       heavy         0.2161           0.0904
+       demonstrations   noise sigma    smoothing 0    smoothing 0.33
+             10            0             0.0940           0.1094
+             10            0.10          0.2070           0.1421
+             20            0             0.0604           0.0780
+             20            0.10          0.2264           0.1082
+             50            0             0.0273           0.0453
+             50            0.10          0.1044           0.0723
 
-   At realistic take-to-take inconsistency it is worth about 2.4x. Nothing else
-   in the library comes close, and — this is the part that justifies collapsing
-   five other knobs into this one — tuning the learning rate, or the epoch
-   ceiling, or the hidden width, lands within 2-4% of this. They were five
-   spellings of one axis. This is the spelling that is safe: measured monotone
-   across its whole range and ZERO divergences at any value, where momentum at
-   its old maximum bricked half of all instruments.
+   On noisy takes smoothing repairs the plateau run, which otherwise fits the
+   noise: at sigma 0.05 and above, smoothing 0 is 1.2 to 2.2 times worse than
+   simply stopping after 100 epochs. On clean takes it costs 16%, 29% and 66%
+   more held-out error at 10, 20 and 50 demonstrations. What it buys depends
+   on the target: at sigma 0.10, smoothing 1 against smoothing 0 ranges from
+   no gain to 4.1 times better across the six shapes, and on one periodic
+   target at sigma 0.05 it is worse. Recall of the demonstrations gets
+   steadily worse as smoothing rises, as it should; held-out error usually
+   has its best value somewhere inside the range, not at either end. Every
+   run above 0 in those measurements ended with a healthy status (0 of
+   5,760).
 
-   Default is 0 — stick to the demonstrations — because a musician who has not
-   asked for smoothing should get exactly what they showed it. */
+   The default is 0, stick to the demonstrations, because a musician who has
+   not asked for smoothing should get exactly what they showed it, and
+   because no single value serves both clean and noisy takes. If your takes
+   are noisy, audition a few values, or ask iris_suggest_smoothing for a
+   starting point. */
 IRIS_API void iris_set_smoothing(iris *k, float amount) { if (!k) return;
-  /* Guard here too: multiplying a NaN by 0.3 is still a NaN, so the inner
-     guard would see it but this one gives the caller the earlier refusal. */
+  /* Guard here too: a not-a-number times 0.3 is still one, so the inner guard
+     would catch it, but this one refuses before any arithmetic. */
   if (iris_internal_isbad(amount)) { k->status = IRIS_NAN_TRAPPED; return; }
   iris_internal_set_l2(k, iris_internal_clampf(amount, 0.0f, 1.0f) * 0.3f);
 }
@@ -1324,10 +1556,16 @@ IRIS_API float iris_get_smoothing(const iris *k) { if (!k) return 0.0f; return k
 /* ==========================================================================
    PART 4 — THE EXAMPLE STORE
 
-   Add, inspect, delete. Deleting one example is a five-line function and its
-   absence is the single biggest usability failure in every embedded system
-   that has attempted this. One mistimed button press should not cost you
+   Add, inspect, delete. Deleting one demonstration is a five-line function,
+   and its absence is the biggest usability failure of the embedded systems
+   that have attempted this. One mistimed button press should not cost you
    twenty minutes of work.
+
+   Every stored demonstration has two numbers. Its IDENTIFIER is handed out
+   by iris_record, starts at 1, is never reused, and never changes, so
+   "delete #3" always means the same take. Its INDEX is its position in the
+   store, 0 to iris_count - 1, and shifts down when an earlier one is
+   deleted.
    ========================================================================== */
 
 IRIS_API int iris_count(const iris *k) { if (!k) return 0; return k->n_ex; }
@@ -1367,22 +1605,17 @@ IRIS_API int iris_record(iris *k, const float *in, const float *out) { if (!k) r
   k->n_ex++;
   k->trained = 0;                                   /* model is now stale */
 
-  /* This call just disproved the two complaints this call can raise, so clear
-     them. The header tells you to read `if (iris_get_status(k))` as "is
-     something wrong?", and without it one full store answered yes for the rest
-     of the instrument's life.
+  /* A take was just stored, so the store is not full: clear IRIS_STORE_FULL.
+     Without this, `if (iris_get_status(k))` would answer "something is
+     wrong" for the rest of the instrument's life after one full store.
 
-     ONLY IRIS_STORE_FULL, and that is deliberate. Clearing IRIS_NAN_TRAPPED
-     here too would be over-broad: iris_record is one of several calls that
-     raise it -- the trainers, the playing and neighbour functions and the
-     setters raise it as well -- and storing one good number does not
-     disprove a not-a-number that TRAINING trapped. Only iris_record can
-     raise IRIS_STORE_FULL, so only iris_record can retract it; that is the
-     whole rule.
-     A bad reading therefore does not alarm for ever either: iris_train clears
-     the status on success, and every sketch here trains straight after
-     recording, so the flag lifts at the point the instrument is actually
-     known to be well again. */
+     ONLY IRIS_STORE_FULL. iris_record is one of several calls that raise
+     IRIS_NAN_TRAPPED (the trainers, the playing and neighbour functions and
+     the setters raise it too), and storing one good number does not disprove
+     a not-a-number that training trapped. Only iris_record raises
+     IRIS_STORE_FULL, so only iris_record retracts it. A bad reading does not
+     alarm for ever either: the next training run clears the status, which
+     is the point at which the instrument is known to be well again. */
   if (k->status == IRIS_STORE_FULL)
     k->status = IRIS_STATUS_OK;
 
@@ -1394,7 +1627,7 @@ IRIS_API int iris_index_of(const iris *k, int id) { if (!k) return -1;
   return -1;
 }
 
-/* The stable id at a position, without copying the row out. */
+/* The identifier at a position, without copying the row out. */
 IRIS_API int iris_id_at(const iris *k, int idx) { if (!k) return -1;
   return (idx < 0 || idx >= k->n_ex) ? -1 : k->ex_id[idx];
 }
@@ -1419,14 +1652,10 @@ IRIS_API int iris_delete_index(iris *k, int idx) { if (!k) return 0;
     const float *src = k->ex + (size_t)(r + 1) * stride;
     for (int c = 0; c < stride; ++c) dst[c] = src[c];
     k->ex_id[r]  = k->ex_id[r + 1];
-    /* The residual ledger is indexed by POSITION, so it has to move with the
-       rows. It did not, so after any delete every "which take is fighting the
-       others" answer pointed at the wrong demonstration -- 200 times out of
-       200, always naming an innocent one, until the next training run. The
-       margin usually collapsed below the threshold the header tells a screen
-       to require, so the accusation went quiet rather than wrong; but the same
-       header invites a screen to show it dimly below that threshold, and that
-       mark was on the wrong take every time. */
+    /* The residual ledger (PART 8f) is indexed by POSITION, so it moves with
+       the rows; otherwise, until the next training run, "which take is
+       fighting the others" would name the demonstration that slid into the
+       deleted one's place. */
     k->ex_res[r] = k->ex_res[r + 1];
   }
   k->ex_res[k->n_ex - 1] = 0.0f;
@@ -1442,7 +1671,7 @@ IRIS_API int iris_delete_last(iris *k) { if (!k) return 0; return iris_delete_in
    functions that share it. */
 IRIS_API int iris_internal_nearest(iris *k, const float *in);
 
-/* Delete whichever example is closest to where you are standing right now.
+/* Delete whichever demonstration is closest to where you are standing now.
    On a device with three buttons this is how you say "not THAT one" without
    needing to read a list.
 
@@ -1469,38 +1698,38 @@ IRIS_API int iris_delete_nearest(iris *k, const float *in) { if (!k) return 0;
 IRIS_API void iris_clear(iris *k) {
   if (!k) return;
   k->n_ex = 0; k->trained = 0; k->fitted = 0;
-  /* End any run in flight. Without this, iris_train_slice kept reporting
-     "there is more to do" for ever: the trainer returns immediately when there
-     are no demonstrations, so tr_done never advances and tr_running is never
-     cleared, and the documented loop
+  /* Every demonstration goes, and with them the fit: the instrument is no
+     longer fitted and plays 0 until it is trained again. Any sliced run in
+     flight ends too. The trainer returns at once when there are no
+     demonstrations, so without this a run would never advance or finish,
+     and the loop
          while (iris_train_slice(k, 500)) { draw(); poll(); }
-     never terminates. Both Arduino sketches wire iris_clear to a button and
-     the library recommends training in slices, so those two are one press
-     apart. */
+     would never end: a sketch with a clear button and sliced training is
+     one press from that. */
   k->tr_running = 0; k->tr_done = 0; k->tr_n_ex = 0; k->tr_ref = 0.0f;
 }
 
 /* ==========================================================================
    PART 5 — NORMALISATION
 
-   Find the range of every input and output across the examples, then map
-   everything into a common scale before training.
+   Find the range of every input and output across the demonstrations, then
+   map everything onto a common scale before training.
 
-   Outputs go to 0.1–0.9 rather than 0–1 on purpose. The output layer uses a
-   sigmoid. A true logistic only APPROACHES 0 and 1; this one is built on a
-   clamped rational function and reaches them exactly —
-   iris_internal_sigmoid(6.0f) is 1.0f on the nose. Asking it to hit exactly
-   1.0 means pushing a weight toward infinity forever; leaving headroom at
-   both ends means the network can actually arrive.
+   Outputs go to 0.1-0.9 rather than 0-1 on purpose. The output layer uses a
+   sigmoid. A true logistic only APPROACHES 0 and 1, so a target of exactly 1
+   would push a weight toward infinity for ever. This sigmoid, built on the
+   clamped rational of PART 1, does reach 1 (iris_internal_sigmoid(6.0f) is
+   1.0f exactly), but the training signal through it, y*(1-y), is 0 there,
+   so a target at either end would still drive the output into the flat
+   region where it stops learning. Leaving headroom at both ends means the
+   network can actually arrive.
 
-   WHERE THIS CONSTANT COMES FROM. 0.1/0.9 is a folklore rule of thumb, not a
-   derived value. LeCun's Efficient BackProp section 4.5 derives the
-   principled band from the maximum of the sigmoid's second derivative,
-   which is 0.2113/0.7887, and docs/MATH-AUDIT.md:101 records that the shipped
-   band therefore delivers 1.85x LESS gradient at the targets. It stays because
-   moving it changes every frozen hash and every saved file's output mapping
-   (docs/MATH-AUDIT.md:274 costs that out), not because it was measured to be
-   better. It was not.
+   WHERE THE CONSTANT COMES FROM. 0.1/0.9 is a rule of thumb, not a derived
+   value. LeCun's "Efficient BackProp" (section 4.5) derives a band from the
+   maximum of the sigmoid's second derivative, 0.2113/0.7887, and against it
+   0.1/0.9 gives 1.85 times less gradient at the targets (docs/MATH-AUDIT.md
+   works it out). It stays because it is part of what a saved instrument plays
+   (PART 9), not because it was measured to be better. It was not.
    ========================================================================== */
 
 #define IRIS_OUT_LO 0.1f
@@ -1556,28 +1785,29 @@ IRIS_API void iris_internal_span(const iris *k, int c, float *lo, float *hi) {
    small magnifies any movement at play time: an input held at 500 in every
    demonstration and given a width of 0.005 normalises to about 400 when it
    reads 501, where the demonstrations taught the network only [-1,+1].
-   Measured with such a floor in place, on the six demonstrations
-   tests/playing.c uses with the still input at 500: a sweep of the other
-   input produced an output span of 9.97 (of the 10 demonstrated) with the
-   still input at 500, and 0.0000 with it at 501 -- every hidden unit
-   saturated and the instrument became a constant.
+   With such a floor in place of this rule, on the six demonstrations
+   tests/playing.c uses with the still input at 500, a sweep of the other
+   input spans 9.97 of the 10 demonstrated with the still input at 500, and
+   0.0000 with it at 501: every hidden unit saturates and the instrument
+   becomes a constant.
 
    AN OUTPUT THAT NEVER MOVED keeps a small nonzero width, because the network
    is trained toward it and the output scaling divides by the width. That floor
    is relative for the reason above: an absolute 1e-6 added to a value above 32
    changes nothing in 32-bit floating point, because the gap between
-   representable numbers there is already wider, so the width stayed zero and
-   every prediction became not-a-number. Measured: an absolute floor worked up
-   to 31.77 and failed from 32.72.
+   representable numbers there is already wider, so the width would stay zero
+   and every prediction would be not-a-number. An absolute floor works up to
+   31.77 and fails from 32.72.
 
    A LIMIT, STATED RATHER THAN GUARDED. A width is a float, so demonstrations
    that span more than the largest float, about 3.4e38 end to end (values
    beyond about 1.7e38 on both sides of zero), give a width that overflows to
    infinity. Normalising a demonstration at either end of such a range then
-   gives not-a-number, so training traps it and does not fit (measured: two
-   inputs, one demonstrated at -2e38 and 2e38; iris_train returns 0 with
-   IRIS_NAN_TRAPPED), and iris_save refuses an instrument holding such a range
-   (PART 9). No sensor reads numbers of that size. */
+   gives not-a-number, so training traps it partway through and leaves the
+   instrument reseeded and unfitted (two inputs, one demonstrated at -2e38
+   and 2e38: iris_train returns 0 with IRIS_NAN_TRAPPED), and iris_save
+   refuses an instrument holding such a range (PART 9). No sensor reads
+   numbers of that size. */
 IRIS_API void iris_internal_fit_ranges(iris *k) { if (!k) return;
   if (k->n_ex == 0) return;
   for (int i = 0; i < k->n_in; ++i) {
@@ -1640,8 +1870,16 @@ IRIS_API float iris_internal_denorm_out(const iris *k, int i, float y) {
      hidden_h = tanh( sum_i w1[h][i] * x_i + b1[h] )
      output_o = sigmoid( sum_h w2[o][h] * hidden_h + b2[o] )
 
-   That is the network. It is NOT the whole of what iris_predict does; the full
-   chain, which is what plays, is:
+   That is the network. Each hidden unit adds up the inputs, each scaled by
+   its own weight, adds its bias, and squashes the sum; each output does the
+   same with the hidden units' answers. A single unit can only draw one soft
+   step across the input space. Adding a dozen of them, each with its step in
+   a different place and direction, is what lets the output bend into the
+   shape you demonstrated, and training (PART 8) is the search for weights
+   that put the steps in the right places.
+
+   It is NOT the whole of what iris_predict does; the full chain, which is
+   what plays, is:
 
      x_i   = iris_internal_norm_in(k, i, your_reading)    scale the sensor in
      ...the two lines above...
@@ -1651,9 +1889,13 @@ IRIS_API float iris_internal_denorm_out(const iris *k, int i, float y) {
 
    Four steps, two of them arithmetic on ranges the instrument measured for
    itself, and two matrix multiplies with a squashing function after each.
-   For 2 inputs, 12 hidden and 3 outputs that is 60 multiply-adds, and one
-   whole prediction takes 14.9 microseconds on an ESP32-S3 (measured on the
-   part; see the timing note above iris_get_status). Training the same
+   For 2 inputs, 12 hidden and 3 outputs that is 60 multiply-adds and 20
+   float divisions (one in each input's scaling, one in each of the 15
+   squashing functions, one in each output's scaling back), and on the
+   ESP32-S3, which divides in a library routine, the divisions are most of
+   the cost. One whole prediction takes 14.9 microseconds there, a board
+   figure awaiting a recorded log (the timing note above iris_get_status),
+   and about 0.04 microseconds on the development laptop. Training the same
    instrument takes seconds, so playing is the cheap half.
    ========================================================================== */
 
@@ -1794,14 +2036,16 @@ IRIS_API void iris_predict(iris *k, const float *in, float *out) { if (!k) retur
    the centre of each cell. The usable range of the control therefore depends
    on how many takes you recorded, and two instruments are not comparable.
 
-   Making the scale relative to the examples' own spacing would fix that. It
-   is deliberately NOT done here: tests/audit.c uses novelty to sort probes
-   into near and far bands, so changing the scale moves measured thresholds
-   elsewhere, and that deserves its own measurement rather than a quiet edit.
+   Making the scale relative to the demonstrations' own spacing would fix
+   that, and would change what every sketch that maps novelty hears, so the
+   scale stays as it is and this note says what it means.
 
-   This costs one pass over the examples. But it lets the instrument know when
-   it is improvising rather than recalling, which you can map to anything you
-   like: noise, detuning, a light.
+   This costs one pass over the demonstrations. But it lets the instrument
+   know when it is improvising rather than recalling, which you can map to
+   anything you like: noise, detuning, a light.
+
+   A reading that is not finite reads as 1, as far from home as it gets;
+   iris_novelty writes nothing, the status included.
    ========================================================================== */
 
 IRIS_API float iris_novelty(const iris *k, const float *in) { if (!k) return 0.0f;
@@ -1826,33 +2070,44 @@ IRIS_API float iris_novelty(const iris *k, const float *in) { if (!k) return 0.0
 /* ==========================================================================
    PART 8 — TRAINING  (backpropagation)
 
-   The only genuinely new idea in this file, and it is one idea:
+   The one idea in this file that needs explaining, and it is one idea:
 
-     Run an example forward. Compare what came out to what you demonstrated.
-     Nudge every weight a little in whichever direction would have reduced
-     that gap. Repeat.
+     Run a demonstration forward. Compare what came out with what you
+     demonstrated. Nudge every weight a little in whichever direction would
+     have made that gap smaller. Repeat.
 
-   "Backpropagation" is just bookkeeping for the middle layer: the hidden
-   units don't have a target of their own, so you work out how much each one
-   contributed to the final error and blame it proportionally.
+   "Which direction" is calculus: for each weight, how much the squared miss
+   would change if that weight changed a little, which is its gradient. For
+   a weight into an output unit that is the miss, times the slope of the
+   sigmoid at that output, times the hidden value feeding the weight.
+   "Backpropagation" is just the bookkeeping for the middle layer: a hidden
+   unit has no target of its own, so its share of the blame is the output
+   misses passed back through the weights that connect them, times the slope
+   of its own tanh. Every weight then steps against its gradient, scaled by
+   the learning rate, 0.10. Doing that after every single demonstration, in
+   a shuffled order, is stochastic gradient descent.
 
    Two details that matter in practice:
 
    MOMENTUM. Instead of stepping purely downhill each time, keep a running
-   velocity. Steps in a consistent direction accumulate; steps that jitter
-   back and forth cancel. It makes training roughly three times faster and
-   costs one extra array.
+   velocity: each step is 0.85 of the previous step plus the new nudge.
+   Steps in a consistent direction build up; steps that jitter back and
+   forth cancel. On 20 demonstrations of a smooth 2-input, 3-output target it
+   reaches a mean squared error of 1e-4 in 2,000 to 4,500 epochs, where the
+   same run without momentum takes 8,700 to 28,000 (8 seeds): about five
+   times fewer epochs, for one extra array.
 
-   SHUFFLING. Present the examples in a different order every epoch. Fixed
-   order lets the network learn the order instead of the mapping — the last
-   example seen always gets the final say.
+   SHUFFLING. Present the demonstrations in a different order every epoch.
+   A fixed order lets the network learn the order instead of the mapping: the
+   last demonstration seen always gets the final say.
    ========================================================================== */
 
-/* Guard sweep, run once per epoch: NaN/Inf in any weight (or in the epoch
-   error) means the numbers are gone — report and recover to a finite state.
-   |w| past IRIS_W_LIMIT means divergence in progress — clamp, report, stop.
-   Cost is one pass over the weights per EPOCH; the backprop pass over the
-   weights runs once per EXAMPLE, so this is < 1/n_ex relative overhead.     */
+/* Guard sweep, run once per epoch: a not-a-number or infinity in any weight
+   (or in the epoch's error) means the numbers are gone, so report it and
+   recover to a finite state; a weight past IRIS_W_LIMIT means a divergence
+   in progress, so clamp it, report and stop. It costs one pass over the
+   weights per EPOCH, where backpropagation passes over them once per
+   DEMONSTRATION, so it adds less than 1/n_ex to the work.                  */
 #ifndef IRIS_NO_GUARDS
 IRIS_API int iris_internal_check_weights(iris *k) { if (!k) return 0;
   const int nw = k->n_hid * k->n_in + k->n_hid + k->n_out * k->n_hid + k->n_out;
@@ -1884,64 +2139,63 @@ IRIS_API int iris_internal_pinned(const iris *k) {
 #endif
 
 /* --------------------------------------------------------------------------
-   TRAINING TO CONVERGENCE, AND SAYING SO OUT LOUD
+   TRAINING TO A PLATEAU, AND SAYING HOW FAR ALONG IT IS
 
-   The masthead used to recommend 600 epochs. Measured, that budget stops the
-   optimiser less than a fifth of the way down: going to 200,000 improves
-   recall 5.9x and held-out error 1.8x for nothing but time, and time is the
-   cheap thing here. The full epoch table is docs/adr/0017-train-to-the-plateau-not-to-a-constant.md.
+   iris_train does not ask you for an epoch count. It runs until the
+   training error PLATEAUS: every IRIS_CONV_WINDOW epochs it compares the
+   error with the error one window earlier, and stops when the window bought
+   less than IRIS_CONV_TOL of it. A short window (200-500 epochs) mistakes the
+   ordinary epoch-to-epoch jitter of a shuffled run for a plateau and stops
+   early (docs/adr/0017-train-to-the-plateau-not-to-a-constant.md
+   records that measurement).
 
-   So the budget is no longer a number the caller guesses. iris_train runs
-   until the training error PLATEAUS: every IRIS_CONV_WINDOW epochs it
-   compares the error against the error one window ago and stops when the
-   window bought less than IRIS_CONV_TOL of it. Window and tolerance are
-   measured, not guessed -- a short window (200-500 epochs) mistakes the
-   ordinary epoch-to-epoch noise of a shuffled SGD trace for a plateau and
-   stops at a quarter of the achievable fit.
+   WHAT THE PLATEAU BUYS: RECALL. On the reference task of tests/audit.c (20
+   demonstrations, 2 inputs, 12 hidden units, 3 outputs), 600 epochs recall
+   the demonstrations to a root-mean-square miss of 0.0066 and the plateau
+   run, 18,000 epochs, to 0.0012, 5.5 times closer. On six synthetic target
+   shapes with clean demonstrations the gain is 8.4, 4.2 and 2.8 times at
+   10, 20 and 50 demonstrations.
 
-   THE ONE PLACE THIS IS NOT FREE. At 50 examples a fixed 200,000-epoch budget
-   is measurably WORSE on held-out error than 60,000 -- the point where more
-   convergence starts costing generalisation. A plateau criterion stops before
-   that on its own; a bigger constant would not have. That is the argument for
-   a criterion over a constant.
+   WHAT IT COSTS. Recall is not generalisation. On the same clean shapes the
+   plateau also improves held-out error against 600 epochs, but by much less
+   (7%, 7% and 19%). On noisy demonstrations a plateau run at smoothing 0
+   fits the noise: it is 1.2 to 2.2 times worse on held-out error than
+   stopping after a fixed 100 epochs (the table at iris_set_smoothing, where
+   smoothing is the repair). Running on longer is worse still: a fixed
+   60,000 epochs is 2% to 29% worse than the plateau under noise. None of
+   this has been checked on recorded human gesture. Treat the ceiling as a
+   ceiling, and smoothing as the knob for noisy takes.
 
-   AND THE CAVEAT THAT GOVERNS THE WHOLE TABLE. The truth function those
-   numbers come from is smooth and noiseless. "More convergence never hurts"
-   is exactly the conclusion most at risk from real sensor noise and human
-   inconsistency, and none of it is verified on hardware or on recorded human
-   gesture. Treat the ceiling as a ceiling.
+   PROGRESS THAT DOES NOT LIE. A plateau run takes seconds on a board, long
+   enough that a screen should show something true. Two ways in:
 
-   HONEST PROGRESS. A converged run at 50 examples is seconds on the S3, long
-   enough that the glass must show something true. Two ways in, both free:
-
+     - iris_train_begin / iris_train_slice / iris_train_progress run the SAME
+       training as iris_train in slices, so a single-threaded sketch can draw
+       a frame, read a touch and keep sound going between them. A sliced run
+       is bit-identical to iris_train: iris_train_begin checks and reseeds
+       exactly as iris_train does, the shuffle buffer is filled once there and
+       carried across slices, and so the random draws are the same draws in
+       the same order.
      - iris_continue_to_plateau(k, ceiling, cb, user), one of the warm
        trainers below, calls cb every window with (done, ceiling, err);
-       returning 0 from cb aborts, leaving a usable partially-trained
+       returning 0 from cb ends the run, leaving a usable, partly trained
        instrument.
-     - iris_train_begin / iris_train_slice / iris_train_progress run the SAME
-       training as iris_train in slices, so a single-threaded UI can draw a
-       frame, read touch and keep the audio half alive between them. A sliced
-       run is bit-identical to iris_train: iris_train_begin checks and
-       reseeds exactly as iris_train does, the shuffle buffer is initialised
-       once there and carried across slices, and so the random draws are the
-       same draws in the same order.
 
-   iris_continue IS THE FIXED-EPOCH PATH. It is the Wekinator fidelity path
-   -- fixed-epoch backprop is what Weka's MultilayerPerceptron does -- and
-   audit check 12 pins its output to the bit.
+   iris_continue IS THE FIXED-EPOCH PATH: exactly the per-demonstration
+   update of Weka's MultilayerPerceptron, the network Wekinator ships, with a
+   fixed epoch count. tests/audit.c pins its output to the bit.
    -------------------------------------------------------------------------- */
 
-#define IRIS_CONV_WINDOW  2000    /* epochs between plateau tests (measured)   */
+#define IRIS_CONV_WINDOW  2000    /* epochs between plateau tests             */
 #define IRIS_CONV_TOL     0.10f   /* stop when a window buys < 10% of the error */
 /* THE CEILING HAS TO FIT THE MACHINE'S int, BECAUSE IT IS PASSED AS ONE.
 
    iris_train, iris_train_begin and iris_continue_to_plateau hand it to
-   iris_internal_train_run as an int epoch count. Where int is 16 bits --
-   every Arduino AVR board -- 60000 truncates to -5536, the trainer's
-   `epochs <= 0` guard correctly refuses, iris_train correctly returns 0, and
-   the instrument is never fitted. The library was honest about it; every sketch
-   that ignored the return value was not. Confirmed with avr-gcc for atmega328p:
-   (int)60000 == -5536.
+   iris_internal_train_run as an int epoch count. Where int is 16 bits, every
+   Arduino AVR board, 60000 would become -5536 (avr-gcc for the atmega328p),
+   the trainer's `epochs <= 0` guard would refuse, iris_train would return 0,
+   and a sketch that ignored the return value would play an instrument that
+   was never fitted.
 
    30000 is the largest round number that fits a signed 16-bit int. It is not a
    compromise in practice: an 8-bit AVR at 16 MHz does not reach 30,000 epochs
@@ -2022,18 +2276,17 @@ IRIS_API void iris_internal_begin_session(iris *k, int ceiling) {
 IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume,
                            iris_progress_fn cb, void *user) { if (!k) return -1.0f;
   /* Refuse before writing anything else. epochs <= 0 is "do nothing", not
-     "train instantly": without that test the loop below never runs, err stays
-     0, and the tail reports a freshly randomised network as trained with a
-     perfect fit. A poisoned demonstration sets IRIS_NAN_TRAPPED inside
+     "train instantly": without that test the loop below would never run,
+     err would stay 0, and the tail would report a freshly randomised
+     network as trained with a perfect fit. A poisoned demonstration sets IRIS_NAN_TRAPPED inside
      iris_internal_trainable.
 
      ONE MORE WRITE ON A SLICE'S REFUSAL, and it is the one that has to
      happen: a run in flight that finds nothing it can train on is over,
-     however it got that way. The four delete functions empty a store as
+     however it got that way. The delete functions can empty a store as
      surely as iris_clear does, and ending the run HERE covers every caller
-     instead of every caller having to remember. Without it the documented
-     slice loop spins for ever with the progress bar frozen -- five million
-     iterations and counting, measured. */
+     instead of every caller having to remember. Without it the slice loop
+     would spin for ever with the progress bar frozen. */
   if (epochs <= 0 || !iris_internal_trainable(k)) {
     if (resume) k->tr_running = 0;
     return -1.0f;
@@ -2059,10 +2312,10 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
      0.618 again, exactly what it played before the damage. So a run that
      would continue from pinned weights refuses, loudly and distinguishably,
      with IRIS_DIVERGED_STUCK, rather than pretending to train. It does NOT
-     reseed on its own: a warm trainer is
-     asked to keep the performer's weights, and replacing them silently would
-     hand the performer a different instrument, which is the failure mode
-     Fiebrink & Sonami describe.
+     reseed on its own: a warm trainer is asked to keep the performer's
+     weights, and replacing them silently would hand the performer a
+     different instrument, the loss of accumulated technique that Fiebrink
+     and Sonami describe (NIME 2020; see the warm trainers below).
 
      THE WEIGHTS DECIDE, NOT THE STATUS (iris_internal_pinned). So the refusal
      holds on every call for as long as a weight sits on the limit: a refusal
@@ -2117,7 +2370,8 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
   }
 
   for (int ep = 0; ep < epochs; ++ep) {
-    /* Fisher-Yates shuffle */
+    /* Fisher-Yates shuffle: swap each slot, from the last down, with a
+       random slot at or below it, which makes every order equally likely */
     for (int i = k->n_ex - 1; i > 0; --i) {
       int j = (int)(iris_internal_rand_u32(&k->rng) % (uint32_t)(i + 1));
       int tmp = k->order[i]; k->order[i] = k->order[j]; k->order[j] = tmp;
@@ -2133,50 +2387,46 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
       iris_internal_forward_norm(k, x);
 
       /* --- output layer error ---------------------------------------------
-         ⚠️ THIS IS A SURROGATE GRADIENT, NOT THE GRADIENT. Read this before
+         THIS IS A SURROGATE GRADIENT, NOT THE GRADIENT. Read this before
          citing anything about the trainer.
 
          d_out = (predicted - target) * y*(1-y). y*(1-y) is the exact
-         derivative of the TRUE logistic. Our forward pass does not use the
+         derivative of the TRUE logistic. This forward pass does not use the
          true logistic: iris_internal_sigmoid is built from iris_internal_tanh,
-         the clamped rational approximant of PART 1. So the backward pass is
-         not the derivative of the forward pass. It is a surrogate -- close
-         enough in shape to point downhill, and kept because the measured fits
-         are good and changing it would move the golden training hash in the
-         audit.
+         the clamped rational of PART 1. So the backward pass is not the
+         derivative of the forward pass. It is a surrogate, close enough in
+         shape to point downhill.
 
-         HOW WRONG. Exact only at zero, and under-scaling by up to 2x across
-         the ordinary operating range. The full ratio table is
-         docs/MATH-AUDIT.md:153, which is computed on the UNCLAMPED rational
-         and does change sign there. THE SHIPPED FUNCTION DOES NOT: the clamp
-         bounds a to [-1,1], so 1-a*a is never negative. Measured over
-         66,368,438 finite float bit patterns: 0 negatives, with a positive
-         control on the unclamped form finding 3,970,919 of 16,527,549. This
-         line used to claim the shipped code changes sign, contradicting the
-         "never wrong-signed" statement in PART 1; PART 1 was the correct one.
+         HOW FAR OFF. Exact only at zero, and under-scaled by up to 2 times
+         across the ordinary operating range (docs/MATH-AUDIT.md, section 5,
+         tabulates the ratio for the rational without its clamp, where it
+         also changes sign). The shipped function does not change sign: the
+         clamp holds a inside [-1, +1], so 1-a*a is never negative. Checked
+         over 66,368,438 finite float bit patterns: 0 negatives, where the
+         same check on the unclamped form finds 3,970,919 of 16,527,549.
 
          WHY IT STAYS. The textbook objection is that y*(1-y) collapses the
          gradient exactly when a unit is confidently wrong. Instrumented for
-         that event, it fired ZERO times in 48.96 million output-unit updates
-         -- it cannot fire at the defaults, because targets live in [0.1,0.9]
-         so y*(1-y) >= 0.09 whenever the network is near its target. THE
-         HONEST CAVEAT: that is measured absent at the defaults and measured
-         PRESENT above a learning rate of 0.5, which the internal setter used
-         to permit up to 2.0. Every proposed repair measured worse
-         (docs/MATH-FIXES.md defect 3).
+         that event, it fired ZERO times in 48.96 million output-unit
+         updates, and it cannot at the defaults: targets live in [0.1, 0.9],
+         so y*(1-y) >= 0.09 whenever the network is near its target. It does
+         happen above a learning rate of 0.5, which only the internal setter
+         reaches. Every repair tried measured worse (docs/MATH-FIXES.md,
+         defect 3), and the exact derivative of the rational makes no
+         measurable difference (PART 1).
 
-         WHAT IS BEING TRADED AWAY, stated plainly rather than buried: one arm
-         does beat this -- a cross-entropy gradient with targets left in
-         [0.1,0.9], which wins 32/32 seeds at N=20 by ~5%, and ~12% at a tuned
-         learning rate. It LOSES at N=10 (1.094x), which is the regime a
+         WHAT IS TRADED AWAY. One alternative does beat this: a cross-entropy
+         gradient (the gradient of the logarithmic loss usually paired with a
+         sigmoid output, which is the miss alone, with no y*(1-y) factor)
+         with the targets left in [0.1, 0.9] wins 32 of 32 seeds at
+         20 demonstrations by about 5%, and about 12% at a tuned learning
+         rate. It loses at 10 demonstrations (1.094 times worse), the regime a
          musician actually demonstrates in, and it widens the reroll spread in
-         the undemonstrated gaps by 1.6x. Reroll being a real control rather
-         than a shrug is a stated promise of this library, and y*(1-y) is the
-         brake that keeps it. That is a judgement about the use case sitting on
-         top of a measurement, not a measurement by itself, and it is recorded
-         here as such.
-
-         See docs/MATH-FIXES.md defect 3 and docs/MATH-AUDIT.md section 5. */
+         the undemonstrated gaps by 1.6 times. A reroll that changes the
+         instrument is one of this library's promises, and y*(1-y) is the
+         brake that keeps it steady at the demonstrations. That is a judgement
+         about the use case made on top of a measurement
+         (docs/MATH-FIXES.md, defect 3; docs/MATH-AUDIT.md, section 5). */
       float rse = 0.0f;
       for (int o = 0; o < NOUT; ++o) {
         float y = k->out[o];
@@ -2186,15 +2436,17 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
         k->d_out[o] = e * y * (1.0f - y);
       }
       /* THE RESIDUAL LEDGER (PART 8f). A separate accumulator: it reads the
-         same errors and touches no weight, so every bit of the update below
-         is what it was before this line existed. */
+         same errors and touches no weight, so it changes no bit of the
+         update below. */
       k->ex_res[row_ix] += rse;
 
       /* --- hidden layer error: blame flows backward through the weights ----
-         (1 - a*a) is the exact derivative of the TRUE tanh. iris_internal_tanh
-         is not tanh — see the surrogate-gradient note on the output layer
-         above, which applies here identically. The exact derivative of the
-         approximant is ((x*x - 9) / (3*(3 + x*x)))^2, and it is not what this
+         Each hidden unit's share is the output errors, weighted by the
+         connections they came through, times the slope of its own
+         squashing function. (1 - a*a) is the slope of the TRUE tanh, written
+         in terms of the unit's output a; iris_internal_tanh is not tanh, so
+         the surrogate note above applies here too. The exact slope of the
+         rational is ((x*x - 9) / (3*(3 + x*x)))^2, and it is not what this
          uses. */
       for (int h = 0; h < NH; ++h) {
         float acc = 0.0f;
@@ -2204,18 +2456,20 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
       }
 
       /* --- apply the nudges, with momentum -------------------------------- */
-      /* WEIGHT DECAY, when asked for. `wd` is zero unless iris_set_smoothing
-         set it, and when it is zero this is bit-for-bit the update that shipped
-         before decay existed — `w[h] -= 0.0f * w[h]` is exact in IEEE, so the
-         golden training hash is unaffected and the default path costs one
-         multiply that the optimiser can see is dead.
+      /* Each weight's velocity is 0.85 of the last one minus the learning
+         rate times its gradient; the weight moves by its velocity.
+
+         WEIGHT DECAY, when asked for. `wd` is zero unless iris_set_smoothing
+         set it, and at zero `w[h] -= 0.0f * w[h]` subtracts an exact zero, so
+         the update is the undecayed one bit for bit; the default path pays
+         one multiply and one subtraction per weight for it.
 
          Decoupled (applied to the weight, not folded into the gradient, so it
-         does not accumulate in the momentum term) and on WEIGHTS ONLY. Biases
-         are never decayed: penalising a bias shifts the function without
-         reducing capacity, which is cost with no benefit. Scaled by 1/n_ex so
-         that alpha means the same thing regardless of how many demonstrations
-         you have, matching scikit-learn's penalty-to-data ratio. */
+         does not build up in the momentum) and on WEIGHTS ONLY. Biases are
+         never decayed: penalising a bias shifts the function without
+         reducing its freedom, which is cost with no benefit. Scaled by 1/n_ex
+         so that a setting means the same thing however many demonstrations
+         you have, as scikit-learn scales its penalty against the data. */
       const float wd = k->l2 * k->lr / (float)k->n_ex;
       for (int o = 0; o < NOUT; ++o) {
         float g = k->d_out[o];
@@ -2277,7 +2531,8 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
 
        WHAT 1e-6 IS. `err` is the mean squared error over every demonstration
        and output, in the network's own output units, where each output's
-       demonstrated range spans the 0.8-wide band [0.1, 0.9]. So the floor is
+       demonstrated range spans the 0.8-wide band [0.1, 0.9], added up during
+       the epoch while the weights are still moving. So the floor is
        a root-mean-square miss of 0.001 in those units: 0.125% of each
        output's demonstrated range. It is ABSOLUTE -- the same number whatever
        the data, the noise or the number of demonstrations -- and it was
@@ -2285,8 +2540,8 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
 
        WHEN IT FIRES. A network with a few dozen weights can fit a handful of
        demonstrations exactly, noise and all, so with few takes the error
-       falls through the floor before the plateau test ever looks. Measured,
-       iris_train on 2 inputs -> 12 hidden -> 3 outputs, six target shapes x 40
+       falls through the floor before the plateau test ever looks. iris_train
+       on 2 inputs -> 12 hidden -> 3 outputs, six synthetic target shapes x 40
        seeds per cell (240 runs), stopped here in:
            demonstrations       4     5     8    10    12    20    50
            clean              84%   80%   61%   52%   43%   18%   16%
@@ -2332,8 +2587,9 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
    moving. Retraining from the seed rewrites the mapping everywhere, which
    is how musicians lose accumulated technique to retraining (Fiebrink and
    Sonami, NIME 2020). A short warm run starts from the practised weights
-   instead. tests/audit.c check 16 adds one take to a practised 20-take
-   instrument and runs iris_continue(k, 20): the training root-mean-square
+   instead. The tests/audit.c check "correction: parity fit, surgical
+   drift" adds one take to a practised 20-take instrument and runs
+   iris_continue(k, 20): the training root-mean-square
    error reaches 0.0187, against 0.0181 for a cold 600-epoch retrain from
    the same seed, on a thirtieth of the epochs, and the mapping far from the
    new take moves 0.0025 on average, against 0.0033 for the retrain.
@@ -2341,24 +2597,37 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
    THE HAZARD. The weights remember every demonstration they were trained
    on, including one you have since deleted: a deleted bad take's influence
    survives in the weights, and a warm run starts from exactly those
-   weights, so continuing after a delete does not undo the take (the note
-   inside iris_train measures how far it pulls the places you never
-   demonstrated). After deleting a take, call iris_train, which starts over
-   from the seed and fits only the demonstrations stored now.
+   weights, so continuing after a delete does not undo the take. On 20
+   demonstrations of a smooth target plus one contradictory take, trained,
+   the take deleted, then trained again: continuing leaves the instrument 14
+   times further from the true mapping than iris_train does (mean error
+   0.1416 against 0.0100, 40 of 40 seeds, every one with a healthy status),
+   and when the deleted take sat between demonstrations it leaves the
+   mapping there 0.75 to 0.82 of full scale wrong (8 of 8 seeds). A take
+   outside the demonstrated range does damage of its own, because every run
+   refits the ranges: correcting at twice the range moves the whole mapping
+   by 0.07 to 0.16, against about 0.0015 for a take inside it. After
+   deleting a take, call iris_train, which starts over from the seed and
+   fits only the demonstrations stored now.
 
    THE SEED ALONE NO LONGER DESCRIBES THE INSTRUMENT. A warm run draws its
    shuffle from the random state the last run left, so after one the seed
    reproduces only a fresh iris_train; replaying the same records, deletes
-   and runs in the same order reproduces the instrument to the bit
-   (tests/audit.c check 14). A saved file carries the random state (PART 9)
-   but not the momentum velocities, which a load sets to zero, so a warm run
-   after a load matches the same run on the unsaved instrument only when its
-   velocities were zero as well (check 15: it then matches to the bit).
+   and runs in the same order reproduces the instrument to the bit (the
+   tests/audit.c check "event-sourced determinism"). A saved file carries
+   the random state (PART 9) but not the momentum velocities, which a load
+   sets to zero, so a warm run after a load matches the same run on the
+   unsaved instrument only when its velocities were zero as well, and then
+   it matches to the bit (the check "save round trip carries the random
+   state").
 
    Both refuse (-1) what every trainer refuses (iris_internal_trainable),
    and while a weight sits exactly on ±IRIS_W_LIMIT they refuse with
    IRIS_DIVERGED_STUCK on every call, that status being the one thing they
-   write; iris_train is the way out.
+   write; iris_train is the way out. One path answers with neither: a
+   not-a-number met partway through a run reseeds the instrument to a
+   finite, unfitted start, sets IRIS_NAN_TRAPPED and returns 1.0 (see the
+   failure rules above iris_get_status).
    -------------------------------------------------------------------------- */
 
 /* THE FIXED-EPOCH TRAINER: exactly `epochs` more epochs from the current
@@ -2369,8 +2638,7 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
    iris_train, not this.
 
    It matches Weka MultilayerPerceptron's per-weight update recursion and its
-   per-sample update granularity; see the divergence table for defaults and
-   activations.
+   per-demonstration update granularity.
 
    WHAT THAT DOES AND DOES NOT CLAIM. The recursion is an exact algebraic
    rewrite of Weka's (ours: v = momentum*v - lr*g*x, w += v; theirs:
@@ -2378,19 +2646,22 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
    sign convention, both starting at zero). The granularity matches: n_ex
    weight writes per epoch, not one.
 
-   It is NOT numerically identical to Weka and cannot be. We compute in
-   binary32; Weka computes in binary64 at every step. Exact agreement is
-   impossible in principle, not merely unachieved. It also is not identical in
-   behaviour: our hidden units use the approximant against their logistic, our output
-   units are sigmoid-then-clamp against their unthresholded linear, our
-   defaults are lr 0.10 / momentum 0.85 against their 0.3 / 0.2, and we
-   reshuffle every epoch where they shuffle once. Same rule, different
-   quantities entering it, therefore different trajectories.
+   It is NOT numerically identical to Weka and cannot be. iris computes in
+   binary32; Weka computes in binary64 at every step, so exact agreement is
+   impossible in principle, not merely unachieved. Nor is it identical in
+   behaviour: iris's hidden units use the rational of PART 1 where Weka's
+   use the logistic, its outputs are a sigmoid then a clamp where Weka's are
+   linear and unclamped, its learning rate and momentum are 0.10 and 0.85
+   where Weka's are 0.3 and 0.2, and it reshuffles every epoch where Weka
+   shuffles once. Same rule, different quantities entering it, therefore
+   different trajectories.
 
    Every "bit-identical" claim in this file is a claim about THIS FILE's
-   self-consistency — sliced vs unsliced runs, save/load round trips, -O0 vs
-   -O3 — never about Weka. Audit check 12 hashes the weights this produces.
-   Do not "improve" it; the plateau trainers are where improvements go. */
+   self-consistency (sliced against unsliced runs, save and load round
+   trips, -O0 against -O3), never about Weka. The golden hash in
+   tests/audit.c pins the weights this produces, so any change to it is a
+   change to training, made deliberately with the hash re-pinned and a
+   changelog entry (CONTRIBUTING.md). */
 IRIS_API float iris_continue(iris *k, int epochs) { if (!k) return -1.0f;
   return iris_internal_train_run(k, epochs, 0, 0, 0, 0);
 }
@@ -2453,8 +2724,11 @@ IRIS_API int iris_internal_cold_start(iris *k) {
    infinity, and then the one thing it changes is the status, to
    IRIS_NAN_TRAPPED. Neither refusal touches the weights or the ranges. A run
    the divergence guard stopped still returns 1: the instrument was fitted,
-   and the status says how. If you want to know HOW WELL it fits, that is a
-   separate question with a separate answer: iris_last_error(k).
+   and the status says how. It also returns 0, with IRIS_NAN_TRAPPED, when it
+   meets a not-a-number partway through a run (demonstrations spread wider
+   than a float can span), which leaves the instrument reseeded and
+   unfitted. If you want to know HOW WELL it fits, that is a separate
+   question with a separate answer: iris_last_error(k).
 
    IT NEVER REFUSES A STUCK INSTRUMENT, and that is deliberate: starting over
    from the seed is the way out of IRIS_DIVERGED_STUCK, whose weights are the
@@ -2468,14 +2742,13 @@ IRIS_API int iris_train(iris *k) {
   /* FIT FROM A DEFINED START, always.
 
      Continuing from whatever weights are already there breaks the loop this
-     library exists for. Record a bad take, delete it, retrain -- the
-     documented repair -- and a warm start keeps the deleted take's crater,
-     because the weights it bent are the weights training resumes from.
-     Measured over 40 seeds: the places you did NOT demonstrate came back 215
-     times further from the mapping you showed it, in every single run, while
-     iris_last_error moved the other way and the status reported perfect
-     health. The one number a screen can show said the instrument had
-     improved.
+     library exists for. Record a bad take, delete it, retrain (the repair
+     the usage block teaches) and a warm start keeps the deleted take's
+     crater, because the weights it bent are the weights training resumes
+     from: 14 times further from the true mapping than this function, in 40
+     of 40 seeds, with a healthy status and a training error as small as a
+     clean fit's, so nothing a screen can show gives it away (THE HAZARD,
+     above).
 
      Warm-starting has its use, argued with the warm trainers above: continuing
      from the current fit adjusts one region without rewriting the mapping
@@ -2485,44 +2758,49 @@ IRIS_API int iris_train(iris *k) {
      act. */
   if (!iris_internal_cold_start(k)) return 0;
 
-  /* WHAT THIS BETS ON, AND WHEN THE BET IS WRONG.
+  /* WHAT THE PLATEAU RULE BETS ON, AND WHEN THE BET IS WRONG.
 
-     Training stops when a window of epochs stops buying much error. That rule
-     is right for demonstrations recorded by a human hand, which are noisy: a
-     long run there fits the noise and generalises 13-52% WORSE.
+     Training stops when a window of epochs stops buying much error. Against
+     running longer that is the right bet on noisy takes (a fixed 60,000
+     epochs generalises 2% to 29% worse than the plateau), and against
+     stopping sooner it is the wrong one (a fixed 100 epochs beats it by 1.2
+     to 2.2 times at noise 0.05 and above, unless smoothing is on): see
+     TRAINING TO A PLATEAU above, and the table at iris_set_smoothing.
 
-     It is expensive for clean demonstrations, and the size of that is worth
-     knowing. On a straight one-sensor ramp with twelve evenly spaced takes:
+     On clean demonstrations it can stop far too early. One input, 12 hidden
+     units, one output, twelve takes evenly spaced on a straight ramp from 0
+     to 1, seed 1, then iris_continue up to each mark:
 
-       epochs      training error   worst miss on a demonstrated pose
-       4,000       3.26e-04         0.0337    <- where this function stops
-       60,000      3.07e-04         0.0299    <- IRIS_CONV_CEILING
-       160,000     2.93e-04         0.0323
-       320,000     2.06e-06         0.0023    <- 15x better recall
-       640,000     9.90e-07         0.0020
+       epochs      training error   worst miss on a demonstrated take
+       4,000       3.16e-04         0.0433    <- where this function stops
+       60,000      3.04e-04         0.0425    <- IRIS_CONV_CEILING
+       160,000     3.10e-04         0.0395
+       320,000     8.32e-06         0.0055
+       388,478     9.99e-07         0.0025    <- the error floor stops it
 
-     The error sits on a FALSE plateau from epoch 4,000 to 160,000 and then
-     falls two orders of magnitude. The plateau outlasts this library's entire
-     maximum budget by nearly three times, so nothing here can see past it, and
-     raising `ceiling` on iris_continue_to_plateau cannot help -- a ceiling is
-     a maximum, and the run is stopping far below it.
+     The error sits on a FALSE plateau from epoch 4,000 past 160,000 and then
+     falls two orders of magnitude (seeds 7, 42 and 12345 do the same; seed
+     1234 stays on it until after 320,000). The plateau outlasts this
+     library's maximum budget, so nothing here can see past it, and raising
+     `ceiling` on iris_continue_to_plateau cannot help: a ceiling is a
+     maximum, and the run stops far below it.
 
-     If your demonstrations are clean and the recall matters more than the
-     generalisation, the escape is iris_continue(k, 320000) or more after
-     this. That is a real choice with a real cost, which is why it is written
-     down here rather than made for you. */
+     If your demonstrations are clean and recall matters more to you than
+     what happens between takes, the escape is iris_continue(k, 400000) after
+     this. That is a real choice with a real cost, which is why it is
+     written here rather than made for you. */
   /* ASK THE FLAG, NOT THE SIGN. A run that trapped a not-a-number partway
      leaves a non-negative error behind while never fitting (it re-seeds to a
      finite start and clears `trained`), so the sign of the error alone would
-     return 1 with iris_is_trained 0 and status 2 -- exactly what Rule 1
-     promises cannot happen. k->trained is set by the run itself and is the
-     same answer iris_is_trained gives every other caller. */
+     return 1 with iris_is_trained 0 and status 2, which Rule 1 says cannot
+     happen. k->trained is set by the run itself and is the same answer
+     iris_is_trained gives every other caller. */
   { float e = iris_continue_to_plateau(k, 0, 0, 0);
     return (e >= 0.0f && k->trained) ? 1 : 0; }
 }
 
 
-/* The same run, in slices, for a UI that must keep drawing.
+/* The same run, in slices, for a sketch that must keep drawing.
      iris_train_begin(k, 0);
      while (iris_train_slice(k, 500)) { draw(iris_train_progress(k)); poll(); }
 
@@ -2557,9 +2835,9 @@ IRIS_API int iris_train_begin(iris *k, int ceiling) { if (!k) return 0;
    the run and writes nothing else, or holding a not-a-number, which ends the
    run and writes IRIS_NAN_TRAPPED. */
 IRIS_API int iris_train_slice(iris *k, int epochs) { if (!k) return 0;
-  /* A budget of zero or less is "do nothing", not "use the default". It used
-     to fall through to the engine's own default of 2,000 epochs, so a caller
-     computing a slice size that came out zero silently trained instead. */
+  /* A budget of zero or less is "do nothing", not "use the default": a caller
+     whose computed slice size comes out zero trains nothing, and the return
+     value still says whether the run goes on. */
   if (epochs <= 0) return k->tr_running;
   if (!k->tr_running) return 0;
   {
@@ -2579,7 +2857,7 @@ IRIS_API int iris_train_slice(iris *k, int epochs) { if (!k) return 0;
 IRIS_API float iris_train_progress(const iris *k) { if (!k) return 0.0f;
   /* "Not running" covers two situations that need opposite answers: a run
      that FINISHED is 1.0, and a run that never STARTED is 0.0. Returning 1.0
-     for both drew a student's progress bar full before they pressed anything,
+     for both would draw a progress bar full before anything was pressed,
      empty one slice later, then full again. After any gradient run the
      ceiling is set -- iris_train_begin sets it first thing -- and a
      closed-form solve, which has no epochs and no ceiling, leaves its ledger
@@ -2606,7 +2884,19 @@ IRIS_API int iris_train_busy(const iris *k) { if (!k) return 0; return k->tr_run
    solve (PART 8d), which runs no epochs, sets it to 0. */
 IRIS_API int iris_train_epochs_done(const iris *k) { if (!k) return 0; return k->tr_done; }
 
+/* 1 when the instrument's fit matches the demonstrations stored now: set by
+   every trainer that fits, cleared by iris_record, the deletes, iris_clear,
+   iris_reseed and a run that ends unfitted. An instrument can be fitted and
+   still playing while this says 0 (PART 6). */
 IRIS_API int   iris_is_trained(const iris *k) { if (!k) return 0; return k->trained; }
+/* The training error of the current fit, as a mean squared error in the
+   network's output units (see ERROR in the masthead), and 1.0 before any
+   fit. It is not measured the same way on every path. After a gradient run
+   it is the last epoch's error, added up while the weights were still
+   moving; after a closed-form solve or a load it is measured over the
+   demonstrations with the final weights. So the same weights can read a
+   little differently: a 2-12-3 fit of 20 demonstrations that reports
+   1.08e-5 after iris_train reads 9.27e-6 after a save and a load. */
 IRIS_API float iris_last_error(const iris *k) { if (!k) return 0.0f; return k->last_error; }
 IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->seed; }
 
@@ -2627,52 +2917,53 @@ IRIS_API double iris_internal_out_span(const iris *k, int n, int j) {
    can afford it.
 
    THE OBJECTION THIS ANSWERS. Everything else in this library measures itself
-   against the examples it was fitted on. Training stops when TRAINING error
-   plateaus, which is not the same event as "it got as good as it is going to
-   get at things it has not seen", and an ML reviewer is right to say so. The
-   usual remedy — hold back 20% as a validation set — is unavailable here: at 20
-   demonstrations that discards 4 of them, and you cannot spare 4.
+   against the demonstrations it was fitted on. Training stops when TRAINING
+   error plateaus, which is not the same event as "it got as good as it is
+   going to get at things it has not seen", and a machine-learning reviewer
+   is right to say so. The usual remedy, holding back 20% as a validation
+   set, is unavailable here: at 20 demonstrations that discards 4 of them, and
+   you cannot spare 4.
 
    Leave-one-out is the remedy that fits this regime. Hide ONE demonstration,
-   refit on the rest, and see how far off the hidden one you land. Do that once
-   per demonstration and average. Nothing is discarded; every example is used
-   for training in every fold but its own.
+   refit on the rest, and see how far off the hidden one you land. Do that
+   once per demonstration and average. Nothing is discarded; every
+   demonstration is used for training in every fold but its own.
 
-   WHAT IT COSTS. n_ex full retrains. At 20 examples on a laptop that is roughly
-   half a second; on the ESP32-S3, using the one measured on-device training
-   figure (321 ms at 20 examples for 600 epochs), roughly 6 s. That is a
-   deliberate, occasional act — "how good is this actually?" — not something to
-   put in a play loop.
+   WHAT IT COSTS. n_ex + 1 fits of `epochs` each (600 by default): the folds,
+   then the final refit. At 20 demonstrations of a 2-12-3 instrument that is
+   about 21 ms on the development laptop (an Apple M4 Max, Apple clang -O2).
+   It has not been timed on the ESP32-S3. It is a deliberate, occasional act,
+   "how good is this actually?", not something to put in a play loop.
 
-   HOW TO USE IT. The honest use is comparison, not an absolute grade: run it at
-   several l2 values and take the lowest. That is a principled way to pick a
-   penalty without the circularity of tuning on the numbers you then report,
-   which is the mistake this project has made twice and caught twice.
+   HOW TO USE IT. For comparison, not as an absolute grade: run it at several
+   smoothing values and take the lowest. That picks a setting without tuning
+   on the very numbers you then report.
 
-   HOW WELL IT ACTUALLY WORKS, measured 2026-08-27 rather than assumed. On a
-   20-demonstration noisy task, sweeping l2 over {0, 1e-4, 1e-3, 1e-2, 1e-1} and
-   comparing what LOO chose against the true error on a clean held-out grid:
+   HOW WELL THAT WORKS. Twenty demonstrations on a 5 x 4 grid of a smooth
+   2-input, 3-output target, with Gaussian noise of standard deviation 0.05
+   on the outputs, seed 1234. The left column is this function; the right is
+   the mean squared error of the plateau-trained instrument against the clean
+   target on a 21 x 21 grid:
 
-       l2        LOO said     truth said
-       0         0.002296     0.000577
-       1e-4      0.002293     0.000576
-       1e-3      0.002273     0.000565
-       1e-2      0.002135     0.000500   <- LOO's pick
-       1e-1      0.002396     0.000378   <- actually best
+       smoothing   leave-one-out    held-out truth
+       0              0.00645          0.00213
+       0.05           0.00555          0.00082   <- actually best
+       0.15           0.00534          0.00084   <- leave-one-out's pick
+       0.5            0.00692          0.00085
+       1              0.00890          0.00164
 
-   LOO ranked the coarse direction correctly — it put the unregularised arms
-   last and identified that a penalty helps — and then chose ONE STEP
-   CONSERVATIVE of the true optimum. That is the known behaviour of
-   leave-one-out at small n: nearly unbiased but high variance, and each fold
-   trains on n-1 examples rather than n, which makes it pessimistic about how
-   much regularisation you need. Treat it as a coarse ranking instrument, not a
-   precision one: it will tell you whether to regularise and roughly how much,
-   and it will not find the exact optimum. Its absolute value is also NOT
-   comparable to a grid error — the two columns above differ by ~4x — so use it
-   only to compare settings against each other.
+   It ranks the ends correctly (no smoothing and full smoothing are both
+   worse) and picks a neighbour of the true best, which here is nearly as
+   good. That is the known behaviour of leave-one-out at small n: nearly
+   unbiased but noisy, and each fold trains on n-1 demonstrations rather than
+   n. It also scores 600-epoch fits, not the plateau run you play. Treat it
+   as a coarse ranking: it tells you whether to smooth and roughly how much,
+   not the exact optimum. Its absolute value is NOT comparable to a held-out
+   error (the columns above differ by three to eight times), so use it only
+   to compare settings with each other.
 
-   Every fold trains from the SAME seed so the folds differ only by which
-   example was hidden. epochs <= 0 takes 600. Returns mean squared error per
+   Every fold trains from the SAME seed, so the folds differ only by which
+   demonstration was hidden. epochs <= 0 takes 600. Returns mean squared error per
    output, in the demonstrations' own units, or -1 if it refused: fewer than 3
    demonstrations to fold over, or a store no trainer would accept (see
    iris_internal_trainable). It checks that BEFORE the first fold reseeds
@@ -2680,9 +2971,11 @@ IRIS_API double iris_internal_out_span(const iris *k, int n, int j) {
    IRIS_NAN_TRAPPED only for a demonstration that is not finite, and it never
    returns a not-a-number.
 
-   THE INSTRUMENT IS LEFT REFITTED ON ALL EXAMPLES, from that same seed, so it
-   is valid to play afterwards — but it is NOT the instrument you had before you
-   called this, because it has been retrained. Save first if that matters. */
+   THE INSTRUMENT IS LEFT REFITTED ON ALL DEMONSTRATIONS, from that same
+   seed, with iris_continue for `epochs`, so it is valid to play afterwards,
+   but it is NOT the instrument you had before you called this: it has been
+   retrained, and for a fixed 600 epochs rather than to the plateau. Save
+   first, or call iris_train afterwards, if that matters. */
 
 /* The sweep itself, shared by iris_loo_error and iris_suggest_smoothing.
    per_range = 0 sums each miss in the demonstrations' own units, which is
@@ -2736,7 +3029,7 @@ IRIS_API float iris_internal_loo(iris *k, int epochs, int per_range) {
 
 IRIS_API float iris_loo_error(iris *k, int epochs) { return iris_internal_loo(k, epochs, 0); }
 
-/* SUGGEST A SMOOTHING VALUE — an explicit, occasional act, not an automatic one.
+/* SUGGEST A SMOOTHING VALUE: an explicit, occasional act, not an automatic one.
 
    Runs leave-one-out (above) at each of five smoothing settings -- 0, 0.05,
    0.15, 0.5 and 1 -- and returns the one that scored best, or -1 if it
@@ -2758,13 +3051,13 @@ IRIS_API float iris_loo_error(iris *k, int epochs) { return iris_internal_loo(k,
 
    UNITS DO NOT MATTER. Each output's miss on the hidden demonstration is
    divided by that output's demonstrated range before it is squared, so an
-   output recorded in thousands counts the same as one recorded in fractions:
-   "Units: none" from the front page, applied here. iris_loo_error itself
+   output recorded in thousands counts the same as one recorded in
+   fractions: "Units: none" from the interface block, applied here. iris_loo_error itself
    reports raw units. An output whose demonstrations never moved carries no
    evidence about smoothing and is left out.
 
-   WHY IT IS NOT AUTOMATIC — this was tested as an automatic default and it
-   failed the bar set for it. On the same 36 datasets with 16 rerolls each:
+   WHY IT IS NOT AUTOMATIC. Tried as an automatic default, on the same 36
+   datasets with 16 rerolls each:
 
      - IT IS NOT STABLE. Rerolling the same demonstrations changed its answer:
        2.17 distinct values per dataset on average. An instrument whose
@@ -2773,15 +3066,16 @@ IRIS_API float iris_loo_error(iris *k, int epochs) { return iris_internal_loo(k,
      - IT IS SOMETIMES WORSE THAN DOING NOTHING. 10.9% of its picks gave the
        plateau-trained instrument a worse held-out error than smoothing 0.
      - IT IS SLOW. Five sweeps of n + 1 fits: 104 ms at 20 demonstrations and
-       640 ms at 50 on an Apple M4 Max (2 inputs, 12 hidden, 3 outputs). On
-       the ESP32-S3, scaling the one measured on-device figure (321 ms for a
-       600-epoch fit at 20 demonstrations) in proportion to demonstrations
-       times epochs gives about 32 s at 20 demonstrations and 200 s at 50 --
-       an estimate, not a board reading. That is not something to hide inside
-       a training call.
+       640 ms at 50 on the development laptop (an Apple M4 Max; 2 inputs, 12
+       hidden units, 3 outputs). It has not been timed on the ESP32-S3. At
+       the 32 to 40 microseconds per demonstration per epoch that
+       device_torture's test 5 implies (a board figure awaiting a recorded
+       log), the 1.2 million demonstration-epochs of a 20-demonstration
+       suggestion would take 40 to 50 seconds: an estimate, not a board
+       reading. That is not something to hide inside a training call.
 
-   WHAT IT IS GOOD FOR: an honest starting point when you genuinely do not know,
-   on a machine where 100 ms is nothing. It captured 81% of what always picking
+   WHAT IT IS GOOD FOR: a starting point when you genuinely do not know, on a
+   machine where 100 ms is nothing. It captured 81% of what always picking
    the best setting would have gained. Treat the number as a suggestion to
    audition, not an answer — and if you like where you land, pin it in your
    code rather than re-deriving it, so your instrument stays put.
@@ -2799,7 +3093,9 @@ IRIS_API float iris_loo_error(iris *k, int epochs) { return iris_internal_loo(k,
    alignment, not overlapping the instrument. It refuses otherwise, and on
    anything iris_loo_error refuses, having changed nothing but, for a
    demonstration that is not finite, the status: refusing an answer is
-   recoverable, and quietly replacing someone's instrument is not.
+   recoverable, and quietly replacing someone's instrument is not. A
+   mistake in the arguments is found before the store is looked at, so it
+   leaves the status alone even when a demonstration is poisoned too.
 
    It still suggests; it still does not decide. Applying the number is yours. */
 IRIS_API float iris_suggest_smoothing(iris *k, void *scratch, size_t scratch_bytes) {
@@ -2838,38 +3134,41 @@ IRIS_API float iris_suggest_smoothing(iris *k, void *scratch, size_t scratch_byt
 /* ==========================================================================
    PART 8f — WHICH DEMONSTRATION IS FIGHTING THE OTHERS
 
-   The trial-and-error trap in interactive ML is that when the instrument
-   feels wrong you have no idea WHICH of your twenty demonstrations is wrong,
-   so you re-record at random. This points at one.
+   The trial-and-error trap in interactive machine learning is that when the
+   instrument
+   feels wrong you have no idea WHICH of your twenty demonstrations is
+   wrong, so you re-record at random. This points at one.
 
    IT IS THE INTEGRAL, NOT THE ENDPOINT, AND THAT IS THE WHOLE IDEA.
    The obvious detector is the final training residual: after training, ask
-   each example how badly the model still misses it. It gets WORSE as the
+   each demonstration how badly the network still misses it. It gets WORSE as the
    mistake gets bigger, because given enough epochs the optimiser bends the
    surface far enough to fit the bad point too, after which it looks like
-   every other point. So this sums each example's squared error over EVERY
-   epoch instead, which measures how long it fought rather than where it
-   ended up. An example that agrees with its neighbours is fitted early and
+   every other point. So this sums each demonstration's squared error over
+   EVERY epoch instead, which measures how long it fought rather than where
+   it ended up. A demonstration that agrees with its neighbours is fitted
+   early and
    stays fitted; one that contradicts them stays wrong for thousands of
    epochs. That ranking is stable across training budgets where the endpoint
    is not.
 
    WHAT YOU GET BACK IS A MARGIN, NOT A LEVEL, and that is deliberate. The
    worst-of-n stress score rises with n on clean data with nothing wrong at
-   all, so a user interface wired to a fixed level would be silent on small
-   rigs and cry wolf on large ones. Worst divided by second-worst does not
-   drift. IRIS_STRESS_FLAG is 2.5.
+   all, so a screen wired to a fixed level would be silent on small
+   instruments and cry wolf on large ones. Worst divided by second-worst
+   does not drift. IRIS_STRESS_FLAG is 2.5.
 
-   BELOW IRIS_STRESS_MIN_EX (12) IT RETURNS -1 AND SAYS NOTHING. An example
-   can only be caught disagreeing with a crowd if there is a crowd; at ten
-   demonstrations the clean margin alone reaches 5.04, which would be a false
-   accusation. That is the situation, not a tuning failure.
+   BELOW IRIS_STRESS_MIN_EX (12) IT RETURNS -1 AND SAYS NOTHING. A
+   demonstration can only be caught disagreeing with a crowd if there is a
+   crowd; at ten demonstrations the clean margin alone reaches 5.04
+   (docs/adr/0019-the-residual-ledger-integrates-it-does-not-sample.md),
+   which would be a false accusation.
 
-   TWO LIMITS THAT TRAVEL WITH IT. A 5% offset on one of eight outputs is
-   smaller than the spread between two takes of the same human gesture, and
-   nothing here finds it reliably -- this function does not pretend to. And
-   every number behind it comes from a clean offset on a smooth, noiseless
-   truth: real demonstrations are inconsistent in ways that are not one
+   THE LIMIT THAT TRAVELS WITH IT. Every number below comes from one clean
+   offset on one output of a smooth, noiseless truth. A 5% offset of that kind
+   is smaller than the spread between two takes of the same human gesture,
+   and on clean synthetic sessions iris_train still ranks it first (18 of 20,
+   below), but real demonstrations are inconsistent in ways that are not one
    displaced output, and none of this has been checked against a recorded
    human gesture.
 
@@ -2886,29 +3185,32 @@ IRIS_API float iris_suggest_smoothing(iris *k, void *scratch, size_t scratch_byt
    not a take to delete unheard, and no flag does not prove every take is
    good. A candidate improvement for the closed-form trainer, not built: the
    leave-one-out residual, each demonstration's miss divided by one minus its
-   leverage (its diagonal entry of the solve's hat matrix), which the same
-   Cholesky factor gives in about n times (nh+1) squared operations.
+   leverage, which is how strongly that demonstration pulls the fit toward
+   itself (its diagonal entry of the hat matrix, the matrix that turns the
+   demonstrated targets into the fitted ones). The same Cholesky factor
+   gives it in about n times (nh+1) squared operations.
 
-   COST. sizeof(float) * cap in the arena -- 512 B at cap 128, 1 KB at cap 256
-   -- and one float add per example per epoch, under 0.1% of the backprop work
-   already being done for that example. Not free; that is the price.
+   COST. sizeof(float) * cap in the arena (512 bytes at cap 128, 1 KB at
+   cap 256) and one float addition per demonstration per epoch, a sliver of
+   the backpropagation work already being done for it.
 
-   All the measurements, the detector comparison, the margin table and the
-   relation to TracIn: docs/adr/0019-the-residual-ledger-integrates-it-does-not-sample.md
+   The detector comparison, the margin table and the relation to TracIn (a
+   method from the machine-learning literature that credits each training
+   example with its gradient's effect summed over training):
+   docs/adr/0019-the-residual-ledger-integrates-it-does-not-sample.md
    ========================================================================== */
 
 /* Fewer demonstrations than this and there is no crowd to disagree with. */
 #define IRIS_STRESS_MIN_EX 12
-/* Margin (worst / second-worst) at which a UI should say something out loud.
+/* Margin (worst / second-worst) at which a screen should say something.
    Most clean sessions stay below it and some do not: see THE FLAG IS NOT
    SILENT ON CLEAN SESSIONS above. */
 #define IRIS_STRESS_FLAG 2.5f
 
-/* Relative stress of one example: its integrated training error divided by
-   the mean over all examples, so 1.0 is an ordinary example. This is a
-   RANKING, and it is meaningful at any example count — it is only the
-   decision to speak that needs a crowd. 0.0f before any training, or for an
-   index out of range. */
+/* Relative stress of one demonstration: its integrated training error
+   divided by the mean over all of them, so 1.0 is an ordinary one. This is
+   a RANKING, and it is meaningful at any count; only the decision to speak
+   needs a crowd. 0.0f before any training, or for an index out of range. */
 IRIS_API float iris_example_stress(const iris *k, int idx) { if (!k) return 0.0f;
   if (idx < 0 || idx >= k->n_ex || k->res_epochs == 0 || k->n_ex == 0) return 0.0f;
   {
@@ -2919,27 +3221,27 @@ IRIS_API float iris_example_stress(const iris *k, int idx) { if (!k) return 0.0f
   }
 }
 
-/* The one to point at. Returns the INDEX of the example that fought hardest,
-   or -1 when there is nothing to point at: untrained, or fewer than
+/* The one to point at. Returns the INDEX of the demonstration that fought
+   hardest, or -1 when there is nothing to point at: no training run or
+   solve since the instrument was made or loaded, or fewer than
    IRIS_STRESS_MIN_EX demonstrations. *margin, when given, receives worst
    divided by second-worst.
 
    THE CALLER DECIDES WHETHER TO SPEAK, and the condition is written once,
-   here, so that every UI uses the same one:
+   here, so that every sketch uses the same one:
 
        float m; int id = iris_worst_example_id(k, &m);
        if (id >= 0 && m >= IRIS_STRESS_FLAG)  say("example %d is fighting the
                                                  others", id);
 
    USE iris_worst_example_id, NOT iris_worst_example + iris_id_at: it returns
-   the stable example ID directly, and ids survive deletions where indices do
-   not. Both stay public for callers who want the positional index, but they
-   are not the recommended path.
+   the identifier directly, and identifiers survive deletions where indices
+   do not. Both stay public for callers who want the position.
 
    The index is returned even below the flag because the ranking is still
-   real and a UI may want to show it quietly (a dimmer mark, say) without
-   accusing anything. Ties go to the earliest-recorded example, the same rule
-   as iris_knn_predict. */
+   real and a screen may want to show it quietly (a dimmer mark, say)
+   without accusing anything. Ties go to the earliest-recorded
+   demonstration, the same rule as iris_knn_predict. */
 IRIS_API int iris_worst_example(const iris *k, float *margin) { if (!k) return -1;
   if (margin) *margin = 0.0f;
   if (k->n_ex < IRIS_STRESS_MIN_EX || k->res_epochs == 0) return -1;
@@ -2956,31 +3258,41 @@ IRIS_API int iris_worst_example(const iris *k, float *margin) { if (!k) return -
   }
 }
 
-/* The stable id of that example — what a UI should say out loud, because ids
-   survive deletions and indices do not. -1 when there is nothing to say. */
+/* The identifier of that demonstration, which is what a sketch should show,
+   because identifiers survive deletions and indices do not. -1 when there
+   is nothing to say. */
 IRIS_API int iris_worst_example_id(const iris *k, float *margin) { if (!k) return -1;
   int i = iris_worst_example(k, margin);
   return i < 0 ? -1 : k->ex_id[i];
 }
 
 /* ==========================================================================
-   PART 8d — THE INSTANT TRAINER  (ELM: freeze the randomness, solve the rest)
+   PART 8d — THE CLOSED-FORM TRAINER  (ELM: freeze the randomness, solve the rest)
 
-   The fastest trainer in this file. On a laptop, at 50 demonstrations, two
-   inputs and nh=12, a solve takes about 8 microseconds where 600 epochs of
-   backprop take 2.5 ms -- roughly 300x (tests/audit.c prints the table as
-   TRAINING COST). It has not been timed on the ESP32-S3. The ratio shrinks as
+   The fastest trainer in this file. On the development laptop, at 50
+   demonstrations, two inputs and nh = 12 (12 hidden units), a solve takes
+   about 8 microseconds where 600 epochs of backpropagation take 2.6 ms,
+   roughly 300 times longer (tests/audit.c prints both in its training-cost
+   table). It has not been timed on the ESP32-S3. The ratio shrinks as
    inputs are added, because the frozen layer is redrawn for every
    demonstration (see NOTHING CHANGES UNLESS THE SOLVE WORKS, below).
 
-   The trick is to stop training half the network. Draw the hidden layer once
-   from the seed and FREEZE it; the output layer is then a linear least-squares
-   problem with an exact closed-form answer — one (nh+1)x(nh+1) Cholesky solve,
-   no epochs, no iteration. This idea has a name in the literature — extreme
-   learning machine, ELM — and a 20-year argument about whether it deserves
-   one; it is here because it is measured to work here.
+   The trick is to stop training half the network. Draw the hidden layer
+   once from the seed and FREEZE it. Each demonstration then gives the
+   hidden units' answers h (plus a constant 1 for the bias) and a target z
+   for each output (the demonstrated output, mapped back through the
+   sigmoid). The output weights beta that fit best in the least-squares
+   sense solve the linear system
 
-   Two measurements make it work in float32 on this network:
+       (H^T H + ridge) beta = H^T z
+
+   where H stacks one row of h per demonstration. H^T H is the normal
+   matrix, (nh+1) x (nh+1), and one Cholesky factorisation solves it: no
+   epochs, no iteration. This idea has a name in the literature, extreme
+   learning machine, and a 20-year argument about whether it deserves one;
+   it is here because it works here.
+
+   Two measurements make it work in single precision on this network:
 
    GAIN. The backprop starting weights (1/sqrt(n_in)) rely on training to grow.
    Frozen at that scale, tanh of a normalised input barely bends -- the random
@@ -2993,20 +3305,21 @@ IRIS_API int iris_worst_example_id(const iris *k, float *margin) { if (!k) retur
        M         0.25   0.50   1.00   1.50   2.00   3.00   4.00   8.00
        error    .1143  .1025  .0946  .0919  .0905  .0894  .0920  .1087
 
-   M=2 beats the backprop starting scale M=1 by 4.3%. The minimum is BROAD and
-   M=2 sits inside it. M=3 is marginally better (1.2%) and the optimum drifts
-   upward with width -- best at 1.5 for nh=12 and at 3.0 for nh=48 -- so 2 is a
-   good constant rather than the best one, and it stays because moving it would
-   move every frozen hash in the audit for a 1.2% gain.
+   M=2 beats the backpropagation starting scale, M=1, by 4.3%. The minimum
+   is BROAD and M=2 sits inside it. M=3 is marginally better (1.2%) and the
+   optimum drifts upward with width (best at 1.5 for nh=12 and at 3.0 for
+   nh=48), so 2 is a good constant rather than the best one. It stays because
+   a 1.2% gain on synthetic targets does not justify a change to training,
+   which would re-pin the closed-form hashes in tests/elm.c.
 
    RIDGE, MANDATORY. Even with the wider gain, the unridged float32 normal
-   matrix fails Cholesky in EVERY realistic scenario measured -- including 20
-   well-spread examples. The ridge is relative (lam0 * trace/(nh+1), so it
+   matrix fails Cholesky in EVERY realistic scenario measured, including 20
+   well-spread demonstrations. The ridge is relative (lam0 * trace/(nh+1), so it
    scales with the data) plus a floor of 1e-7, and it escalates
    deterministically: double it on a failed factorisation, at most 8 times, and
    report the count. If escalation was needed the status says
    IRIS_RIDGE_ESCALATED -- the result is valid, the data was harder than usual.
-   The campaign behind that: docs/adr/0009-ridge-is-mandatory.md. Escalation
+   The measurements: docs/adr/0009-ridge-is-mandatory.md. Escalation
    can still run out: lam0 = 0 on 128 demonstrations all made at one gesture
    fails all nine attempts (40 seeds of 40, at 8, 12 and 24 hidden units), and
    that is an ordinary refusal (below).
@@ -3014,7 +3327,8 @@ IRIS_API int iris_worst_example_id(const iris *k, float *margin) { if (!k) retur
    SMOOTHING reaches this trainer as extra ridge on the output weights, and
    never on the output biases: a penalised bias drags every output toward the
    middle of its range, where an unpenalised one lets heavy smoothing settle
-   near the average of what was demonstrated (averaged in logit units).
+   near the average of what was demonstrated (averaged in logit units: the
+   logit is the inverse of the sigmoid, the space the solve works in).
    Smoothing s is stored as weight decay 0.3 s (PART 3); the solve adds four
    times that, 1.2 s, to the diagonal entry of every output weight, on top of
    the relative ridge above. At smoothing 0 the added term is exactly zero, so
@@ -3094,31 +3408,31 @@ IRIS_API int iris_worst_example_id(const iris *k, float *margin) { if (!k) retur
    The solved instrument is an ordinary iris instrument: same w1/b1/w2/b2
    arrays, same iris_predict, saves and loads as a normal file. Its output
    weights can lie beyond IRIS_W_LIMIT, which is legitimate here; the note at
-   IRIS_W_LIMIT says what that means for gradient training afterwards. The solve
-   targets logit space -- the exact inverse of our sigmoid -- so the shipping
-   forward pass lands on the normalised targets. That makes it a
-   bounded-output VARIANT of the backprop head, not an equivalent.
+   IRIS_W_LIMIT says what that means for gradient training afterwards. The
+   solve targets logit space, the exact inverse of this file's sigmoid, so
+   the forward pass lands on the normalised targets. That makes it a
+   bounded-output VARIANT of the backpropagation network's output layer, not
+   an equivalent. docs/adr/0008-elm-same-network-better-math.md compares it
+   with a solve whose outputs are linear; nothing in this repository bounds
+   the difference between the closed-form fit and a backpropagation fit.
 
-   THE 4.6e-2 FIGURE, SCOPED. It measures logit-space-sigmoid ELM against
-   linear-head ELM -- an internal ablation between two ELM variants
-   (docs/adr/0008-elm-same-network-better-math.md). It is NOT the
-   ELM-vs-backprop gap, which is not bounded pointwise anywhere in this repo.
-   Do not cite it as one.
-
-   REROLL is the reason to love it: a new seed literally IS a new frozen random
-   layer, undiluted by any training -- measurably steadier at the demos and
-   livelier in the gaps. iris_reseed(k, new_seed) then iris_train_elm is the
-   whole gesture. The purest form of "same examples, different instrument" this
-   project has. That corner lives at nh >= 8: four frozen random features
-   cannot recall five demos, so ELM refuses nh < 8 outright rather than
-   shipping a config that breaks the reroll promise. Numbers and the
-   recommended lam0 per width: docs/adr/0008-elm-same-network-better-math.md.
+   REROLL is the reason to love it: a new seed literally IS a new frozen
+   random layer, undiluted by any training, steady at the demonstrations and
+   lively in the gaps (the tests/audit.c check "ELM: same seed, same bits;
+   reroll character" measures the demonstrations moving 0.0106 between
+   seeds and the gaps 0.1123). iris_reseed(k, new_seed) then iris_train_elm
+   is the whole gesture: the purest form of "same demonstrations, different
+   instrument" this library has. That needs nh >= 8, since four frozen
+   random features cannot recall five demonstrations, so this trainer
+   refuses a narrower instrument outright. Numbers and the recommended lam0
+   per width: docs/adr/0008-elm-same-network-better-math.md.
 
    Determinism: the hidden layer is drawn from k->seed by a LOCAL random number
    generator (k->rng is never touched, so a solve does not move the random
-   state a warm trainer draws from), accumulation order is fixed by example
-   order, and the escalation schedule is fixed. Same seed + same examples =>
-   bit-identical weights, verified at nh 12/24/48.
+   state a warm trainer draws from), accumulation order is fixed by
+   demonstration order, and the escalation schedule is fixed. Same seed and
+   same demonstrations give bit-identical weights (checked at nh 12, 24 and
+   48 in tests/audit.c).
    ========================================================================== */
 
 /* The solve's working memory, in bytes, for n_hid = NH and n_out = NO.
@@ -3137,14 +3451,17 @@ IRIS_API int iris_worst_example_id(const iris *k, float *margin) { if (!k) retur
                     + (size_t)IRIS_MAX_IN )       /* one frozen hidden unit    */ \
     + sizeof(float) - 1 )                         /* alignment padding         */
 
-/* arena + solve scratch in one block, for callers who want one number */
+/* The arena and the solve's scratch added together, for a sketch that
+   reserves one static block for both: give iris_init the first
+   IRIS_ARENA(NI, NH, NO, NEX) bytes and iris_train_elm the rest. */
 #define IRIS_ARENA_ELM(NI, NH, NO, NEX)                                          \
   ( IRIS_ARENA(NI, NH, NO, NEX) + IRIS_ELM_SCRATCH(NH, NO) )
 
-/* Exact inverse of iris_internal_tanh — our approximant, not the true tanh —
-   via Newton on x*(27+x^2) = y*(27+9x^2). Five iterations reach float32
-   roundoff over |y| <= 0.98, which covers the whole 0.1-0.9 target band.
-   Deterministic: fixed iteration count, no early exit. */
+/* Exact inverse of iris_internal_tanh (the rational, not the true tanh),
+   by Newton's method (repeatedly stepping to where the tangent line of
+   x*(27+x^2) - y*(27+9x^2) crosses zero). Five steps reach single-precision
+   rounding over |y| <= 0.98, which covers the whole 0.1-0.9 target band.
+   Deterministic: a fixed number of steps, no early exit. */
 IRIS_API float iris_internal_artanh(float y) {
   y = iris_internal_clampf(y, -0.98f, 0.98f);
   float x = y * (1.0f + 0.33333333f * y * y);      /* series starting point */
@@ -3419,12 +3736,20 @@ IRIS_API int iris_internal_train_elm_ex(iris *k, float lam0, float gain_w, float
   return doublings;
 }
 
-/* The instant trainer with the measured-default gains: 2/sqrt(n_in) for
-   weights AND biases. lam0 = 1e-4 is the nh=12 default; 1e-3 at nh=48. The
-   scratch is at least IRIS_ELM_SCRATCH(n_hid, n_out) bytes, at any alignment.
-   Returns the number of ridge doublings, or -1 having changed nothing; see
-   iris_internal_train_elm_ex above for every refusal and for what a lam0 of 0
-   means. */
+/* THE CLOSED-FORM TRAINER, with the gains of the sweep above: 2/sqrt(n_in)
+   for weights AND biases. lam0 is the ridge in proportion to the data: 1e-4
+   is the recommended value at nh=12 and 1e-3 at nh=48. The scratch is at
+   least IRIS_ELM_SCRATCH(n_hid, n_out) bytes, at any alignment, not
+   overlapping the instrument. Smoothing applies (see SMOOTHING above).
+
+   Returns the number of ridge doublings it needed (0 is the best case), or
+   -1 if it refused, having changed nothing but, for a poisoned
+   demonstration, the status; iris_internal_train_elm_ex above lists every
+   refusal and says what a lam0 of 0 means. After a solve the status is
+   IRIS_STATUS_OK, IRIS_RIDGE_ESCALATED when doublings were needed, or
+   IRIS_SOLVE_COLLAPSED when the fit ignores the inputs;
+   iris_train_epochs_done reads 0, because no epochs ran, and the momentum
+   velocities are zero. */
 IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_bytes) { if (!k) return -1;
   const float g = 2.0f / iris_internal_sqrt((float)(k->n_in > 0 ? k->n_in : 1));
   return iris_internal_train_elm_ex(k, lam0, g, g, scratch, scratch_bytes);
@@ -3437,11 +3762,14 @@ IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_b
    The file carries the weights AND the demonstrations, so whoever receives it
    can keep working rather than inheriting a sealed box.
 
-   THE FILE, format version 7. Every number is little-endian and is written
-   and read one byte at a time, so a file means the same thing on every
-   machine and the buffer you hand over needs no particular alignment. A float
-   travels as its 32-bit IEEE-754 bit pattern. In the type column, u32 is an
-   unsigned 32-bit integer, i32 a signed one, and f32 a float.
+   THE FILE, format version 7. Every number is little-endian (least
+   significant byte first) and is written and read one byte at a time, so a
+   file means the same thing on every machine and the buffer you hand over
+   needs no particular alignment. A float travels as its binary32 bit
+   pattern. In the type column, u32 is an unsigned 32-bit integer, i32 a
+   signed one, and f32 a float. Format 7 is the first format this library
+   promises to keep reading in every later release (README.md, "What is
+   promised").
 
      offset  field                                type     rule on load
      ------  -----------------------------------  -------  -------------------------
@@ -3545,8 +3873,8 @@ IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_b
    the sliced trainer driven from a timer -- the buffer holds a mixture of two
    instruments, and the checksum, computed over the mixture, matches it by
    construction. If every value in the mixture obeys the rules, it loads. One
-   instrument belongs to one thread (see THREADING in PART 2); do not save an
-   instrument that something else may be touching.
+   instrument belongs to one thread (see THREADING, above iris_get_status); do
+   not save an instrument that something else may be touching.
    ========================================================================== */
 
 #define IRIS_FILE_MAGIC   "IRIS"   /* the first four bytes of every file       */
@@ -3819,14 +4147,14 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
    A different character of instrument, not a quality tier. Desktop
    Wekinator ships k-NN as its default for discrete (classifier) outputs.
    These two functions play both modes with ZERO training, ZERO seed, and
-   ZERO extra arena bytes: they are a weighted read of the example store the
-   instrument already carries. The examples ARE the model — the design rule
-   of this whole file, taken to its logical end.
+   ZERO extra arena bytes: they are a weighted read of the demonstrations
+   the instrument already carries. The demonstrations ARE the model, the
+   design rule of this whole file taken to its logical end.
 
-   Semantics, stated as design and not as apology:
+   What that means:
 
      - THIS ALGORITHM DOES NOT REROLL. There is no seed and nothing random;
-       the same examples always give the same instrument, bit for bit. It
+       the same demonstrations always give the same instrument, bit for bit. It
        is sampler-like where the MLP is morph-like: it plays back and
        blends your demonstrations.
 
@@ -3842,10 +4170,11 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
        to 0.8 wide, about 0.2% of the range (the convergence check in
        tests/audit.c).
 
-     - SEAMS, ON PURPOSE. Between two demos the output can step 31x more
-       sharply than its mean step, where the MLP's morph steps 1.9x
-       (measured in the experiment behind docs/adr/0010). That is the
-       sampler character, documented, not hidden.
+     - SEAMS, ON PURPOSE. Between two demonstrations the output can step 31
+       times more sharply than its mean step, where the MLP's morph steps
+       1.9 times (docs/adr/0010-knn-the-sampler-beside-the-morpher.md records
+       the measurement). That is the
+       sampler character.
 
      - STRUCTURAL SAFETY. The answer is a weighted average of demonstrated
        outputs, held inside their range: it is never a not-a-number and
@@ -3853,8 +4182,9 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
        When every neighbour carries the same value, the answer is exactly
        that value.
 
-     - THE HONEST FLOOR. The MLP generalises better at EVERY example count
-       measured (2.4x at 5 examples, 2.1x at 200; docs/adr/0010). Choose
+     - THE ACCURACY FLOOR. The MLP generalises better at EVERY count of
+       demonstrations measured (2.4 times at 5, 2.1 times at 200;
+       docs/adr/0010-knn-the-sampler-beside-the-morpher.md). Choose
        k-NN for its character, never for accuracy. For discrete outputs use
        iris_classify_1nn, which returns a stored label verbatim: a blend of
        labels is exactly a label only where all k neighbours agree, and a
@@ -3868,14 +4198,15 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
    instrument keeps its ranges when you record or delete; train again to
    measure in the new ones. (iris_internal_fit_ranges alone would do it too,
    but it would also change what iris_predict plays, because the network was
-   trained on the old ranges.) Ties resolve to the earliest-recorded example,
-   the same rule as Weka's LinearNNSearch, the engine under desktop Wekinator's
-   classifier — so decisions are comparable ("Wekinator-compatible semantics";
-   the desktop Java binary itself has not been run against this code, and the
-   label stays this honest until it has).
+   trained on the old ranges.) Ties resolve to the earliest-recorded
+   demonstration, the same rule as Weka's LinearNNSearch, the search under
+   desktop Wekinator's classifier, so decisions are comparable. The Java
+   program itself has not been run against this code: the tests/audit.c
+   check "1-NN: agrees with the Weka-IBk reference" compares it with a
+   double-precision reference written to the same rules.
 
    Every saved instrument can play this way with nothing added to its file:
-   the examples and ranges are already in it. The file does not record which
+   the demonstrations and ranges are already in it. The file does not record which
    algorithm you play it with; that is a choice made at run time.
    ========================================================================== */
 
@@ -3969,7 +4300,7 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
      gcc that n_ex is at least 1 from here on, and the lower clamp comes last,
      which makes kk at least 1 whatever n_ex is. Either of those on its own,
      as does filling every slot below, clears gcc-15's "bi may be used
-     uninitialized" in tests/audit.c at -O2 and -O3 (measured). */
+     uninitialized" warning on tests/audit.c at -O2 and -O3. */
   if (kk > k->n_ex) kk = k->n_ex;
   if (kk > IRIS_KNN_MAXK) kk = IRIS_KNN_MAXK;
   if (kk < 1) kk = 1;
@@ -4042,12 +4373,12 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
      where s is a neighbour's share of the total weight. That is the ordinary
      weighted mean, sum(w * y) / sum(w), rearranged, and the rearrangement is
      what makes it exact when every neighbour agrees: each difference is then
-     exactly zero, so the answer is exactly y0. The ordinary form rounds.
-     Measured on it with the checks in tests/playing.c: 291,862 of 364,140
-     queries on stores whose labels all agreed did not return the label
-     exactly -- a label of 3 came back as 2.9999998, which a C cast to int
-     turns into class 2 -- and 44,504 of 800,000 random queries landed a few
-     steps of float resolution outside the demonstrated range.
+     exactly zero, so the answer is exactly y0. The ordinary form rounds: run
+     through the checks in tests/playing.c, it fails to return the label on
+     291,862 of 364,140 queries on stores whose labels all agree (a label of 3
+     comes back as 2.9999998, which a C cast to int turns into class 2), and
+     44,504 of 800,000 random queries land a few steps of float resolution
+     outside the demonstrated range.
 
      The shares are worked out before they multiply anything. A weight
      reaches 1e9 on a demonstration you stand on, so w * (y - y0) overflows
@@ -4099,13 +4430,15 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
 }
 
 /* 1-NN classification: snap to the single nearest demonstration and return
-   its outputs VERBATIM (bit-for-bit) plus its stable example id, or -1 if
-   the store is empty or the reading has no finite distance to any take. For
-   a classifier task store the class label in out[0]; this is then exactly
-   desktop Wekinator's shipping default for discrete outputs (Weka IBk, k=1,
-   min-max normalised Euclidean distance, first-recorded wins ties). Like
-   iris_knn_predict it writes the status and the ranges of a never-fitted
-   instrument, so it takes a non-const one. */
+   its outputs VERBATIM (bit-for-bit) plus its identifier, or -1 if the store
+   is empty, the shape is too big for this translation unit, or the reading
+   has no finite distance to any take. For a classifier task store the class
+   label in out[0]; this then follows the rules of desktop Wekinator's
+   default for discrete outputs, Weka's IBk nearest-neighbour classifier with
+   k=1: distance normalised by each input's range, Euclidean (straight-line),
+   the first-recorded demonstration winning a tie. Like iris_knn_predict it
+   writes the status and the ranges of a never-fitted instrument, so it takes
+   a non-const one. */
 /* LENGTHS, same rule as iris_predict and just as unchecked.
    Reads exactly n_in floats from `in` and writes exactly n_out into `out`;
    `out` may be null when only the identifier is wanted. */

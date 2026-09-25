@@ -6,10 +6,11 @@
    memory, show it a few examples of "when I do THIS, it sounds like THAT", and
    then ask it what to do about gestures you never showed it.
 
-       cc -std=c99 -O2 -I.. -o hello 01_hello.c -lm && ./hello
+       cc -std=c99 -O2 -Wall -Wextra -I.. -o hello 01_hello.c && ./hello
 
-   -lm is for this example's printf-adjacent maths only. The library itself
-   calls nothing — see the zero-dependency note at the top of iris.h.
+   No -lm: the library calls nothing, not even the maths library (see the
+   zero-dependency note at the top of iris.h). This file uses <stdio.h> only
+   to print.
    ============================================================================ */
 
 #include "../iris.h"
@@ -17,12 +18,12 @@
 
 /* 2 sensor inputs, 12 hidden units, 3 sound parameters, room for 64 examples.
    IRIS_ARENA computes the size at compile time, so this is a fixed array in
-   .bss — no malloc, and you know the number before you run it. */
+   static memory: no malloc, and you know the number before you run it. */
 static unsigned char memory[IRIS_ARENA(2, 12, 3, 64)];
 
 int main(void) {
   iris *k = iris_init(memory, sizeof memory, 2, 12, 3, 64, /*seed=*/1234);
-  if (!k) { printf("arena too small\n"); return 1; }
+  if (!k) { printf("iris_init refused the shape\n"); return 1; }
 
   /* THREE DEMONSTRATIONS. Left hand low -> dark. Middle -> mid. Right high ->
      bright. In a real instrument these two numbers come off a sensor and these
@@ -36,13 +37,15 @@ int main(void) {
     if (!iris_record(k, demos[i].in, demos[i].out))
       { printf("refused example %d\n", i); return 1; }
 
-  /* TRAIN. No epoch count to guess: it stops when it stops improving. */
+  /* TRAIN. No epoch count to guess: it starts from the seed and stops when
+     the error stops improving (or falls below its floor, which with three
+     demonstrations is what usually happens first). */
   if (!iris_train(k)) { printf("training refused\n"); return 1; }
   printf("trained: %d epochs, final error %.2e\n\n",
          iris_train_epochs_done(k), iris_last_error(k));
 
-  /* PLAY — including gestures never demonstrated. The interesting column is
-     the middle one: nobody showed it (0.25, 0.25). */
+  /* PLAY, including gestures never demonstrated. The interesting rows are
+     the ones nobody showed it, (0.25, 0.25) and (0.75, 0.75). */
   printf("  gesture        ->  sound parameters\n");
   const float probes[5][2] = { {0,0}, {0.25f,0.25f}, {0.5f,0.5f}, {0.75f,0.75f}, {1,1} };
   for (int p = 0; p < 5; ++p) {

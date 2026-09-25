@@ -24,7 +24,7 @@
    by one part in a million.
 
        sh build.sh tiny
-   or  cc -std=c99 -O2 -o tiny docs/tiny.c -lm && ./tiny
+   or  cc -std=c99 -O2 -Wall -Wextra -o tiny docs/tiny.c -lm && ./tiny
    ============================================================================ */
 
 #include "../iris.h"                 /* only to compare against */
@@ -118,7 +118,8 @@ int main(void) {
     if (c < NI) { in_lo[c] = lo; in_hi[c] = hi; } else { out_lo[c - NI] = lo; out_hi[c - NI] = hi; }
   }
 
-  /* START: uniform in [-1,1) over the square root of the fan-in; biases 0. */
+  /* START: uniform in [-1,+1] times the rounded reciprocal of the square root
+     of the fan-in, as iris.h computes it; biases 0. */
   rs = SEED;
   for (int h = 0; h < NH; ++h) for (int i = 0; i < NI; ++i) w1[h][i] = rnd_sym() * (1.0f / sqrtf((float)NI));
   for (int o = 0; o < NO; ++o) for (int h = 0; h < NH; ++h) w2[o][h] = rnd_sym() * (1.0f / sqrtf((float)NH));
