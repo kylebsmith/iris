@@ -286,6 +286,33 @@ int main(void) {
              iris_id_at(k, 0));
     check("neighbours answer takes far outside the fitted ranges", knn_ok && one_ok && del_ok, d); }
 
+  /* ---- a store poisoned in memory has no nearest take ---------------------
+     iris_record and iris_load refuse a value that is not finite, but the
+     store is memory the caller can reach. With a not-a-number written into
+     every take's moving input, no distance, ordinary or far, is a number,
+     so neither neighbour function has a take to answer from: iris_knn_predict
+     must write the substitute, the centre of the fitted output range, and
+     iris_classify_1nn answer -1, both with IRIS_NAN_TRAPPED, and neither may
+     read outside the store. */
+  { static unsigned char M[IRIS_ARENA(2, 8, 1, 8)];
+    iris *k = iris_init(M, sizeof M, 2, 8, 1, 8, 1u);
+    float a[2] = { 0.0f, 0.0f }, ya = 2.0f, b[2] = { 1.0f, 1.0f }, yb = 4.0f;
+    iris_record(k, a, &ya); iris_record(k, b, &yb);
+    iris_train(k);
+    k->ex[0] = __builtin_nanf("");
+    k->ex[3] = __builtin_nanf("");
+    const float q[2] = { 0.5f, 0.5f };
+    float o = -1.0f, c = -1.0f;
+    iris_knn_predict(k, q, &o, 2);
+    const int knn_status = (int)iris_get_status(k);
+    k->status = IRIS_STATUS_OK;
+    const int id = iris_classify_1nn(k, q, &c);
+    snprintf(d, sizeof d, "k-NN %g (status %d), 1-NN id %d playing %g (status %d)",
+             (double)o, knn_status, id, (double)c, (int)iris_get_status(k));
+    check("a store poisoned in memory gets the substitute, reported",
+          o == 3.0f && knn_status == IRIS_NAN_TRAPPED && id == -1 && c == 3.0f
+          && iris_get_status(k) == IRIS_NAN_TRAPPED, d); }
+
   /* ---- a still input is ignored: moving it changes nothing ---------------
      For inputs resting at 500 (a sensor mid-range), 4095 (a 12-bit rail), 0
      (a switch) and -2.5, trained both ways, every playing function must give
