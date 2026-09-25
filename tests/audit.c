@@ -383,7 +383,99 @@ static void *xt_thread(void *arg) {
   return 0;
 }
 
-int main(void) {
+/* --- 12. the golden blob: the TRAINING path, pinned to the bit ------------
+   Run the check-5 recipe and hash the saved bytes. Any compiler-flag drift,
+   contraction leak, or accidental math change in train/save fails this
+   check loudly. The hash is taken over the instrument's bytes only (see
+   instrument_bytes), so a change of file format cannot move it, and fnv1a
+   is taken over exactly those bytes, so a wrong length gives a wrong hash:
+   the hash is the check.
+
+   0x6805FB0D is the [-1,+1] input scaling on the contraction-off bit class
+   (docs/adr/0003). It is a function of its own so that sh build.sh
+   determinism can run it alone (./audit golden) under many compiler
+   settings. */
+static void golden_blob(void) {
+  static unsigned char file[64 * 1024];
+  /* fresh instrument: the blob carries example ids, so the recipe must
+     start from iris_init */
+  iris *kb = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 1234);
+  for (int i = 0; kb && i < 20; ++i) {
+    float u = (float)((i * 7919) % 97) / 97.0f;
+    float v = (float)((i * 6131) % 89) / 89.0f;
+    float in[NI] = { u, v }, out[NO];
+    truth(u, v, out);
+    iris_record(kb, in, out);
+  }
+  iris_reseed(kb, 1234); iris_continue(kb, 800);
+  size_t n = iris_save(kb, file, sizeof file);
+  size_t n1 = instrument_bytes(file, n);
+  uint32_t h = fnv1a(file, n1);
+  const uint32_t want = 0x6805FB0Du;
+  ok("golden blob: [-1,+1] training path bit-pinned", n1 > 0 && h == want,
+     "%zu instrument bytes, fnv1a 0x%08X (want 0x%08X)", n1, h, want);
+}
+
+/* --- 36. four instruments at once cannot touch each other ----------------
+   iris keeps no global or static state, so separate instruments may be
+   alive together, and run on separate threads with no locking. Four jobs --
+   four arenas, four seeds, four example counts -- run three ways: one after
+   another; interleaved step by step on one thread (every record, then every
+   prediction, taken round-robin across the four); and on four threads
+   released together. Each job's prediction stream and saved file must be
+   the same, to the bit, all three ways. State carried from one call to the
+   next, or shared between instruments, shows up as a difference in the
+   interleaved run for certain, and in the threaded run whenever the
+   scheduler overlaps the work. It is a function of its own so that
+   sh build.sh threads can run it alone under ThreadSanitizer (./audit four),
+   which reports any unsynchronised access whether or not it changed a bit. */
+static void four_instruments(void) {
+  const uint32_t seed[XT_N] = { 1234u, 99u, 40507u, 7u };
+  const int nex[XT_N] = { 12, 20, 31, 8 };
+  pthread_t th[XT_N];
+  for (int i = 0; i < XT_N; ++i) {
+    xt_seq[i].seed = xt_rr[i].seed = xt_par[i].seed = seed[i];
+    xt_seq[i].nex  = xt_rr[i].nex  = xt_par[i].nex  = nex[i];
+  }
+  for (int i = 0; i < XT_N; ++i) xt_work(&xt_seq[i]);
+  for (int i = 0; i < XT_N; ++i) xt_start(&xt_rr[i]);
+  for (int e = 0; e < 31; ++e) for (int i = 0; i < XT_N; ++i) xt_record(&xt_rr[i], e);
+  for (int i = 0; i < XT_N; ++i) if (xt_rr[i].k) iris_train(xt_rr[i].k);
+  for (int p = 0; p < XT_PREDS; ++p) for (int i = 0; i < XT_N; ++i) xt_play(&xt_rr[i], p);
+  for (int i = 0; i < XT_N; ++i) xt_finish(&xt_rr[i]);
+  xt_waiting = 0;
+  for (int i = 0; i < XT_N; ++i)
+    if (pthread_create(&th[i], 0, xt_thread, &xt_par[i]) != 0) {
+      ok("four instruments at once cannot touch each other", 0,
+         "pthread_create failed");
+      return;
+    }
+  for (int i = 0; i < XT_N; ++i) pthread_join(th[i], 0);
+  int rr = 0, par = 0;
+  for (int i = 0; i < XT_N; ++i) {
+    if (xt_same(&xt_seq[i], &xt_rr[i]))  rr++;
+    if (xt_same(&xt_seq[i], &xt_par[i])) par++;
+  }
+  ok("four instruments at once cannot touch each other",
+     rr == XT_N && par == XT_N,
+     "%d predictions each; interleaved %d/4 and four threads %d/4 equal the "
+     "one-at-a-time run; stream fnv1a 0x%08X 0x%08X 0x%08X 0x%08X",
+     XT_PREDS, rr, par,
+     fnv1a(xt_par[0].stream, sizeof xt_par[0].stream),
+     fnv1a(xt_par[1].stream, sizeof xt_par[1].stream),
+     fnv1a(xt_par[2].stream, sizeof xt_par[2].stream),
+     fnv1a(xt_par[3].stream, sizeof xt_par[3].stream));
+}
+
+int main(int argc, char **argv) {
+  if (argc > 1 && strcmp(argv[1], "four") == 0) {
+    four_instruments();
+    return failures ? 1 : 0;
+  }
+  if (argc > 1 && strcmp(argv[1], "golden") == 0) {
+    golden_blob();
+    return failures ? 1 : 0;
+  }
   printf("\niris v%d.%d.%d — audit\n", IRIS_VERSION_MAJOR, IRIS_VERSION_MINOR, IRIS_VERSION_PATCH);
   printf("--------------------------------------------------------------------------\n");
 
@@ -611,36 +703,7 @@ int main(void) {
        "on an example %.3f, far away %.3f", n_at, n_far);
   }
 
-  /* --- 12. the golden blob: the TRAINING path, pinned to the bit ----------
-     Run the check-5 recipe and hash the saved bytes. Any compiler-flag drift,
-     contraction leak, or accidental math change in train/save fails this
-     check loudly. The hash is taken over the instrument's bytes only (see
-     instrument_bytes), so a change of file format cannot move it, and fnv1a
-     is taken over exactly those bytes, so a wrong length gives a wrong hash:
-     the hash is the check.
-
-     0x6805FB0D is the [-1,+1] input scaling on the contraction-off bit class
-     (docs/adr/0003). */
-  {
-    static unsigned char file[64 * 1024];
-    /* fresh instrument: the blob carries example ids, so the recipe must
-       start from iris_init */
-    iris *kb = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 1234);
-    for (int i = 0; i < 20; ++i) {
-      float u = (float)((i * 7919) % 97) / 97.0f;
-      float v = (float)((i * 6131) % 89) / 89.0f;
-      float in[NI] = { u, v }, out[NO];
-      truth(u, v, out);
-      iris_record(kb, in, out);
-    }
-    iris_reseed(kb, 1234); iris_continue(kb, 800);
-    size_t n = iris_save(kb, file, sizeof file);
-    size_t n1 = instrument_bytes(file, n);
-    uint32_t h = fnv1a(file, n1);
-    const uint32_t want = 0x6805FB0Du;
-    ok("golden blob: [-1,+1] training path bit-pinned", n1 > 0 && h == want,
-       "%zu instrument bytes, fnv1a 0x%08X (want 0x%08X)", n1, h, want);
-  }
+  golden_blob();
 
   /* --- 13. NaN never reaches the audio path -------------------------------
      Three doors a NaN can come through, all guarded, all REPORTED:
@@ -1412,55 +1475,7 @@ int main(void) {
   }
 
 
-  /* --- 36. four instruments at once cannot touch each other --------------
-     iris keeps no global or static state, so separate instruments may be
-     alive together, and run on separate threads with no locking. Four jobs
-     -- four arenas, four seeds, four example counts -- run three ways: one
-     after another; interleaved step by step on this thread (every record,
-     then every prediction, taken round-robin across the four); and on four
-     threads released together. Each job's prediction stream and saved file
-     must be the same, to the bit, all three ways. State carried from one call
-     to the next, or shared between instruments, shows up as a difference in
-     the interleaved run for certain, and in the threaded run whenever the
-     scheduler overlaps the work; sh build.sh threads runs this file under
-     ThreadSanitizer too, which reports any unsynchronised access whether or
-     not it changed a bit. */
-  {
-    const uint32_t seed[XT_N] = { 1234u, 99u, 40507u, 7u };
-    const int nex[XT_N] = { 12, 20, 31, 8 };
-    pthread_t th[XT_N];
-    for (int i = 0; i < XT_N; ++i) {
-      xt_seq[i].seed = xt_rr[i].seed = xt_par[i].seed = seed[i];
-      xt_seq[i].nex  = xt_rr[i].nex  = xt_par[i].nex  = nex[i];
-    }
-    for (int i = 0; i < XT_N; ++i) xt_work(&xt_seq[i]);
-    for (int i = 0; i < XT_N; ++i) xt_start(&xt_rr[i]);
-    for (int e = 0; e < 31; ++e) for (int i = 0; i < XT_N; ++i) xt_record(&xt_rr[i], e);
-    for (int i = 0; i < XT_N; ++i) if (xt_rr[i].k) iris_train(xt_rr[i].k);
-    for (int p = 0; p < XT_PREDS; ++p) for (int i = 0; i < XT_N; ++i) xt_play(&xt_rr[i], p);
-    for (int i = 0; i < XT_N; ++i) xt_finish(&xt_rr[i]);
-    xt_waiting = 0;
-    for (int i = 0; i < XT_N; ++i)
-      if (pthread_create(&th[i], 0, xt_thread, &xt_par[i]) != 0) {
-        printf("FAIL  four instruments at once: pthread_create failed\n");
-        return 1;
-      }
-    for (int i = 0; i < XT_N; ++i) pthread_join(th[i], 0);
-    int rr = 0, par = 0;
-    for (int i = 0; i < XT_N; ++i) {
-      if (xt_same(&xt_seq[i], &xt_rr[i]))  rr++;
-      if (xt_same(&xt_seq[i], &xt_par[i])) par++;
-    }
-    ok("four instruments at once cannot touch each other",
-       rr == XT_N && par == XT_N,
-       "%d predictions each; interleaved %d/4 and four threads %d/4 equal the "
-       "one-at-a-time run; stream fnv1a 0x%08X 0x%08X 0x%08X 0x%08X",
-       XT_PREDS, rr, par,
-       fnv1a(xt_par[0].stream, sizeof xt_par[0].stream),
-       fnv1a(xt_par[1].stream, sizeof xt_par[1].stream),
-       fnv1a(xt_par[2].stream, sizeof xt_par[2].stream),
-       fnv1a(xt_par[3].stream, sizeof xt_par[3].stream));
-  }
+  four_instruments();
 
   /* --- what it costs on this machine -------------------------------------
      A report, never a pass or a fail: these are wall-clock times on whatever
