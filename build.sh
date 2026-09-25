@@ -105,26 +105,31 @@ case "${1:-audit}" in
   audit)
     "$CC" $CFLAGS -o build/audit tests/audit.c -lm
     ./build/audit
-    # Guards are inert on healthy runs — provable only across two builds:
-    # core with guards vs core with -DIRIS_NO_GUARDS, same recipe, same bits.
+    # Guards are inert on healthy runs -- provable only across two builds:
+    # every line tests/guards_ab.c prints for a healthy recipe must be the
+    # same with and without -DIRIS_NO_GUARDS, and every "control" line (a
+    # value a guard must change) must differ, or the flag reached nothing.
     "$CC" $CFLAGS -o build/guards_ab tests/guards_ab.c -lm
     "$CC" $CFLAGS -DIRIS_NO_GUARDS -o build/guards_ab_ng tests/guards_ab.c -lm
-    G=$(./build/guards_ab | head -1);      N=$(./build/guards_ab_ng | head -1)
-    GP=$(./build/guards_ab | tail -1);     NP=$(./build/guards_ab_ng | tail -1)
-    if [ "$G" = "$N" ]; then
-      echo "PASS  guards are inert on healthy runs           $G == no-guards build"
+    ./build/guards_ab > build/guards_ab.out
+    ./build/guards_ab_ng > build/guards_ab_ng.out
+    grep -v '^control' build/guards_ab.out > build/guards_ab.healthy
+    grep -v '^control' build/guards_ab_ng.out > build/guards_ab_ng.healthy
+    if cmp -s build/guards_ab.healthy build/guards_ab_ng.healthy; then
+      echo "PASS  guards are inert on healthy runs           $(wc -l < build/guards_ab.healthy | tr -d ' ') recipes identical in both builds"
     else
-      echo "FAIL  guards are inert on healthy runs           guarded: $G  no-guards: $N"
+      echo "FAIL  guards are inert on healthy runs"
+      diff build/guards_ab.healthy build/guards_ab_ng.healthy || true
       exit 1
     fi
-    # POSITIVE CONTROL. The equality above is also what you get when the flag
-    # does nothing, so it cannot detect its own defeat -- renaming the macro in
-    # the header left it passing. This asserts the flag actually reaches the
-    # code: on a poisoned demonstration the two builds MUST disagree.
-    if [ "$GP" != "$NP" ]; then
-      echo "PASS  the guards flag actually reaches the code  guarded: $GP / no-guards: $NP"
+    grep '^control' build/guards_ab.out > build/guards_ab.control || true
+    grep '^control' build/guards_ab_ng.out > build/guards_ab_ng.control || true
+    n=$(wc -l < build/guards_ab.control | tr -d ' ')
+    same=$(paste -d'|' build/guards_ab.control build/guards_ab_ng.control | awk -F'|' '$1 == $2' | wc -l | tr -d ' ')
+    if [ "$n" -gt 0 ] && [ "$same" = 0 ]; then
+      echo "PASS  the guards flag actually reaches the code  $n controls differ between the builds"
     else
-      echo "FAIL  the guards flag is inert -- IRIS_NO_GUARDS reached nothing.  both: $GP"
+      echo "FAIL  the guards flag is inert: $same of $n controls identical"
       exit 1
     fi ;;
   mpe)
