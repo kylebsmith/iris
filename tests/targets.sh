@@ -33,6 +33,10 @@
 #   REFUSES  must fail, and the failure must be iris's own #error -- a build
 #            that fails for any other reason (a missing target, a missing
 #            header) is reported as a failure of this script, not as a pass.
+# The unit also carries one compile-time check: every identifier iris_record
+# can hand out fits the target's int, the type the identifier functions return
+# (IRIS_ID_LIMIT, 32,767 where int is 16 bits). On a target where it does not,
+# the array it declares has a negative size and the build fails.
 # Every target is compiled -ffreestanding, because iris.h needs only
 # <stddef.h> and <stdint.h> and the cross targets here have no C library.
 # gcc -m32, 32-bit x86 in GCC's default x87 mode, belongs under REFUSES; no
@@ -44,6 +48,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cat > "$T/unit.c" <<'UNIT'
 #include "iris.h"
 static unsigned char mem[IRIS_ARENA(2, 12, 3, 8)];
+typedef char every_identifier_fits_int[IRIS_ID_LIMIT - 1 <= (long)((unsigned)-1 >> 1) ? 1 : -1];
 float probe(float a, float b);
 float probe(float a, float b) {
   float in[2], out[3];

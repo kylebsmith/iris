@@ -188,6 +188,13 @@ Behaviour changes on the playing path:
 - `iris_record` could overflow a signed integer handing out the last
   identifier, reachable through a loaded file; it now refuses once
   identifiers run out.
+- Where `int` is 16 bits (the Arduino AVR boards) identifiers above 32,767
+  came back from `iris_record`, `iris_get`, `iris_id_at`, `iris_classify_1nn`
+  and `iris_worst_example_id` negative, as -1 or as 0. Identifiers now stay
+  below `IRIS_ID_LIMIT`, 32,767 there and 2^31 - 1 elsewhere: `iris_record`
+  refuses at the limit, and `iris_load` refuses a file whose `next_id` is not
+  below it, so a file with identifiers past 32,766 does not load on an AVR
+  board.
 - The square root called the C library's `sqrtf` on the ESP32-S3 and, for
   negative inputs, on GCC (the GNU Compiler Collection) and Linux clang, so
   freestanding builds had an undefined symbol. It is now computed in integers

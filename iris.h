@@ -1600,13 +1600,28 @@ IRIS_API float iris_get_smoothing(const iris *k) { if (!k) return 0.0f; return k
 IRIS_API int iris_count(const iris *k) { if (!k) return 0; return k->n_ex; }
 IRIS_API int iris_capacity(const iris *k) { if (!k) return 0; return k->cap; }
 
+/* THE IDENTIFIERS HAVE TO FIT THE MACHINE'S int, BECAUSE THEY ARE RETURNED AS
+   ONE. They are stored as int32_t, and iris_record, iris_get, iris_id_at,
+   iris_classify_1nn and iris_worst_example_id hand them back as int. Where
+   int is 16 bits, every Arduino AVR board, identifier 32,768 would come back
+   as -32,768, 65,535 as -1 (the answer that means "none") and 65,536 as 0
+   (the answer that means "refused"), and iris_delete_id could not name them.
+   So an identifier stays below this: 2^31 - 1, the largest int32_t, where int
+   has 32 bits, and 32,767 where it has 16. iris_record refuses once next_id
+   reaches it, and iris_load refuses a file whose next_id is not below it, so
+   a laptop's file with identifiers past 32,766 does not load on an AVR board
+   (PART 9). Identifiers are never reused, so it counts every take ever
+   recorded into the instrument, deleted ones included. */
+#define IRIS_ID_LIMIT ((int32_t)(sizeof(int) >= 4 ? 0x7FFFFFFFL : 0x7FFFL))
+
 /* LENGTHS, same rule as iris_predict and just as unchecked.
    Reads exactly n_in floats from `in` and n_out from `out`. */
 IRIS_API int iris_record(iris *k, const float *in, const float *out) { if (!k) return 0;
   if (k->n_ex >= k->cap) { k->status = IRIS_STORE_FULL; return 0; }
-  /* Identifiers are never reused, so they can run out: once next_id is the
-     largest int32_t, handing it out and adding one would overflow. */
-  if (k->next_id >= 0x7FFFFFFF) return 0;
+  /* Identifiers are never reused, so they can run out: once next_id reaches
+     IRIS_ID_LIMIT, handing it out would give an identifier the return type
+     cannot carry, or adding one would overflow. */
+  if (k->next_id >= IRIS_ID_LIMIT) return 0;
 
 #ifndef IRIS_NO_GUARDS
   /* REFUSE A POISONED DEMONSTRATION AT THE DOOR. A not-a-number or an
@@ -1649,7 +1664,7 @@ IRIS_API int iris_record(iris *k, const float *in, const float *out) { if (!k) r
   if (k->status == IRIS_STORE_FULL)
     k->status = IRIS_STATUS_OK;
 
-  return k->ex_id[k->n_ex - 1];
+  return (int)k->ex_id[k->n_ex - 1];   /* below IRIS_ID_LIMIT, so it fits */
 }
 
 IRIS_API int iris_index_of(const iris *k, int id) { if (!k) return -1;
@@ -1659,7 +1674,7 @@ IRIS_API int iris_index_of(const iris *k, int id) { if (!k) return -1;
 
 /* The identifier at a position, without copying the row out. */
 IRIS_API int iris_id_at(const iris *k, int idx) { if (!k) return -1;
-  return (idx < 0 || idx >= k->n_ex) ? -1 : k->ex_id[idx];
+  return (idx < 0 || idx >= k->n_ex) ? -1 : (int)k->ex_id[idx];
 }
 
 /* LENGTHS, same rule as iris_predict and just as unchecked.
@@ -1671,7 +1686,7 @@ IRIS_API int iris_get(const iris *k, int idx, float *in, float *out) { if (!k) r
   const float *row = k->ex + (size_t)idx * stride;
   if (in)  for (int i = 0; i < k->n_in;  ++i) in[i]  = row[i];
   if (out) for (int i = 0; i < k->n_out; ++i) out[i] = row[k->n_in + i];
-  return k->ex_id[idx];
+  return (int)k->ex_id[idx];
 }
 
 IRIS_API int iris_delete_index(iris *k, int idx) { if (!k) return 0;
@@ -3441,7 +3456,7 @@ IRIS_API int iris_worst_example(const iris *k, float *margin) { if (!k) return -
    is nothing to say. */
 IRIS_API int iris_worst_example_id(const iris *k, float *margin) { if (!k) return -1;
   int i = iris_worst_example(k, margin);
-  return i < 0 ? -1 : k->ex_id[i];
+  return i < 0 ? -1 : (int)k->ex_id[i];
 }
 
 /* ==========================================================================
@@ -3960,7 +3975,8 @@ IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_b
          28  n_ex, demonstrations stored          u32      at most the receiver's
                                                            capacity
          32  seed                                 u32      not 0
-         36  next_id, the next identifier         u32      1 <= next_id < 2^31 - 1
+         36  next_id, the next identifier         u32      1 <= next_id <
+                                                           IRIS_ID_LIMIT
          40  random-number state                  u32      not 0
          44  smoothing                            f32      finite, 0 to 1
          48  w1, b1, w2, b2                       f32s     finite
@@ -3990,10 +4006,13 @@ IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_b
        IRIS_MAX_IN (see the note above iris_internal_shape_fits).
      - Unsigned throughout: a count with its top bit set is a large number
        that fails "at most the capacity", not a negative one that passes it.
-     - next_id stays below 2^31 - 1, the largest int32_t, so a loaded
-       instrument has at least one identifier left to hand out. iris_record
-       hands out next_id and adds one, and refuses once next_id reaches the
-       largest int32_t, so the count never overflows.
+     - next_id stays below IRIS_ID_LIMIT -- 2^31 - 1, the largest int32_t,
+       where int has 32 bits, and 32,767 where it has 16 -- so a loaded
+       instrument has at least one identifier left to hand out, and every
+       identifier fits the int the functions return it as. iris_record hands
+       out next_id and adds one, and refuses once next_id reaches the limit,
+       so the count never overflows. The limit belongs to the receiving
+       machine, like the capacity: the bytes mean the same everywhere.
      - A weight need only be finite. IRIS_W_LIMIT is backpropagation's
        detector for a runaway run, not a rule about valid instruments: the
        closed-form trainer (PART 8d) legitimately solves output weights beyond
@@ -4172,7 +4191,7 @@ IRIS_API int iris_internal_file_ok(const iris *k, const unsigned char *b, size_t
   if (iris_internal_crc32(b, bytes - 4u) != iris_internal_get_u32(b + bytes - 4u)) return 0;
   if (iris_internal_get_u32(b + 32) == 0u) return 0;                   /* seed */
   next_id = iris_internal_get_u32(b + 36);
-  if (next_id < 1u || next_id >= 0x7FFFFFFFu) return 0;
+  if (next_id < 1u || next_id >= (uint32_t)IRIS_ID_LIMIT) return 0;
   if (iris_internal_get_u32(b + 40) == 0u) return 0;       /* random state */
   { const float s = iris_internal_get_f32(b + 44);
     if (iris_internal_isbad(s) || s < 0.0f || s > 1.0f) return 0; }
@@ -4716,7 +4735,7 @@ IRIS_API int iris_classify_1nn(iris *k, const float *in, float *out) { if (!k) r
       }
 #endif
   }
-  return k->ex_id[best];
+  return (int)k->ex_id[best];
 }
 
 /* The end of the floating-point scope opened by defence 3 of the determinism
