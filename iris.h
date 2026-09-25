@@ -12,27 +12,45 @@
    no operating system, and no library calls. It is pure arithmetic on
    memory you hand it.
 
-   THE ZERO-DEPENDENCY CLAIM, STATED EXACTLY. A translation unit exercising
-   the whole public API compiles under -std=c99 -ffreestanding -nostdlib at
-   -O0/-O2/-Os and links with ZERO undefined symbols — but only with
-   -fno-stack-protector, ON A HOST. Verified 2026-08-27, Apple clang 17, arm64.
+   THE ZERO-DEPENDENCY CLAIM, STATED EXACTLY. A translation unit that calls
+   every public function, compiled with -std=c99 -ffreestanding
+   -fno-stack-protector (GCC also -fno-tree-loop-distribute-patterns) at -O0
+   to -Os, as C or as C++, has ZERO undefined symbols and links with
+   -nostdlib -static and no C library at all: Apple clang, Homebrew clang 22
+   and gcc-15 on a 64-bit ARM Mac, and Debian's gcc 14 and clang 19 on 64-bit
+   ARM Linux. None of the flags changes an output bit. Each stops the
+   COMPILER reaching for the C library on its own account:
 
-   AND ON THE CHIP IT IS ACTUALLY FOR, IT IS NOT ZERO. Measured 2026-08-30 with
-   the ESP32-S3's own compiler (xtensa-esp32s3-elf-gcc, -Os -ffreestanding
-   -fno-stack-protector), which this line previously marked UNVERIFIED:
+     -ffreestanding        clang otherwise turns the loops that zero or copy
+                           an array into C library calls: memset, memcpy,
+                           bzero and, on macOS, memset_pattern16.
+     -fno-stack-protector  where stack protection is on by default (clang on
+                           macOS), every function with an array otherwise
+                           calls __stack_chk_fail.
+     -fno-tree-loop-distribute-patterns   GCC turns the same loops into
+                           memset, memcpy and memmove calls even under
+                           -ffreestanding.
 
-     the playing path        __divsf3, memset, sqrtf
+   -fno-math-errno is not on the list: the square root is integer arithmetic
+   (PART 1), so there is no sqrtf call for errno to need. tests/freestanding.sh
+   checks all of this, and rebuilds without each flag to show what it still
+   keeps out.
+
+   ON THE CHIP IT IS ACTUALLY FOR, THE LIST IS NOT EMPTY. With the ESP32-S3's
+   own compiler (xtensa-esp32s3-elf-gcc, the flags above, -O0, -O2 or -Os):
+
+     the playing path        __divsf3
      + iris_loo_error        + __adddf3 __divdf3 __extendsfdf2 __floatsidf
                                __muldf3 __subdf3 __truncdfsf2
-     + iris_suggest_smoothing  the same, plus memcpy
+     + iris_suggest_smoothing  + memcpy, to copy its five-entry constant table
      + iris_train_elm        adds nothing
 
-   __divsf3 is single-precision DIVISION: the S3's floating-point unit has no
-   divide instruction, so every float division is a libgcc call. memset and
-   sqrtf are the compiler's and libm's. None of this is a call this source
-   writes, and all of it is present on every Arduino build anyway -- but the
-   sentence "zero undefined symbols" is FALSE on the target, and it is now
-   stated with the compiler, the flags and the list rather than as a claim.
+   __divsf3 is single-precision DIVISION: the S3's floating-point unit has
+   divide-step instructions but no single divide instruction, so every float
+   division is a routine in libgcc, the compiler's own support library, as
+   are the double-precision routines. memcpy is the one C library function.
+   None of this is a call this source writes, and all of it is present on
+   every Arduino build anyway; tests/freestanding.sh checks this list too.
 
    THE DOUBLES ARE REAL AND THEY ARE ONE FUNCTION. The __*df3 routines above
    are 64-bit soft float, which rule 3 below says this library does not use.
@@ -172,28 +190,29 @@
    "Same seed, same instrument" is a bitwise promise, and fused multiply-add
    contraction breaks it: the same source at -ffp-contract=off / on / fast
    produces three DIFFERENT weight blobs on Apple clang 17 / M4 (measured).
-   Three defences, cheapest first:
+   Four defences, cheapest first:
 
-   1. -ffast-math tripwire. fast-math implies contract=fast AND removes the
-      NaN semantics the guards below depend on. Refuse to compile.          */
+   1. Tripwires for the flags that change the arithmetic. -ffast-math implies
+      contract=fast AND removes the NaN semantics the guards below depend on.
+      Refuse to compile.                                                    */
 #if defined(__FAST_MATH__)
 #error "iris: -ffast-math / -Ofast breaks same-seed bit-determinism and disables NaN trapping. If you did not pass this yourself, your board package did: check compiler.optimization_flag in its platform.txt (Adafruit nRF52 sets -Ofast there). Build without it."
 #endif
 /* -ffinite-math-only is one of the flags -ffast-math turns on, but on its own
-   it does NOT set __FAST_MATH__, so this tripwire used to stay silent while
-   every guard in the library was optimised away: iris_isbad folded to false,
-   poisoned demonstrations were accepted, and a broken sensor produced a
-   plausible number and a healthy status. Measured on Apple clang 17. */
+   it does NOT set __FAST_MATH__, so it needs a tripwire of its own. Without
+   one, every guard in the library is optimised away: iris_isbad folds to
+   false, poisoned demonstrations are accepted, and a broken sensor produces a
+   plausible number and a healthy status. Measured on Apple clang 17 with this
+   tripwire removed. */
 #if defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__
 #error "iris: -ffinite-math-only tells the compiler no NaN or infinity can exist, which deletes every guard in this library. Build without it."
 #endif
 /* THE COMPONENT FLAGS, which -ffast-math turns on and which also work alone.
-   Measured 2026-08-30: -freciprocal-math, -funsafe-math-optimizations and
-   -fassociative-math each change the instrument, with no diagnostic of any
-   kind, exactly like -ffinite-math-only did before the tripwire above. GCC
-   announces them and clang does not, so this catches them on GCC only -- which
-   is the compiler for every ESP32, AVR and RP2040 build, and is where it
-   matters most. Say so rather than pretend it is complete.
+   -freciprocal-math, -funsafe-math-optimizations and -fassociative-math each
+   change the instrument with no diagnostic of any kind (measured). GCC
+   announces them and clang does not, so this catches them on GCC only --
+   which is the compiler for every ESP32, AVR and RP2040 build, and is where
+   it matters most.
    No Arduino core passes any of these: checked platform.txt for arduino:avr,
    esp32:esp32, rp2040:rp2040 and STMicroelectronics:stm32. Reaching this
    #error takes a deliberate flag.
@@ -202,37 +221,98 @@
    -freciprocal-math and -funsafe-math-optimizations are caught on GCC (the
    latter defines all four macros). -fassociative-math passed DIRECTLY defines
    no macro at all on gcc-15 -- measured with -dM -E -- so it is undetectable
-   here and it does change the instrument. And on clang no component flag is
-   detectable, because clang defines none of these macros. */
+   here and it does change the instrument. On clang no component flag is
+   detectable, because clang defines none of these macros, and clang 22's
+   -ffp-model=fast defines only __FINITE_MATH_ONLY__ as 0: it compiles without
+   a word and moves the golden hash in tests/audit.c (measured). */
 #if defined(__RECIPROCAL_MATH__) && __RECIPROCAL_MATH__
 #error "iris: -freciprocal-math rewrites division as multiplication by a reciprocal and changes the instrument. Build without it."
 #endif
 #if defined(__ASSOCIATIVE_MATH__) && __ASSOCIATIVE_MATH__
 #error "iris: -fassociative-math / -funsafe-math-optimizations reorders floating-point arithmetic and changes the instrument. Build without it."
 #endif
-/* 2. Forbid contraction at the source level. Clang honours this pragma at
-      default and -ffp-contract=on (measured: blob becomes bit-identical to
-      a -ffp-contract=off build); clang IGNORES it under -ffp-contract=fast.
-      THIS LINE USED TO SAY GCC IGNORES IT ALWAYS. That is wrong, and wrong in
-      the direction that undersold our own defence: measured 2026-08-30 with
-      gcc-15 -O2 -ffp-contract=fast, the pragma present gives the SAME
-      prediction hash as the clang baseline, and stripping the pragma from a
-      copy changes it. The pragma is honoured on GCC and is the thing doing the
-      work. A -ffp-contract=fast clang build still must
-      pass -ffp-contract=off explicitly. The golden-blob audit check catches
-      any build where neither defence held.                                 */
-/* GNU compilers ignore the standard pragma, and in GNU mode -- which is what
-   the Arduino IDE builds with, g++ -std=gnu++17 -O2 -- they contract by
-   default. Measured: the same seed and the same demonstrations produced a
-   DIFFERENT instrument there, which breaks the one promise this library
-   exists to keep. They do honour this, at file scope, in every mode. */
-#if defined(__GNUC__) && !defined(__clang__)
+/* 2. Wider intermediate results. C lets a compiler carry float arithmetic in
+      a wider format and round only when a value is stored, and
+      __FLT_EVAL_METHOD__ (FLT_EVAL_METHOD in <float.h>) says which format:
+
+        0        every operation rounds to its own type. This file is pinned
+                 to this arithmetic.
+        16, 32   the same as 0 for float: only the half-precision type
+                 _Float16 is widened. GCC reports 16 on 64-bit ARM in GNU mode
+                 when half-precision arithmetic is enabled, for example
+                 -std=gnu17 -mcpu=cortex-a76, the Raspberry Pi 5's core; the
+                 golden hash in tests/audit.c holds there (measured).
+        1, 2     float carried as double, or as the 80-bit x87 format. 32-bit
+                 x86 doing its float arithmetic on the x87 unit
+                 (-mfpmath=387) reports 2, and there the golden hash and
+                 every other instrument hash measured come out different,
+                 with no diagnostic (measured: clang 22
+                 --target=i686-linux-gnu -mno-sse -mfpmath=387).
+        -1       not known. There is nothing to pin.
+
+      Anything but 0, 16 or 32 refuses to compile. tests/targets.sh checks
+      that this fires on x87 and stays silent on every other target this
+      library is built for.                                                 */
+#if (defined(__FLT_EVAL_METHOD__) && __FLT_EVAL_METHOD__ != 0 \
+     && __FLT_EVAL_METHOD__ != 16 && __FLT_EVAL_METHOD__ != 32) \
+ || (!defined(__FLT_EVAL_METHOD__) && defined(FLT_EVAL_METHOD) \
+     && FLT_EVAL_METHOD != 0 && FLT_EVAL_METHOD != 16 && FLT_EVAL_METHOD != 32)
+#error "iris: this build carries float arithmetic in a wider format than float (see __FLT_EVAL_METHOD__), which changes every instrument. On 32-bit x86, build with -msse2 -mfpmath=sse."
+#endif
+/* 3. Forbid contraction in this file's code, and only there.
+
+      Clang honours #pragma STDC FP_CONTRACT OFF at its default and at
+      -ffp-contract=on: the blob becomes bit-identical to a -ffp-contract=off
+      build (measured). Clang IGNORES it under -ffp-contract=fast, so a
+      -ffp-contract=fast clang build must also pass -ffp-contract=off.
+
+      GNU compilers ignore the standard pragma and contract by default in
+      every GNU mode (-std=gnu17; the Arduino IDE's -std=gnu++2a) and in ISO
+      C++; only ISO C (-std=c99) leaves contraction off. They do honour
+      #pragma GCC optimize ("fp-contract=off"), even under -ffp-contract=fast:
+      built with gcc-15 -O2 -ffp-contract=fast, the golden hash in
+      tests/audit.c holds with it and moves without it (measured), and the
+      ESP32-S3 compiler emits no fused instruction in this file with it and
+      dozens without it (tests/pragma_leak.sh prints the count).
+
+      BOTH ARE SCOPED TO THIS FILE. push_options saves GCC's optimisation
+      settings, and pop_options, the last line of this file, restores them.
+      On clang, float_control(push) saves the whole floating-point state and
+      float_control(pop) at the end restores it. Just before that pop,
+      STDC FP_CONTRACT DEFAULT puts contraction back to what the command
+      line asks for, because clang honours float_control only on processors
+      it supports strict floating point for (64-bit ARM, x86, RISC-V and
+      PowerPC among them) and ignores it on the rest (32-bit ARM,
+      WebAssembly, Xtensa and AVR among them, measured with clang 22), with
+      a warning that the diagnostic lines around it keep out of your build.
+      Code after the #include therefore compiles as it would without
+      iris.h, contraction included where the compiler's default allows it,
+      with one exception: on those other clang targets a contraction pragma
+      of your own that comes BEFORE the #include gives way to the command
+      line's setting, so put yours after it. tests/pragma_leak.sh checks this
+      on the generated assembly: a*b+c in a function after the include still
+      becomes a fused multiply-add, no iris function contains one, and on a
+      laptop your own pragma before the include survives it.
+
+      Two consequences. GCC does not inline a function that carries an
+      optimize setting into a function whose settings differ, so when your
+      code contracts, your calls into iris stay calls (measured with gcc-15);
+      that is what keeps iris's arithmetic unfused inside your functions.
+      And your own arithmetic is yours: a program that computes its
+      demonstrations itself and needs the same bits from two compilers (a
+      laptop and a board, say) switches contraction off in its own code too,
+      as tests/audit.c does.                                                */
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wignored-pragmas"
+#pragma float_control(push)
+#pragma clang diagnostic pop
+#pragma STDC FP_CONTRACT OFF
+#elif defined(__GNUC__)
+#pragma GCC push_options
 #pragma GCC optimize ("fp-contract=off")
 #endif
-#if defined(__clang__)
-#pragma STDC FP_CONTRACT OFF
-#endif
-/* 3. Golden-blob audit vector (in tests/audit.c) — the runtime backstop.   */
+/* 4. Golden-blob audit vector (in tests/audit.c) — the runtime backstop.   */
 
 #include <stddef.h>
 #include <stdint.h>
@@ -515,13 +595,90 @@ IRIS_API float iris_tanh(float x) {
    only have to be fast once. */
 IRIS_API float iris_sigmoid(float x) { return 0.5f * (iris_tanh(0.5f * x) + 1.0f); }
 
-/* __builtin_sqrtf compiles to one hardware instruction -- except on GNU
-   compilers, which assume it must set errno for a negative input and so also
-   emit a call to the C library's sqrtf for that branch. That is an undefined
-   symbol, and it breaks the no-dependency claim on the ESP32's own toolchain.
-   Build with -fno-math-errno; check-claims.sh verifies it on every compiler it
-   can find. This function is never called with a negative argument. */
-IRIS_API float iris_sqrt(float x) { return __builtin_sqrtf(x); }
+/* THE SQUARE ROOT, in integers, correctly rounded.
+
+   Four places take a square root: iris_reseed (the starting weight scales,
+   1/sqrt(inputs) and 1/sqrt(hidden units)), iris_novelty (the distance it
+   reports, and the sqrt(inputs) it divides that by), and the instant
+   trainer (its gain, 2/sqrt(inputs), and the diagonal of every Cholesky
+   step). A compiler's square root is one instruction on a laptop, but on the
+   ESP32-S3 it is a call to the C library's sqrtf, and on GCC and Linux clang
+   it also calls sqrtf for a negative input so that errno can be set. A call
+   is an undefined symbol in a freestanding build, and it makes the answer
+   belong to whichever C library is linked. This function needs nothing and
+   gives the same bits on every target.
+
+   THE METHOD is long-hand square root, the way it is taught with decimal
+   digits, done in base 2. Write x = m * 2^p, with m the float's 24
+   significant bits as a whole number. Then
+   sqrt(x) = sqrt(m * 2^25) * 2^((p - 25) / 2), after moving one factor of 2
+   from the power into m whenever p - 25 is odd. The bits of sqrt(m * 2^25)
+   come out one at a time, from the top, 25 of them.
+   With q the root found so far and b the next bit to try, setting b grows
+   the square from q*q to (q+b)*(q+b), an increase of 2*q*b + b*b, so the bit
+   is kept exactly when the remainder (the number minus q*q) can pay for it.
+   The loop stores the remainder divided by b, which makes the price 2*q + b,
+   and moving on to the next bit, half as big, doubles the stored remainder.
+   Every quantity stays below 2^27, so 32-bit integers suffice.
+
+   CORRECTLY ROUNDED means the answer is the float nearest the true root. 25
+   bits come out: the 24 a float holds and one more, which says whether the
+   true root lies above or below the point halfway to the next float. A
+   nonzero remainder says something is left further down, so a 1 in that
+   extra bit then means past halfway, and the root rounds up. It can never
+   land exactly on halfway: that root, doubled, would be an odd whole number,
+   and so would its square, but the number being rooted is m shifted left by
+   25 places, which is even. IEEE 754 requires exactly this of a hardware
+   square root, so the result is the hardware's, bit for bit, for every input
+   that has a root, and for -0 and NaN: tools/sqrt_exhaustive.c compares all
+   2^32 bit patterns against the host's sqrtf, and tests/portability.c
+   re-checks ten million of them on every run.
+
+   Special values follow IEEE 754: sqrt(+0) = +0, sqrt(-0) = -0, sqrt(+infinity)
+   = +infinity, a NaN comes back as the same NaN made quiet, and any other
+   negative input gives NaN. None of the four places passes a negative
+   number: the Cholesky step checks that its diagonal is positive first, and
+   the others take the root of a count or of a sum of squares.
+
+   THE PRICE IS SPEED: about 45 nanoseconds a call on an Apple M4, where the
+   instruction takes about 5. That adds about 45 nanoseconds to iris_novelty,
+   60 to iris_reseed, and 0.6 microseconds to an instant-trainer fit of 20
+   demonstrations with 12 hidden units (4.3 before, so 15%). It adds nothing
+   to the neighbour searches (iris_knn_predict, iris_classify_1nn,
+   iris_delete_nearest), which compare squared distances and never take a
+   root. Measured with Apple clang -O2. */
+IRIS_API float iris_sqrt(float x) {
+  union { float f; uint32_t u; } v;
+  v.f = x;
+  const uint32_t u = v.u;
+  if ((u & 0x7FFFFFFFu) > 0x7F800000u) { v.u = u | 0x00400000u; return v.f; }
+  if (u == 0u || u == 0x80000000u || u == 0x7F800000u) return x;
+  if (u & 0x80000000u) { v.u = 0x7FC00000u; return v.f; }
+
+  int32_t e = (int32_t)(u >> 23);          /* x = m * 2^p with p = e - 150 */
+  uint32_t m = u & 0x007FFFFFu;            /* the 23 stored bits */
+  if (e == 0) {                            /* subnormal: bring the leading 1 up */
+    e = 1;
+    while (m < 0x00800000u) { m <<= 1; --e; }
+  } else {
+    m |= 0x00800000u;                      /* the leading 1 a float leaves implicit */
+  }
+  if (!(e & 1)) { m <<= 1; --e; }          /* p - 25 = e - 175 must be even */
+
+  /* q = floor(sqrt(m * 2^25)): 25 bits, from bit 24 down to bit 0 */
+  uint32_t rem = m << 1, q = 0u, b = 0x01000000u;
+  while (b) {
+    const uint32_t t = q + q + b;          /* (2*q*b + b*b) / b */
+    if (rem >= t) { rem -= t; q += b; }
+    rem <<= 1;
+    b >>= 1;
+  }
+  q += q & (uint32_t)(rem != 0u);          /* round to nearest */
+  /* q >> 1 keeps the leading 1 at bit 23, which adds one to the exponent
+     field; a round-up that carries out of bit 23 adds one more, correctly */
+  v.u = (q >> 1) + (((uint32_t)(e + 125) >> 1) << 23);
+  return v.f;
+}
 IRIS_API float iris_absf(float x) { return x < 0.0f ? -x : x; }
 
 IRIS_API float iris_clampf(float v, float lo, float hi) {
@@ -3073,9 +3230,9 @@ IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int k
   if (!k->fitted && k->n_ex > 0) iris_fit_ranges((iris *)k);
   const int NIn = k->n_in, NOut = k->n_out;
   if (k->n_ex == 0) { for (int o = 0; o < NOut; ++o) out[o] = 0.0f; return; }
-  if (kk < 1) kk = 1;
-  if (kk > IRIS_KNN_MAXK) kk = IRIS_KNN_MAXK;
   if (kk > k->n_ex) kk = k->n_ex;
+  if (kk > IRIS_KNN_MAXK) kk = IRIS_KNN_MAXK;
+  if (kk < 1) kk = 1;
 
   /* precompute 1/range so the scan does no divisions */
   float inv[IRIS_MAX_IN];
@@ -3200,5 +3357,19 @@ IRIS_API int iris_classify_1nn(const iris *k, const float *in, float *out) { if 
   }
   return k->ex_id[best];
 }
+
+/* The end of the floating-point scope opened by defence 3 of the determinism
+   contract at the top of this file, which explains each line: code after the
+   #include gets back the contraction setting it had before it, or on the
+   clang targets named there, the command line's. */
+#if defined(__clang__)
+#pragma STDC FP_CONTRACT DEFAULT
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wignored-pragmas"
+#pragma float_control(pop)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC pop_options
+#endif
 
 #endif /* IRIS_H */
