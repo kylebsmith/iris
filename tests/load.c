@@ -159,7 +159,7 @@ static receiver recv_make(shape s) {
   receiver v;
   v.r = make(s, 77u);
   demos(v.r.k, s, s.cap < 2 ? s.cap : 2, 5);
-  iris_train_epochs(v.r.k, 5);
+  iris_continue(v.r.k, 5);
   v.r.k->status = IRIS_TRAINING_DIVERGED;
   v.snap = (unsigned char *)xmalloc(v.r.bytes);
   memcpy(v.snap, v.r.mem, v.r.bytes);
@@ -200,7 +200,7 @@ static void round_trip(const char *name, shape s, int n_demos, float smoothing, 
   demos(a.k, s, n_demos, 0);
   if (smoothing > 0.0f) iris_set_smoothing(a.k, smoothing);
   if (train == 1) iris_train(a.k);
-  if (train == 2) iris_train_epochs(a.k, 40);
+  if (train == 2) iris_continue(a.k, 40);
   float pa[NPROBE][IRIS_MAX_OUT], pb[NPROBE][IRIS_MAX_OUT];
   play(a.k, s, pa);
   const int st_a = (int)iris_get_status(a.k);
@@ -210,7 +210,7 @@ static void round_trip(const char *name, shape s, int n_demos, float smoothing, 
 
   box b = make(s, 99u);
   demos(b.k, s, s.cap < 3 ? s.cap : 3, 9);
-  iris_train_epochs(b.k, 5);
+  iris_continue(b.k, 5);
   int ok = iris_load(b.k, f, n);
   play(b.k, s, pb);
   const int st_b = (int)iris_get_status(b.k);
@@ -448,7 +448,7 @@ static void shape_and_capacity(void) {
   for (int c = 0; c < 3; ++c) {
     box a = make(other[c], 1234u);
     demos(a.k, other[c], 6, 0);
-    iris_train_epochs(a.k, 20);
+    iris_continue(a.k, 20);
     size_t n = 0;
     unsigned char *f = save(a.k, &n);
     int ok = n > 0 && refused_cleanly(S2, f, n);
@@ -460,7 +460,7 @@ static void shape_and_capacity(void) {
   }
   { const shape big = { 2, 12, 3, 32 }, small = { 2, 12, 3, 8 };
     box a = make(big, 1234u);
-    demos(a.k, big, 9, 0); iris_train_epochs(a.k, 20);
+    demos(a.k, big, 9, 0); iris_continue(a.k, 20);
     size_t n = 0; unsigned char *f = save(a.k, &n);
     int over = refused_cleanly(small, f, n);
     iris_delete_last(a.k);
@@ -478,7 +478,7 @@ static void truncations(const char *name, shape s, int n_demos, int train) {
   char d[200];
   box a = make(s, 1234u);
   demos(a.k, s, n_demos, 0);
-  if (train) iris_train_epochs(a.k, 20);
+  if (train) iris_continue(a.k, 20);
   size_t n = 0;
   unsigned char *f = save(a.k, &n);
   unsigned char *longer = (unsigned char *)xmalloc(n + 8);
@@ -498,7 +498,7 @@ static void flips(const char *name, shape s, int n_demos, int every_bit) {
   char d[200];
   box a = make(s, 1234u);
   demos(a.k, s, n_demos, 0);
-  iris_train_epochs(a.k, 20);
+  iris_continue(a.k, 20);
   size_t n = 0;
   unsigned char *f = save(a.k, &n);
   unsigned char *t = (unsigned char *)xmalloc(n);
@@ -525,7 +525,7 @@ static void after_load_at_rest(void) {
 
   box b = make(S2, 99u);
   demos(b.k, S2, 6, 3);
-  iris_train_epochs(b.k, 50);                  /* velocities and ledger now set */
+  iris_continue(b.k, 50);                  /* velocities and ledger now set */
   iris_train_begin(b.k, 5000);
   iris_train_slice(b.k, 100);                  /* a sliced run in progress */
   iris_internal_set_learning(b.k, 0.3f, 0.2f); /* not the defaults */
@@ -740,7 +740,7 @@ static void small_unit(void) {
   char d[200];
   const shape s8 = { 8, 12, 2, 8 };
   box a = make(s8, 1234u);
-  demos(a.k, s8, 6, 0); iris_train_epochs(a.k, 50);
+  demos(a.k, s8, 6, 0); iris_continue(a.k, 50);
   size_t n = 0; unsigned char *f = save(a.k, &n);
   receiver v = recv_make(s8);
   unsigned char *copy = (unsigned char *)xmalloc(n);

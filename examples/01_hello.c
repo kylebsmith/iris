@@ -37,7 +37,7 @@ int main(void) {
       { printf("refused example %d\n", i); return 1; }
 
   /* TRAIN. No epoch count to guess: it stops when it stops improving. */
-  float err = iris_train_converge(k, 0, 0, 0);
+  float err = iris_continue_to_plateau(k, 0, 0, 0);
   printf("trained: %d epochs, final error %.2e\n\n",
          iris_train_epochs_done(k), err);
 

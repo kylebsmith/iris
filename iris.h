@@ -80,7 +80,7 @@
      iris *k = iris_init(mem, sizeof mem, 2, 12, 3, 64, 12345);
 
      iris_record(k, gesture, sound);     // do this a few times
-     iris_train_converge(k, 0, 0, 0);    // trains until the error plateaus
+     iris_train(k);                      // trains until the error plateaus
      iris_predict(k, gesture, sound);    // now play
 
    THE WORDS THIS FILE USES, defined once, here, before it uses them.
@@ -109,7 +109,7 @@
      ODR          the one-definition rule: C and C++ require that a thing is
                   defined identically everywhere it appears.
 
-   ON TRAINING TIME. iris_train_converge runs until the training error stops
+   ON TRAINING TIME. iris_train runs until the training error stops
    improving, with a hard ceiling — typically 9,000-18,000 epochs, which is
    ~25-45 ms on a laptop and ~1-4 s on an ESP32-S3 at 20-50 examples. That is
    twenty times the old fixed 600-epoch recommendation and it buys a 5.9x
@@ -118,9 +118,10 @@
    slices: iris_train_begin / iris_train_slice / iris_train_progress, which is
    bit-identical to the blocking call.
 
-   iris_train_epochs(k, n) is still here, unchanged and permanent: it is the
+   iris_continue(k, n) runs exactly n epochs from the current weights: the
    fixed-epoch backprop that Wekinator's Weka MultilayerPerceptron does, and
-   the audit pins its output to the bit.
+   the audit pins its output to the bit. It and iris_continue_to_plateau
+   continue from the current weights; read their hazard in PART 8 first.
 
    ============================================================================ */
 
@@ -152,8 +153,8 @@
      int   iris_is_trained(k)          did the last fit actually happen?
          1 if this instrument is fitted, 0 if it is not. Correct after EVERY
          trainer in this file -- which matters, because `if (iris_train_elm(...))`
-         is FALSE on its best outcome and `if (iris_train_converge(...))` is
-         TRUE on refusal. See "HOW EVERY FUNCTION REPORTS FAILURE" for the
+         is FALSE on its best outcome and `if (iris_continue(...))` is TRUE
+         on refusal. See "HOW EVERY FUNCTION REPORTS FAILURE" for the
          measured table. If you only ever ask one question about training,
          ask this one.
 
@@ -512,9 +513,9 @@ typedef enum {
                                 the student to delete demonstrations they did
                                 not have.                                    */
   IRIS_DIVERGED_STUCK    = 5,  /* a trainer that continues from the current
-                                weights (iris_train_epochs, iris_train_converge
-                                and the functions built on them) refused,
-                                because a weight or bias sits exactly on
+                                weights (iris_continue or
+                                iris_continue_to_plateau) refused, because
+                                a weight or bias sits exactly on
                                 ±IRIS_W_LIMIT, where a divergence left it.
                                 They refuse on EVERY call while that is true,
                                 whatever else has touched the status since.
@@ -614,9 +615,9 @@ IRIS_API int iris_internal_isbad(float x) {
    instrument plays, saves and loads like any other; a file needs its weights
    finite, nothing more (PART 9). What it cannot do is carry on with gradient
    training: a trainer that continues from the current weights
-   (iris_train_epochs, iris_train_converge, iris_correct) clamps every weight
-   past the limit in its first epoch and reports IRIS_TRAINING_DIVERGED, and
-   from then on refuses with IRIS_DIVERGED_STUCK. iris_train, which starts
+   (iris_continue, iris_continue_to_plateau, iris_correct) clamps every
+   weight past the limit in its first epoch and reports
+   IRIS_TRAINING_DIVERGED, and from then on refuses with IRIS_DIVERGED_STUCK. iris_train, which starts
    over from the seed, is the way from the closed-form trainer to
    backpropagation (tests/elm.c checks all of this). */
 #define IRIS_W_LIMIT 16.0f
@@ -942,16 +943,16 @@ struct iris {
 
      on a fit that WORKED        return   if(return)   iris_is_trained
        iris_train                 1.0000    true            1
-       iris_train_epochs          0.0002    true            1
-       iris_train_converge        0.0000    true            1
+       iris_continue              0.0002    true            1
+       iris_continue_to_plateau   0.0000    true            1
        iris_train_elm             0.0000    FALSE           1   <-- best case
        iris_correct               0.0004    true            1
        iris_retrain_new           0.0003    true            1
 
      on a fit that REFUSED
        iris_train                 0.0000    false           0
-       iris_train_epochs         -1.0000    TRUE            0   <-- -1 is truthy
-       iris_train_converge       -1.0000    TRUE            0
+       iris_continue             -1.0000    TRUE            0   <-- -1 is truthy
+       iris_continue_to_plateau  -1.0000    TRUE            0
        iris_train_elm            -1.0000    TRUE            0
        iris_correct              -1.0000    TRUE            0
        iris_retrain_new          -1.0000    TRUE            0
@@ -1199,7 +1200,7 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
    parameter is 0-1; we permitted double it.
 
    AND THE SAFE RANGES DO NOTHING. Momentum 0.00 to 0.95 is flat on instrument
-   quality (grid 0.0257 to 0.0290) — it is a SPEED knob, and iris_train_converge
+   quality (grid 0.0257 to 0.0290) — it is a SPEED knob, and iris_train
    already hides speed. lr's safe range is covered entirely by smoothing: tuning
    lr, tuning l2 and tuning the epoch ceiling land within 2-4% of each other,
    because they are three spellings of one axis.
@@ -1877,8 +1878,8 @@ IRIS_API int iris_internal_pinned(const iris *k) {
    recall 5.9x and held-out error 1.8x for nothing but time, and time is the
    cheap thing here. The full epoch table is docs/adr/0017-train-to-the-plateau-not-to-a-constant.md.
 
-   So the budget is no longer a number the caller guesses. iris_train_converge
-   runs until the training error PLATEAUS: every IRIS_CONV_WINDOW epochs it
+   So the budget is no longer a number the caller guesses. iris_train runs
+   until the training error PLATEAUS: every IRIS_CONV_WINDOW epochs it
    compares the error against the error one window ago and stops when the
    window bought less than IRIS_CONV_TOL of it. Window and tolerance are
    measured, not guessed -- a short window (200-500 epochs) mistakes the
@@ -1900,9 +1901,10 @@ IRIS_API int iris_internal_pinned(const iris *k) {
    HONEST PROGRESS. A converged run at 50 examples is seconds on the S3, long
    enough that the glass must show something true. Two ways in, both free:
 
-     - iris_train_converge(k, ceiling, cb, user) calls cb every window with
-       (done, ceiling, err); returning 0 from cb aborts, leaving a usable
-       partially-trained instrument.
+     - iris_continue_to_plateau(k, ceiling, cb, user), one of the warm
+       trainers below, calls cb every window with (done, ceiling, err);
+       returning 0 from cb aborts, leaving a usable partially-trained
+       instrument.
      - iris_train_begin / iris_train_slice / iris_train_progress run the SAME
        training as iris_train in slices, so a single-threaded UI can draw a
        frame, read touch and keep the audio half alive between them. A sliced
@@ -1911,17 +1913,17 @@ IRIS_API int iris_internal_pinned(const iris *k) {
        once there and carried across slices, and so the random draws are the
        same draws in the same order.
 
-   iris_train_epochs IS UNCHANGED AND STAYS UNCHANGED. It is the Wekinator
-   fidelity path -- fixed-epoch backprop is what Weka's MultilayerPerceptron
-   does -- and audit check 12 pins its output to the bit.
+   iris_continue IS THE FIXED-EPOCH PATH. It is the Wekinator fidelity path
+   -- fixed-epoch backprop is what Weka's MultilayerPerceptron does -- and
+   audit check 12 pins its output to the bit.
    -------------------------------------------------------------------------- */
 
 #define IRIS_CONV_WINDOW  2000    /* epochs between plateau tests (measured)   */
 #define IRIS_CONV_TOL     0.10f   /* stop when a window buys < 10% of the error */
 /* THE CEILING HAS TO FIT THE MACHINE'S int, BECAUSE IT IS PASSED AS ONE.
 
-   iris_train_converge does `const int ceil_ = ceiling > 0 ? ceiling : ...` and
-   hands that to iris_internal_train_run(int epochs). Where int is 16 bits --
+   iris_train, iris_train_begin and iris_continue_to_plateau hand it to
+   iris_internal_train_run as an int epoch count. Where int is 16 bits --
    every Arduino AVR board -- 60000 truncates to -5536, the trainer's
    `epochs <= 0` guard correctly refuses, iris_train correctly returns 0, and
    the instrument is never fitted. The library was honest about it; every sketch
@@ -2061,9 +2063,9 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
 
      Every entry reaches this test, slices included, but a sliced run starts
      from iris_train_begin's reseed and ends itself if it diverges, so in
-     practice what it refuses are the warm trainers: iris_train_epochs,
-     iris_train_converge and the functions built on them. The one write is the
-     status, plus ending the run if a slice is refused. */
+     practice what it refuses are the warm trainers, iris_continue and
+     iris_continue_to_plateau. The one write is the status, plus ending the
+     run if a slice is refused. */
   if (iris_internal_pinned(k)) {
     k->status = IRIS_DIVERGED_STUCK;
     if (resume) k->tr_running = 0;
@@ -2305,9 +2307,37 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
   return err;
 }
 
-/* THE FIXED-EPOCH TRAINER. Matches Weka MultilayerPerceptron's per-weight
-   update recursion and its per-sample update granularity; see the divergence
-   table for defaults and activations.
+/* --------------------------------------------------------------------------
+   THE WARM TRAINERS: iris_continue AND iris_continue_to_plateau
+
+   Both carry on from the weights the instrument holds now, with the momentum
+   and the random state where the last run left them. iris_train, below, is
+   the second of them run from a fresh start: it reseeds from the
+   instrument's own seed and then calls iris_continue_to_plateau.
+
+   THE HAZARD. The weights remember every demonstration they were trained
+   on, including one you have since deleted: a deleted bad take's influence
+   survives in the weights, and a warm run starts from exactly those
+   weights, so continuing after a delete does not undo the take (the note
+   inside iris_train measures how far it pulls the places you never
+   demonstrated). After deleting a take, call iris_train, which starts over
+   from the seed and fits only the demonstrations stored now.
+
+   Both refuse (-1) what every trainer refuses (iris_internal_trainable),
+   and while a weight sits exactly on ±IRIS_W_LIMIT they refuse with
+   IRIS_DIVERGED_STUCK on every call, that status being the one thing they
+   write; iris_train is the way out.
+   -------------------------------------------------------------------------- */
+
+/* THE FIXED-EPOCH TRAINER: exactly `epochs` more epochs from the current
+   weights, fewer only if the error floor or the divergence guard stops the
+   run (iris_train_epochs_done says how many ran). Returns the last epoch's
+   mean squared error, or -1 if it refused. Mind THE HAZARD above: after
+   deleting a take, call iris_train, not this.
+
+   It matches Weka MultilayerPerceptron's per-weight update recursion and its
+   per-sample update granularity; see the divergence table for defaults and
+   activations.
 
    WHAT THAT DOES AND DOES NOT CLAIM. The recursion is an exact algebraic
    rewrite of Weka's (ours: v = momentum*v - lr*g*x, w += v; theirs:
@@ -2327,24 +2357,21 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
    Every "bit-identical" claim in this file is a claim about THIS FILE's
    self-consistency — sliced vs unsliced runs, save/load round trips, -O0 vs
    -O3 — never about Weka. Audit check 12 hashes the weights this produces.
-   Do not "improve" it; iris_train_converge is where improvements go.
-
-   It continues from the current weights, and refuses (-1) the way
-   iris_train_converge does. */
-IRIS_API float iris_train_epochs(iris *k, int epochs) { if (!k) return -1.0f;
+   Do not "improve" it; the plateau trainers are where improvements go. */
+IRIS_API float iris_continue(iris *k, int epochs) { if (!k) return -1.0f;
   return iris_internal_train_run(k, epochs, 0, 0, 0, 0);
 }
 
-/* Train until the training error plateaus. ceiling <= 0 takes
-   IRIS_CONV_CEILING. cb may be NULL. Returns the final mean squared error,
-   or -1 if it refused.
-
-   It continues from the current weights. A store it cannot train on is
-   refused, with IRIS_NAN_TRAPPED as the one write if a demonstration is not
-   finite (see iris_internal_trainable). While a weight sits exactly on
-   ±IRIS_W_LIMIT it refuses with IRIS_DIVERGED_STUCK, on every call, and
-   that status is then the one thing it writes; iris_train is the way out. */
-IRIS_API float iris_train_converge(iris *k, int ceiling, iris_progress_fn cb, void *user) { if (!k) return -1.0f;
+/* Train until the training error plateaus, from the current weights: the
+   plateau test, the ceiling, the error floor and the divergence guard stop
+   it exactly as they stop iris_train. ceiling <= 0 takes IRIS_CONV_CEILING.
+   cb may be NULL; otherwise it is called every IRIS_CONV_WINDOW epochs with
+   (user, epochs done, ceiling, error), and returning 0 from it ends the run
+   there, leaving a usable, partly trained instrument. Returns the final mean
+   squared error, or -1 if it refused. Mind THE HAZARD above: after deleting
+   a take, call iris_train, not this. */
+IRIS_API float iris_continue_to_plateau(iris *k, int ceiling, iris_progress_fn cb,
+                                        void *user) { if (!k) return -1.0f;
   return iris_internal_train_run(k, ceiling > 0 ? ceiling : IRIS_CONV_CEILING, 1, 0, cb, user);
 }
 
@@ -2398,7 +2425,11 @@ IRIS_API int iris_internal_cold_start(iris *k) {
 
    IT NEVER REFUSES A STUCK INSTRUMENT, and that is deliberate: starting over
    from the seed is the way out of IRIS_DIVERGED_STUCK, whose weights are the
-   only damaged part. */
+   only damaged part.
+
+   CALL IT AFTER DELETING A TAKE. It starts over from the seed, so the take
+   you deleted leaves nothing behind in the weights; the warm trainers above
+   would keep its influence (THE HAZARD). */
 IRIS_API int iris_train(iris *k) {
   if (!k) return 0;
   /* FIT FROM A DEFINED START, always.
@@ -2413,7 +2444,7 @@ IRIS_API int iris_train(iris *k) {
      health. The one number a screen can show said the instrument had
      improved.
 
-     Warm-starting has its use, argued above iris_correct: continuing from the
+     Warm-starting has its use, argued in PART 8b: continuing from the
      current fit adjusts one region without rewriting the mapping everywhere,
      which is how a musician keeps technique. But that is what the warm
      trainers are for. This function is called train, a caller expects it to
@@ -2439,20 +2470,20 @@ IRIS_API int iris_train(iris *k) {
      The error sits on a FALSE plateau from epoch 4,000 to 160,000 and then
      falls two orders of magnitude. The plateau outlasts this library's entire
      maximum budget by nearly three times, so nothing here can see past it, and
-     raising `ceiling` on iris_train_converge cannot help -- a ceiling is a
-     maximum, and the run is stopping far below it.
+     raising `ceiling` on iris_continue_to_plateau cannot help -- a ceiling is
+     a maximum, and the run is stopping far below it.
 
      If your demonstrations are clean and the recall matters more than the
-     generalisation, the escape is iris_train_epochs(k, 320000) or more. That
-     is a real choice with a real cost, which is why it is written down here
-     rather than made for you. */
+     generalisation, the escape is iris_continue(k, 320000) or more after
+     this. That is a real choice with a real cost, which is why it is written
+     down here rather than made for you. */
   /* ASK THE FLAG, NOT THE SIGN. A run that trapped a not-a-number partway
      leaves a non-negative error behind while never fitting (it re-seeds to a
      finite start and clears `trained`), so the sign of the error alone would
      return 1 with iris_is_trained 0 and status 2 -- exactly what Rule 1
      promises cannot happen. k->trained is set by the run itself and is the
      same answer iris_is_trained gives every other caller. */
-  { float e = iris_train_converge(k, 0, 0, 0);
+  { float e = iris_continue_to_plateau(k, 0, 0, 0);
     return (e >= 0.0f && k->trained) ? 1 : 0; }
 }
 
@@ -2469,6 +2500,12 @@ IRIS_API int iris_train(iris *k) {
    the slices, so the random draws are the same draws in the same order and
    every byte of the arena ends the same. tests/train.c checks that over
    several shapes, seeds and slice sizes, including after deletes.
+
+   So a sliced run starts over from the seed as iris_train does, and is as
+   right a call after deleting a take. A take deleted between two slices
+   drops out of the rest of the run, but what it has already done to the
+   weights stays, as it would for a warm trainer, until the next
+   iris_train_begin.
 
    ceiling <= 0 takes IRIS_CONV_CEILING, which is what iris_train uses; any
    other ceiling gives the run iris_train would make with that ceiling. Returns
@@ -2547,7 +2584,7 @@ IRIS_API float iris_retrain_new(iris *k, uint32_t seed, int epochs) { if (!k) re
   if (epochs <= 0) return -1.0f;
   if (!iris_internal_trainable(k)) return -1.0f;
   iris_reseed(k, seed);
-  return iris_train_epochs(k, epochs);
+  return iris_continue(k, epochs);
 }
 
 /* The demonstrated range of output j across the first n stored rows, in
@@ -2957,7 +2994,7 @@ IRIS_API float iris_correct(iris *k, int epochs) { if (!k) return -1.0f;
      demonstration, the status (iris_internal_trainable) */
   if (!iris_internal_trainable(k)) return -1.0f;
   iris_internal_zero_velocity(k);
-  return iris_train_epochs(k, epochs > 0 ? epochs : 20);
+  return iris_continue(k, epochs > 0 ? epochs : 20);
 }
 
 IRIS_API int   iris_is_trained(const iris *k) { if (!k) return 0; return k->trained; }
@@ -3343,7 +3380,7 @@ IRIS_API int iris_internal_train_elm_ex(iris *k, float lam0, float gain_w, float
   k->fitted  = 1;                    /* a closed-form solve IS a fit */
   k->status  = doublings > 0 ? IRIS_RIDGE_ESCALATED : IRIS_STATUS_OK;
 
-  /* --- recall error (in the units iris_train_epochs reports), the ledger,
+  /* --- recall error (in the units every trainer reports), the ledger,
      and how far the demonstrations and the fitted outputs move ------------ */
   {
     float err = 0.0f;

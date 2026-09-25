@@ -70,10 +70,10 @@ int main(void) {
 
   /* ---- the trainer's refusal paths -------------------------------------- */
   { iris *k = iris_init(A, sizeof A, 2, 12, 2, 32, 1u);
-    float e_empty = iris_train_epochs(k, 100);       /* no demonstrations */
+    float e_empty = iris_continue(k, 100);       /* no demonstrations */
     iris *k2 = filled(B, sizeof B, 6);
-    float e_zero = iris_train_epochs(k2, 0);         /* zero budget */
-    float e_neg  = iris_train_epochs(k2, -5);        /* negative budget */
+    float e_zero = iris_continue(k2, 0);         /* zero budget */
+    float e_neg  = iris_continue(k2, -5);        /* negative budget */
     snprintf(d, sizeof d, "empty %.1f, zero-budget %.1f, negative %.1f",
              (double)e_empty, (double)e_zero, (double)e_neg);
     check("the trainer refuses empty and non-positive budgets",

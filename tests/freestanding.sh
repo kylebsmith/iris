@@ -126,8 +126,8 @@ int iris_probe(void) {
   xn[0] = SINKF; xn[1] = SINKF;
   iris_internal_forward_norm(k, xn);
   SINKI += iris_internal_shape_fits(k);
-  SINKF += iris_train_epochs(k, 50);
-  SINKF += iris_train_converge(k, 4000, progress, 0);
+  SINKF += iris_continue(k, 50);
+  SINKF += iris_continue_to_plateau(k, 4000, progress, 0);
   SINKI += iris_train(k);
   SINKI += iris_internal_check_weights(k);
   SINKF += iris_internal_train_run(k, 10, 0, 0, 0, 0);

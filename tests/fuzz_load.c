@@ -123,14 +123,14 @@ int LLVMFuzzerInitialize(int *argc, char ***argv) {
     k = iris_init(a, ab, s.ni, s.nh, s.no, s.cap, 1234u);           /* never trained */
     record_some(k, s, some, 0); add_seed(si, k);
     k = iris_init(a, ab, s.ni, s.nh, s.no, s.cap, 99u);             /* trained, smoothed */
-    record_some(k, s, some, 1); iris_set_smoothing(k, 0.3f); iris_train_epochs(k, 200); add_seed(si, k);
+    record_some(k, s, some, 1); iris_set_smoothing(k, 0.3f); iris_continue(k, 200); add_seed(si, k);
     while (iris_count(k)) iris_delete_last(k);                      /* fitted, emptied */
     add_seed(si, k);
     k = iris_init(a, ab, s.ni, s.nh, s.no, s.cap, 7u);              /* full */
-    record_some(k, s, s.cap, 2); iris_train_epochs(k, 100); add_seed(si, k);
+    record_some(k, s, s.cap, 2); iris_continue(k, 100); add_seed(si, k);
     if (s.cap > some) {                                             /* fitted, one more take */
       k = iris_init(a, ab, s.ni, s.nh, s.no, s.cap, 5u);
-      record_some(k, s, some, 3); iris_train_epochs(k, 100); record_some(k, s, 1, 4); add_seed(si, k);
+      record_some(k, s, some, 3); iris_continue(k, 100); record_some(k, s, 1, 4); add_seed(si, k);
     }
     free(a);
   }
@@ -197,7 +197,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   iris *k = iris_init(arena, ab, s.ni, s.nh, s.no, s.cap, 7u);
   if (!k) fail("iris_init refused a harness shape");
   record_some(k, s, s.cap < 2 ? s.cap : 2, 6);    /* a receiver with a history */
-  iris_train_epochs(k, 2);
+  iris_continue(k, 2);
   k->status = IRIS_STORE_FULL;                     /* not OK, so a written status shows */
   memcpy(before, arena, ab);
 

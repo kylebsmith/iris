@@ -79,7 +79,7 @@ static uint32_t device_torture(void) {
     out[2] = (float)((i * 5) % 7) / 7.0f;
     iris_record(k, in, out);
   }
-  iris_train_epochs(k, 800);
+  iris_continue(k, 800);
   uint32_t h = 2166136261u;
   for (int i = 0; i <= 20; ++i) {
     float in[NI], out[NO];
@@ -106,7 +106,7 @@ static uint32_t determinism_check(void) {
     iris_record(k, in, out);
   }
   iris_reseed(k, 1234u);
-  iris_train_epochs(k, 800);
+  iris_continue(k, 800);
   uint32_t h = 2166136261u;
   for (int a = 0; a <= 20; ++a) {
     float in[NI] = { (float)a / 20.0f, 0.5f }, out[NO];

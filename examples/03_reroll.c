@@ -15,7 +15,7 @@
    BUT NOT EVERY TRAINER. Measured 2026-08-27 on this task, mean absolute
    difference across the whole space between seed 7 and seed 99:
 
-       iris_train_converge (backprop to a plateau) : 0.0227
+       iris_continue_to_plateau (backprop to a plateau) : 0.0227
        iris_train_elm      (frozen random layer)   : 0.1468   <- 6.5x more
 
    Training to a plateau drives toward the same surface whatever the seed — the

@@ -625,11 +625,11 @@ int main(int argc, char **argv) {
     record_recipe(c1, r);
     int r1 = iris_train_elm(c1, 1e6f, scratch, sizeof scratch);
     int s1 = iris_get_status(c1);
-    float warm1 = iris_train_epochs(c1, 1);
+    float warm1 = iris_continue(c1, 1);
     iris_clear(c1); record_recipe(c1, r);
     int r2 = iris_internal_train_elm_ex(c1, 1e-4f, 0.0f, 1.0f, scratch, sizeof scratch);
     int s2 = iris_get_status(c1);
-    float warm2 = iris_train_epochs(c1, 1);
+    float warm2 = iris_continue(c1, 1);
     int s2w = iris_get_status(c1);
     snprintf(d, sizeof d, "lam0 1e6: ret %d status %d, then a warm epoch %g; "
              "gain_w 0: ret %d status %d, then a warm epoch %g status %d",
@@ -751,9 +751,9 @@ int main(int argc, char **argv) {
       iris_predict(k, in, &ya); iris_predict(c, in, &yb);
       if (bits(ya) != bits(yb)) same = 0;
     }
-    const float e1 = iris_train_epochs(k, 1);
+    const float e1 = iris_continue(k, 1);
     const int st1 = (int)iris_get_status(k);
-    const float e2 = iris_train_epochs(k, 1);
+    const float e2 = iris_continue(k, 1);
     const int st2 = (int)iris_get_status(k);
     const int cold = iris_train(k);
     snprintf(d, sizeof d, "ret %d, largest output weight %.1f; save %zu, load %d, plays the same %d; "

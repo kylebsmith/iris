@@ -28,9 +28,9 @@
    EVERY FIGURE IN THE "est. S3" COLUMNS IS A SCALING OF A HOST MEASUREMENT,
    NOT A READING FROM THE BOARD. Two of these have hardware readings behind
    them and two do not. backprop-600: 321 ms at 20 examples (BRINGUP-LOG).
-   iris_train_converge: 595 ms at 4 demonstrations and 2.7-3.0 s at 8 to 20,
+   iris_continue_to_plateau: 595 ms at 4 demonstrations and 2.7-3.0 s at 8 to 20,
    from device_torture test 5, which times iris_train() -- and iris_train() is
-   a thin wrapper whose last statement is iris_train_converge(k,0,0,0), so
+   a thin wrapper whose last statement is iris_continue_to_plateau(k,0,0,0), so
    timing one times the other. This comment previously said converge was
    unmeasured while README.md:158-159 quoted the numbers. iris_train_elm
    really is UNMEASURED on device.                                          */
@@ -333,7 +333,7 @@ int main(void) {
       truth(u, v, out);
       iris_record(k, in, out);
     }
-    float err = iris_train_epochs(k, 800);
+    float err = iris_continue(k, 800);
 
     /* recall: how close does it get to the sounds we actually demonstrated? */
     float worst = 0.0f, sum = 0.0f;
@@ -464,7 +464,7 @@ int main(void) {
       if (i % 5 == 0) { out[0] = 1e6f; out[1] = -1e6f; }
       iris_record(k, in, out);
     }
-    iris_train_epochs(k, 400);
+    iris_continue(k, 400);
     for (int a = -5; a <= 25; ++a) {
       float in[NI] = { a / 20.0f, a / 20.0f }, got[NO];
       iris_predict(k, in, got);
@@ -483,7 +483,7 @@ int main(void) {
       truth(in[0], in[1], out);
       iris_record(k, in, out);
     }
-    iris_train_epochs(k, 400);
+    iris_continue(k, 400);
     float at[NI] = { 0.4f, 0.4f }, far[NI] = { 0.95f, 0.05f };
     float n_at = iris_novelty(k, at), n_far = iris_novelty(k, far);
     ok("novelty: low on home ground, high away", n_at < 0.05f && n_far > 0.5f,
@@ -538,7 +538,7 @@ int main(void) {
       iris_record(k, in, out);
     }
     iris_reseed(k, 77);
-    iris_train_epochs(k, 400);
+    iris_continue(k, 400);
     float probe[NI] = { 0.3f, 0.7f }, before[NO], after[NO];
     iris_predict(k, probe, before);
     /* THE DOOR REFUSES IT (gap B4 closed 2026-08-27). iris_record now rejects a
@@ -554,7 +554,7 @@ int main(void) {
        pre-scan the way a corrupt file would. */
     k->ex[0] = 0.0f / 0.0f;
     k->trained = 1;                            /* pretend the fit is current */
-    iris_train_epochs(k, 400);
+    iris_continue(k, 400);
     int refused = door_refused && (iris_get_status(k) == IRIS_NAN_TRAPPED);
     iris_predict(k, probe, after);
     int preserved = (before[0] == after[0] && before[1] == after[1]
@@ -562,7 +562,7 @@ int main(void) {
 
     /* (b) NaN sensor input at play time: finite outputs + status */
     iris_delete_last(k);
-    iris_train_epochs(k, 400);
+    iris_continue(k, 400);
     float nan_in[NI] = { 0.0f / 0.0f, 0.4f }, got[NO];
     iris_predict(k, nan_in, got);
     int finite = 1;
@@ -588,7 +588,7 @@ int main(void) {
       iris_internal_set_learning(k, lrs[li], moms[mi]);
       int detect_call = 0;
       for (int call = 1; call <= 4; ++call) {
-        iris_train_epochs(k, 400);
+        iris_continue(k, 400);
         if (!detect_call && iris_get_status(k) != IRIS_STATUS_OK) detect_call = call;
       }
       for (int a = -5; a <= 25; ++a) for (int b = -5; b <= 25; ++b) {
@@ -1103,7 +1103,7 @@ int main(void) {
     a->ex[(size_t)(a->n_ex - 1) * (NI + NO) + NI] = 0.0f/0.0f;  /* now poison it */
     /* A refusal over a poisoned demonstration changes nothing but the
        status, which reports the not-a-number it found. */
-    float rr = iris_train_epochs(a, 100);         /* must refuse */
+    float rr = iris_continue(a, 100);         /* must refuse */
     int st = (rr == -1.0f) && (a->status == IRIS_NAN_TRAPPED);
     int ranges_intact = 1;
     for (int o = 0; o < NO; ++o)
@@ -1131,7 +1131,7 @@ int main(void) {
 
     iris *ka = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 4242u);
     load_examples(ka, 20);
-    float econv = iris_train_converge(ka, 0, 0, 0);
+    float econv = iris_continue_to_plateau(ka, 0, 0, 0);
     float rconv = recall_rmse_of(ka);
     int epochs_used = ka->tr_done;
 
@@ -1176,7 +1176,7 @@ int main(void) {
         if (i == bad) out[i % NO] = iris_internal_clampf(out[i % NO] + 0.20f, 0.0f, 1.0f);
         iris_record(kd, in, out);
       }
-      iris_train_converge(kd, 0, 0, 0);
+      iris_continue_to_plateau(kd, 0, 0, 0);
       float m = 0.0f;
       if (iris_worst_example(kd, &m) == bad) hits++;
       if (m > worst_margin) worst_margin = m;
@@ -1184,7 +1184,7 @@ int main(void) {
       /* the same seed, the same twenty points, nothing corrupted */
       iris *kc = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 1000u + (uint32_t)t * 7919u);
       load_examples(kc, 20);
-      iris_train_converge(kc, 0, 0, 0);
+      iris_continue_to_plateau(kc, 0, 0, 0);
       float mc = 0.0f;
       (void)iris_worst_example(kc, &mc);
       if (mc > loudest_clean) loudest_clean = mc;
@@ -1193,7 +1193,7 @@ int main(void) {
     /* and below IRIS_STRESS_MIN_EX it must refuse to have an opinion at all */
     iris *ks = iris_init(arena_d, sizeof arena_d, NI, NH, NO, CAP, 5);
     load_examples(ks, 6);
-    iris_train_converge(ks, 0, 0, 0);
+    iris_continue_to_plateau(ks, 0, 0, 0);
     float ms = 0.0f;
     int small_silent = iris_worst_example(ks, &ms) == -1;
 
@@ -1212,7 +1212,7 @@ int main(void) {
   {
     iris *k3 = iris_init(arena_d, sizeof arena_d, NI, NH, NO, CAP, 4242u);
     load_examples(k3, 20);
-    float sc = iris_train_converge(k3, 0, 0, 0);
+    float sc = iris_continue_to_plateau(k3, 0, 0, 0);
     ok("the converged trainer reaches a usable fit", sc > 0.0f && sc < 1e-3f,
        "20 examples trained to the plateau: mean squared error %.3e "
        "(want < 1e-3)", sc);
@@ -1238,17 +1238,17 @@ int main(void) {
       float in[NI] = { u, 1.0f - u }, out[NO] = { u, 0.5f, 1.0f - u };
       iris_record(d, in, out);
     }
-    iris_train_converge(d, 0, 0, 0);
+    iris_continue_to_plateau(d, 0, 0, 0);
     float pr[NI] = { 0.60f, 0.40f }, healthy[NO];
     iris_predict(d, pr, healthy);
 
     float bin[NI] = { 0.60f, 0.40f }, bout[NO] = { 0.05f, 0.95f, 0.05f };
     iris_record(d, bin, bout);
-    iris_train_converge(d, 0, 0, 0);
+    iris_continue_to_plateau(d, 0, 0, 0);
     int diverged = (iris_get_status(d) == IRIS_TRAINING_DIVERGED);
 
     float mg = 0.0f; iris_delete_id(d, iris_worst_example_id(d, &mg));
-    float rc = iris_train_converge(d, 0, 0, 0);
+    float rc = iris_continue_to_plateau(d, 0, 0, 0);
     int refused = (rc < 0.0f) && (iris_get_status(d) == IRIS_DIVERGED_STUCK);
 
     iris_retrain_new(d, 1234, 600);
@@ -1354,7 +1354,7 @@ int main(void) {
     }
     iris_reseed(k, 4242);
     double t0 = now_ms();
-    iris_train_epochs(k, 600);
+    iris_continue(k, 600);
     double dt = now_ms() - t0;
     /* the closed-form solve is under the timer's resolution; average 200 */
     double t2 = now_ms();
@@ -1369,18 +1369,18 @@ int main(void) {
      musician actually waits on. Reported separately because it is the only
      path here whose cost is not a fixed budget: it stops when the error
      plateaus, so the epochs it spends are part of the measurement. */
-  printf("\n  iris_train_converge (plateau test, ceiling %d) — the default\n", IRIS_CONV_CEILING);
+  printf("\n  iris_continue_to_plateau (plateau test, ceiling %d) — the default\n", IRIS_CONV_CEILING);
   printf("  examples   epochs spent      host        S3 x270*    train MSE   (600-epoch MSE)\n");
   for (int e = 0; e < 5; ++e) {
     iris *kk = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 4242u);
     load_examples(kk, exs[e]);
     double t0 = now_ms();
-    float ec = iris_train_converge(kk, 0, 0, 0);
+    float ec = iris_continue_to_plateau(kk, 0, 0, 0);
     double dt = now_ms() - t0;
     int used = kk->tr_done;
     iris *k6 = iris_init(arena_d, sizeof arena_d, NI, NH, NO, CAP, 4242u);
     load_examples(k6, exs[e]);
-    float e6 = iris_train_epochs(k6, 600);
+    float e6 = iris_continue(k6, 600);
     printf("  %6d   %9d   %8.1f ms   ~%6.1f s     %.3e   (%.3e)\n",
            exs[e], used, dt, dt * IRIS_S3_SCALE / 1000.0, ec, e6);
   }
@@ -1412,7 +1412,7 @@ int main(void) {
       float u = (float)((i*7919)%97)/97.0f, v = (float)((i*6131)%89)/89.0f;
       float in[NI] = {u,v}, out[NO]; truth(u,v,out); iris_record(k,in,out);
     }
-    iris_train_epochs(k, 200);
+    iris_continue(k, 200);
     float in[NI] = { 0.3f, 0.7f }, out[NO];
     double t0 = now_ms();
     for (int i = 0; i < 1000000; ++i) { in[0] = (float)(i & 1023) / 1023.0f; iris_predict(k, in, out); }

@@ -71,7 +71,7 @@ int main(int argc,char**argv){
       switch(rnd(9)){
         case 0: iris_record(k,in,out); break;
         case 1: iris_predict(k,in,out); break;        /* may be untrained */
-        case 2: iris_train_converge(k, (int)rnd(50), 0,0); break;
+        case 2: iris_continue_to_plateau(k, (int)rnd(50), 0,0); break;
         case 3: iris_clear(k); break;
         case 4: iris_get(k,(int)rnd(cap+3),in,out); break;
         case 5: iris_novelty(k,in); break;

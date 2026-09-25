@@ -40,7 +40,7 @@ int main(void){
 
   /* A — iris_save must not write past what iris_save_size asked for. */
   { iris *k=iris_init(A,sizeof A,2,12,3,64,7); demos(k,8);
-    iris_train_converge(k,0,0,0);
+    iris_continue_to_plateau(k,0,0,0);
     size_t need=iris_save_size(k);
     unsigned char *buf=malloc(need+8);
     memset(buf,0xA5,need+8);
@@ -73,7 +73,7 @@ int main(void){
 
   /* D — a loaded file with a degenerate range must not produce not-a-number. */
   { iris *k=iris_init(A,sizeof A,2,12,3,64,7); demos(k,8);
-    iris_train_converge(k,0,0,0);
+    iris_continue_to_plateau(k,0,0,0);
     static unsigned char f[8192];
     size_t n=iris_save(k,f,sizeof f);
     /* forge a file whose stored input range is exactly zero-width. The
@@ -103,7 +103,7 @@ int main(void){
 
   /* E — asking for advice must leave every reported field as it found it. */
   { iris *k=iris_init(A,sizeof A,2,12,3,64,7); demos(k,10);
-    iris_set_smoothing(k,0.25f); iris_train_converge(k,0,0,0);
+    iris_set_smoothing(k,0.25f); iris_continue_to_plateau(k,0,0,0);
     int tr0=iris_is_trained(k), ep0=iris_train_epochs_done(k);
     float q[2]={0.31f,0.44f}, p0[3],p1[3]; iris_predict(k,q,p0);
     static unsigned char sc[16384];

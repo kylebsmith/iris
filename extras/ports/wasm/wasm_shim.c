@@ -107,7 +107,7 @@ EXPORT void  iris_js_clear(void)         { if (g_k) iris_clear(g_k); }
    Returns the row's stable id, 0 on a bad index. */
 EXPORT int   iris_js_get(int idx)        { return g_k ? iris_get(g_k, idx, s_ex_in, s_ex_out) : 0; }
 
-EXPORT float iris_js_train(int epochs)   { return g_k ? iris_train_epochs(g_k, epochs) : 1.0f; }
+EXPORT float iris_js_train(int epochs)   { return g_k ? iris_continue(g_k, epochs) : 1.0f; }
 EXPORT float iris_js_reroll(unsigned int seed, int epochs) {
   return g_k ? iris_retrain_new(g_k, seed, epochs) : 1.0f;
 }
