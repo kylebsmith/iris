@@ -30,7 +30,7 @@ For what is true now, read [`../iris.h`](../iris.h) and
 
 | Document | Kind | What it contains |
 |---|---|---|
-| [DESIGN.md](DESIGN.md) | Historical | The API and architecture planned before the library was written; the interface it specifies never shipped. |
+| [DESIGN.md](DESIGN.md) | Historical | The programming interface and architecture planned before the library was written; the interface it specifies never shipped. |
 | [FREEZE.md](FREEZE.md) | Historical | What a saved instrument's meaning depended on at v0.1.0, and the nonlinearity comparison; its 3.8% activation figure did not replicate (the header quotes 1.3%). |
 | [KNOB-AUDIT.md](KNOB-AUDIT.md) | Historical | The study behind removing the learning rate and momentum from the interface and keeping smoothing; several of its figures did not replicate (the README quotes the replicated ones). |
 | [MATH-AUDIT.md](MATH-AUDIT.md) | Historical | A review of the mathematics against the literature: names, provenance, and the objections a machine-learning reviewer would raise. |

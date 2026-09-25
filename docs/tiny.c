@@ -10,7 +10,8 @@
    Run it. It prints its own learned surface and iris.h's on the same task, and
    the mean difference between them. The two are not trained identically
    (this file visits the four demonstrations in a fixed order for a fixed
-   4,000 epochs; iris_train shuffles them and stops at a plateau), so the
+   4,000 epochs; iris_train shuffles them every epoch and, on these four,
+   stops after 246 epochs, when its error falls below its floor), so the
    difference is small rather than zero. Every other line in iris.h is there
    for a reason you can name (a refusal, a file format, a guard, an
    explanation), not because the mathematics needs it.
@@ -65,7 +66,7 @@ int main(void) {
   const float X[NEX][NI] = { {-1,-1}, {1,-1}, {-1,1}, {1,1} };
   const float T[NEX][NO] = { {0.14f}, {0.86f}, {0.86f}, {0.14f} };
 
-  for (int h = 0; h < NH; ++h) {     /* init: U[-1,1)/sqrt(fan_in), biases 0  */
+  for (int h = 0; h < NH; ++h) {     /* init: U[-1,+1]/sqrt(fan_in), biases 0 */
     for (int i = 0; i < NI; ++i) w1[h][i] = rnd() / 1.41421356f;
     b1[h] = 0.0f;
   }

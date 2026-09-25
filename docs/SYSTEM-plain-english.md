@@ -221,10 +221,10 @@ Only a few timings have been taken on the actual chip, all of them with the
 previous version of the library and none with a saved record of the run yet.
 One prediction takes 14.9 millionths of a second. Training took 595
 milliseconds at four demonstrations and 2.7 to 3.0 seconds at eight to twenty,
-but on test data that finishes after about 4,000 to 9,000 passes. A more
-typical set of twenty demonstrations needs about 18,000 passes, and that has not
-been timed on the chip, so nobody yet knows how long typical training takes
-there.
+but on test data that finishes after about 4,000 to 9,000 passes. The
+library's own test set of twenty demonstrations needs about 18,000 passes, and
+that has not been timed on the chip, so nobody yet knows how long typical
+training takes there.
 
 ## What it costs to run
 

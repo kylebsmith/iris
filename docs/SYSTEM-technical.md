@@ -29,7 +29,8 @@ Determinism is enforced in four layers:
 
 1. `#error` tripwires for the flags that change the arithmetic or delete the
    not-a-number guards: `__FAST_MATH__`, `__FINITE_MATH_ONLY__`, and on GCC
-   `__RECIPROCAL_MATH__` and `__ASSOCIATIVE_MATH__`.
+   (the GNU Compiler Collection) `__RECIPROCAL_MATH__` and
+   `__ASSOCIATIVE_MATH__`.
 2. `#error` when `__FLT_EVAL_METHOD__` is anything but 0, 16 or 32, which
    refuses 32-bit x86 builds using the x87 floating-point unit. Built that way
    (clang 22, `--target=i686-linux-gnu -mno-sse -mfpmath=387`) the golden
@@ -51,10 +52,11 @@ Determinism is enforced in four layers:
    `tests/load.c` compares bit for bit.
 
 `sh build.sh determinism` checks the golden hash across `-O0` to `-Os` with
-contraction off, on and at the default, and with gcc in GNU mode. Freestanding
-builds of the golden and starter recipes give the same three hashes on 64-bit
-ARM Linux, x86-64 Linux and 32-bit x86 using SSE (Streaming SIMD Extensions,
-its single-precision vector unit). On the ESP32-S3 the starter kit's
+contraction off, on and at the default, and with gcc in GNU C (`-std=gnu99`).
+Freestanding builds of the golden and starter recipes give the same three
+hashes on 64-bit ARM Linux, x86-64 Linux and 32-bit x86 using SSE (Streaming
+SIMD Extensions, SIMD meaning single instruction, multiple data: its
+single-precision vector unit). On the ESP32-S3 the starter kit's
 `device_torture` test 1 compares against `0xB7FC47A0`; no board run of it is
 recorded yet.
 
@@ -146,7 +148,8 @@ scaled by `1/n_ex`.
   600-epoch fits, the second at five smoothing settings, restoring every byte
   of the arena afterwards.
 
-The limited-memory quasi-Newton trainer (L-BFGS) that 0.1.0 carried as an
+The limited-memory quasi-Newton trainer (L-BFGS, the limited-memory
+Broyden–Fletcher–Goldfarb–Shanno method) that 0.1.0 carried as an
 experiment is no longer part of the library.
 
 ## 4. Relation to Wekinator and Weka 3.6.12
@@ -233,8 +236,9 @@ mean of 20,000 calls (298,915 µs in total), with loop overhead of about 1–2%
 folded in and no worst case reported. Test 5: `iris_train` takes 595 ms at 4
 demonstrations and 2.7–3.0 s at 8 to 20, on a recipe whose two inputs are
 exactly collinear and one output constant, which stops after 3,823 to 9,343
-epochs. Representative data takes 18,000 to 22,000 epochs at 20 demonstrations
-and has not been timed on the board; nor has the closed-form trainer. No ratio
+epochs. Data like the reference task of `tests/audit.c`, which takes 18,000
+epochs at 20 demonstrations, has not been timed on the board; nor has the
+closed-form trainer. No ratio
 between host and board timings is stable enough to scale one into the other.
 
 Fit quality on the reference task of `tests/audit.c` (20 demonstrations, 2-12-3):
