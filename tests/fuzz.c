@@ -5,10 +5,9 @@
 
    Every other test in this repo compares the library against assertions I
    wrote. That is circular, and it has failed in exactly the way you would
-   predict: the guards A/B test once compared two byte-identical builds, the
-   claims check verified the version macro while the file's own masthead
-   disagreed, and make_golden destroyed the fixture it existed to protect.
-   Code I wrote agreeing with expectations I wrote is not evidence.
+   predict: the guards A/B test once compared two byte-identical builds, and
+   the claims check verified the version macro while the file's own masthead
+   disagreed. Code I wrote agreeing with expectations I wrote is not evidence.
 
    This file asserts almost nothing. It allocates every caller array on the
    heap at EXACTLY the size the shape demands, then hammers the API with random

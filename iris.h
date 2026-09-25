@@ -1710,7 +1710,7 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
          rational approximant of PART 1. So the backward pass is not the
          derivative of the forward pass. It is a surrogate -- close enough in
          shape to point downhill, and kept because the measured fits are good
-         and changing it would move every golden hash in the audit.
+         and changing it would move the golden training hash in the audit.
 
          HOW WRONG. Exact only at zero, and under-scaling by up to 2x across
          the ordinary operating range. The full ratio table is
@@ -1773,8 +1773,8 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
       /* WEIGHT DECAY, when asked for. `wd` is zero unless iris_set_l2 was
          called, and when it is zero this is bit-for-bit the update that shipped
          before decay existed — `w[h] -= 0.0f * w[h]` is exact in IEEE, so the
-         golden hashes are unaffected and the default path costs one multiply
-         that the optimiser can see is dead.
+         golden training hash is unaffected and the default path costs one
+         multiply that the optimiser can see is dead.
 
          Decoupled (applied to the weight, not folded into the gradient, so it
          does not accumulate in the momentum term) and on WEIGHTS ONLY. Biases
