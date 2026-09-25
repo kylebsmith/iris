@@ -431,28 +431,42 @@ arm_reference() {
 # The two port arms assert every byte their encoders emit. Their 32-bit
 # structure sizes are _Static_asserts, checked by compiling for wasm32, a
 # 32-bit target, with clang's front end only (any clang, Apple's included).
+# Where no clang is installed that one step is skipped with a note, unless
+# IRIS_REQUIRE names cross-clang (as continuous integration does on Linux).
 wasm_syntax() {
   WC=""
   for c in $CC clang /opt/homebrew/opt/llvm/bin/clang; do
     if command -v "$c" > /dev/null 2>&1 && is_clang "$c"; then WC=$c; break; fi
   done
-  if [ -z "$WC" ]; then fail "the 32-bit size assertions need a clang for the wasm32 front end"; fi
-  for f in "$@"; do "$WC" --target=wasm32 -std=c99 -Wall -Wextra -Werror -I. -fsyntax-only "$f"; done
+  if [ -z "$WC" ]; then
+    case " ${IRIS_REQUIRE:-} " in
+      *" cross-clang "*) fail "the 32-bit size assertions need a clang for the wasm32 front end" ;;
+    esac
+    say "SKIP  32-bit sizes: no clang for the wasm32 front end"
+    return 1
+  fi
+  # called as an if condition, where set -e does not reach: each failure exits here
+  for f in "$@"; do
+    "$WC" --target=wasm32 -std=c99 -Wall -Wextra -Werror -I. -fsyntax-only "$f" \
+      || fail "32-bit size assertions: $f"
+  done
 }
 arm_mpe() {
   "$CC" $CFLAGS -Werror -o build/mpe_test extras/tests/mpe_test.c extras/ports/mpe/iris_mpe.c \
     extras/ports/mpe/iris_mpe_wire.c -lm
   ./build/mpe_test
-  wasm_syntax extras/ports/mpe/iris_mpe_wire.c
-  say "PASS  32-bit sizes: bytes 8, desc 12, sink 36, voice 18, pool 132, mpe 276"
+  if wasm_syntax extras/ports/mpe/iris_mpe_wire.c; then
+    say "PASS  32-bit sizes: bytes 8, desc 12, sink 36, voice 18, pool 132, mpe 276"
+  fi
 }
 arm_sinks() {
   "$CC" $CFLAGS -Werror -o build/cc_test extras/tests/cc_test.c extras/ports/cc/iris_cc.c -lm
   ./build/cc_test
   "$CC" $CFLAGS -Werror -o build/osc_test extras/tests/osc_test.c extras/ports/osc/iris_osc.c -lm
   ./build/osc_test
-  wasm_syntax extras/ports/cc/iris_cc.c extras/ports/osc/iris_osc.c extras/ports/template/iris_yoursink.c
-  say "PASS  32-bit sizes: cc_cfg 28, cc 224, osc_cfg 20, osc 480; the template builds"
+  if wasm_syntax extras/ports/cc/iris_cc.c extras/ports/osc/iris_osc.c extras/ports/template/iris_yoursink.c; then
+    say "PASS  32-bit sizes: cc_cfg 28, cc 224, osc_cfg 20, osc 480; the template builds"
+  fi
 }
 
 # The browser prototype needs a clang with the wasm32 code generator and
