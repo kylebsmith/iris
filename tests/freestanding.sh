@@ -76,6 +76,7 @@ static unsigned char mem[IRIS_ARENA(NI, NH, NO, CAP)];
 static unsigned char mem2[IRIS_ARENA(NI, NH, NO, CAP)];
 static unsigned char file[IRIS_ARENA(NI, NH, NO, CAP)];
 static unsigned char scratch[IRIS_ELM_SCRATCH(NH, NO) + IRIS_ARENA(NI, NH, NO, CAP)];
+static unsigned char word[16];
 static float in[NI], out[NO], xn[NI];
 volatile float SINKF;
 volatile int SINKI;
@@ -160,6 +161,14 @@ int iris_probe(void) {
   SINKU += (unsigned long)iris_save_size(k);
   n = iris_save(k, file, sizeof file);
   SINKU += iris_crc32(file, n);
+  SINKU += (unsigned long)iris_internal_file_bytes(k, 3u)
+         + iris_internal_get_u32(file + 4);
+  SINKI += iris_internal_file_ok(k, file, n) + iris_internal_range_ok(xn[0], xn[1]);
+  SINKF += iris_internal_get_f32(file + 44);
+  SINKU += (unsigned long)(iris_internal_get_f32s(file + 48, xn, NI) - file);
+  iris_internal_put_u32(word, 7u);
+  iris_internal_put_f32(word + 4, SINKF);
+  SINKU += (unsigned long)(iris_internal_put_f32s(word + 8, xn, NI) - word);
   k2 = iris_init(mem2, sizeof mem2, NI, NH, NO, CAP, 1u);
   SINKI += iris_load(k2, file, n);
   SINKF += iris_retrain_new(k, 42u, 100);
