@@ -46,7 +46,8 @@
      - iris_predict, iris_knn_predict or iris_classify_1nn writing a value
        that is not finite while the status says OK; iris_novelty outside
        [0,1];
-     - iris_record handing out anything but the loaded next_id.
+     - iris_record handing out anything but the loaded next_id, or, with
+       every identifier spent, not refusing with IRIS_STORE_FULL.
    ========================================================================= */
 #include "iris.h"
 #include <stdint.h>
@@ -145,7 +146,9 @@ static const char *rules_broken(const iris *k) {
   if (k->trained && !k->fitted) return "trained without fitted";
   if (k->seed == 0u) return "seed 0";
   if (k->rng.s == 0u) return "random state 0";
-  if (k->next_id < 1 || k->next_id >= 0x7FFFFFFF) return "next_id out of range";
+  /* at most 2^31 - 1, the limit where int has 32 bits: an instrument that has
+     spent every identifier still loads */
+  if (k->next_id < 1 || (uint32_t)k->next_id > 0x7FFFFFFFu) return "next_id out of range";
   if (bad(k->l2) || k->l2 < 0.0f || k->l2 > 0.3f) return "smoothing out of range";
   if (k->n_ex < 0 || k->n_ex > k->cap) return "count out of range";
   { const float *arr[4] = { k->w1, k->b1, k->w2, k->b2 };
@@ -254,9 +257,16 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     for (int i = 0; i < s.ni; ++i) in[i] = 0.25f;
     for (int o = 0; o < s.no; ++o) out[o] = 0.75f;
     const int32_t expect = k->next_id;
+    const int before_n = iris_count(k);
     const int id = iris_record(k, in, out);
-    if (id != expect || iris_index_of(k, id) != iris_count(k) - 1) fail("iris_record did not hand out next_id");
-    if (!iris_delete_id(k, id)) fail("could not delete the take just recorded");
+    if (expect == 0x7FFFFFFF) {
+      /* every identifier spent: the record refuses and says so */
+      if (id != 0 || iris_count(k) != before_n || iris_get_status(k) != IRIS_STORE_FULL)
+        fail("iris_record did not refuse with every identifier spent");
+    } else {
+      if (id != expect || iris_index_of(k, id) != iris_count(k) - 1) fail("iris_record did not hand out next_id");
+      if (!iris_delete_id(k, id)) fail("could not delete the take just recorded");
+    }
   }
   free(file); free(arena); free(before);
   return 0;
