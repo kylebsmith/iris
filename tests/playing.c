@@ -78,6 +78,59 @@ static float span_of(const sweep *s) {
   return hi - lo;
 }
 
+/* THE SCALING PROPERTIES. iris fits its own ranges and does all its work in
+   fractions of them, so the units you measure in cannot matter. Doubling a
+   binary32 value is exact (it only changes the exponent), so the property can
+   be held to the bit: double every input, in the demonstrations and in the
+   query, and every playing path must give bit-identical answers; double every
+   output and every answer must be exactly double. `path` picks what plays:
+   0 unfitted, 1 iris_train, 2 iris_train_elm, 3 k-NN, 4 1-NN. Returns how
+   many of the 15 x 15 probes broke the property.
+
+   iris_novelty is held to the input property too, but only once ranges have
+   been fitted (paths 1 to 4; the neighbour functions fit them): on an
+   instrument never fitted it measures in the 0..1 ranges iris_init starts
+   with, which are in raw units. */
+static void scaled_store(iris *k, float in_scale, float out_scale) {
+  lcg_state = 31337u;
+  for (int r = 0; r < 12; ++r) {
+    const float u = lcg01(), v = lcg01() * 4.0f - 2.0f;
+    float in[2] = { u * in_scale, v * in_scale };
+    float out[2] = { (10.0f + 10.0f * u - 3.0f * u * v) * out_scale,
+                     (v * v - u) * out_scale };
+    iris_record(k, in, out);
+  }
+}
+static void play_path(iris *k, int path, const float *in, float *out) {
+  if (path == 3) iris_knn_predict(k, in, out, 3);
+  else if (path == 4) iris_classify_1nn(k, in, out);
+  else iris_predict(k, in, out);
+}
+static int scaling_breaks(int path, int which) {
+  iris *a = iris_init(A, sizeof A, 2, 12, 2, 64, 77u);
+  iris *b = iris_init(B, sizeof B, 2, 12, 2, 64, 77u);
+  scaled_store(a, 1.0f, 1.0f);
+  scaled_store(b, which == 0 ? 2.0f : 1.0f, which == 1 ? 2.0f : 1.0f);
+  if (path == 1) { iris_train(a); iris_train(b); }
+  if (path == 2) { iris_train_elm(a, 1e-3f, SCR, sizeof SCR);
+                   iris_train_elm(b, 1e-3f, SCR, sizeof SCR); }
+  int broken = 0;
+  for (int i = 0; i < 15; ++i) for (int j = 0; j < 15; ++j) {
+    float q[2] = { -0.2f + 0.1f * (float)i, -2.5f + (5.0f / 14.0f) * (float)j };
+    float q2[2] = { which == 0 ? 2.0f * q[0] : q[0], which == 0 ? 2.0f * q[1] : q[1] };
+    float pa[2], pb[2];
+    play_path(a, path, q, pa);
+    play_path(b, path, q2, pb);
+    if (which == 0) {
+      if (memcmp(pa, pb, sizeof pa) != 0) broken++;
+      if (path != 0 && iris_novelty(a, q) != iris_novelty(b, q2)) broken++;
+    } else {
+      if (pb[0] != 2.0f * pa[0] || pb[1] != 2.0f * pa[1]) broken++;
+    }
+  }
+  return broken;
+}
+
 int main(void) {
   char d[200];
   printf("\n  PLAYING AND NEIGHBOURS\n\n");
@@ -451,6 +504,24 @@ int main(void) {
              "count %d", id, nn_ok, knn_ok, del, del_nan, iris_count(k));
     check("a finite query far outside still finds its nearest",
           nn_ok && knn_ok && del == 1 && del_nan == 0 && iris_count(k) == 3, d); }
+
+  /* ---- scaling every input or every output by two -------------------------
+     See scaled_store above. Five playing paths, both properties. */
+  { const char *names[5] = { "unfitted", "iris_train", "iris_train_elm", "k-NN", "1-NN" };
+    int in_broken = 0, out_broken = 0;
+    char which_in[80] = "", which_out[80] = "";
+    for (int path = 0; path < 5; ++path) {
+      const int bi = scaling_breaks(path, 0), bo = scaling_breaks(path, 1);
+      in_broken += bi; out_broken += bo;
+      if (bi) { strncat(which_in, " ", sizeof which_in - strlen(which_in) - 1);
+                strncat(which_in, names[path], sizeof which_in - strlen(which_in) - 1); }
+      if (bo) { strncat(which_out, " ", sizeof which_out - strlen(which_out) - 1);
+                strncat(which_out, names[path], sizeof which_out - strlen(which_out) - 1); }
+    }
+    snprintf(d, sizeof d, "inputs x2: %d probes differ%s; outputs x2: %d not doubled%s",
+             in_broken, which_in, out_broken, which_out);
+    check("doubling inputs changes nothing, doubling outputs doubles",
+          in_broken == 0 && out_broken == 0, d); }
 
   /* ---- the playing functions take a non-const instrument -----------------
      The pointers above only compile against the non-const signatures; this
