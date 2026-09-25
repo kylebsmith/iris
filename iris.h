@@ -1563,11 +1563,9 @@ typedef int (*iris_progress_fn)(void *user, int done, int ceiling, float err);
                1 = continue the session already in k
    Returns the last epoch's mean squared error. */
 /* REFUSAL CONVENTION (one convention, whole library): a train call that did
-   no training returns -1.0f and leaves `trained` alone. Previously this path
-   returned k->last_error on refusal, so a caller reading only the return value
-   could not tell a refusal from a repeat of the previous run — while the
-   L-BFGS trainer (now experimental/iris_lbfgs.h) already returned -1.0f for
-   the same situation. Two conventions, one library. Fixed 2026-08-26. */
+   no training returns -1.0f and leaves `trained` alone, so a caller reading
+   only the return value can tell a refusal from a repeat of the previous
+   run. */
 IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume,
                            iris_progress_fn cb, void *user) { if (!k) return -1.0f;
   if (!iris_shape_fits(k)) { k->status = IRIS_NOT_FITTED; return -1.0f; }
@@ -1643,9 +1641,8 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
      example is still in the store where the musician can find and delete it.
      The scan runs BEFORE iris_fit_ranges for the same reason — a refused train
      must leave the playing instrument bit-identical, and ranges are part of
-     the instrument (denormalisation reads them on every predict). L-BFGS and
-     ELM already scan first; this path once fitted first, and a refusal
-     silently moved out_lo/out_hi. */
+     the instrument (denormalisation reads them on every predict). The ELM
+     trainer scans first for the same reason. */
   {
     const int st = k->n_in + k->n_out;
     for (int i = 0; i < k->n_ex * st; ++i)

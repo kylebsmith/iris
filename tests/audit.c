@@ -5,7 +5,6 @@
    which needs two builds of the core and so lives outside this binary. */
 
 #include "../iris.h"
-#include "../experimental/iris_lbfgs.h"
 
 /* HOST -> ESP32-S3 SCALING. This was a bare 32.0 sprinkled through the cost
    tables, and it was wrong by ~8x. The ONE on-device training measurement in
@@ -22,8 +21,8 @@
    from device_torture test 5, which times iris_train() -- and iris_train() is
    a thin wrapper whose last statement is iris_train_converge(k,0,0,0), so
    timing one times the other. This comment previously said converge was
-   unmeasured while README.md:158-159 quoted the numbers. iris_train_elm and
-   iris_train_lbfgs really are UNMEASURED on device.                        */
+   unmeasured while README.md:158-159 quoted the numbers. iris_train_elm
+   really is UNMEASURED on device.                                          */
 #define IRIS_S3_SCALE 270.0
 #include <stdio.h>
 #include <string.h>
@@ -706,161 +705,6 @@ int main(void) {
        tr, drift);
   }
 
-  /* --- 17. L-BFGS carries the whole suite ---------------------------------
-     The fast trainer substituted for backprop must still pass the core
-     behavioural checks: learn the demos, fill the gaps, same-seed bit
-     identity, and BOTH halves of the reroll promise. Budgets map as
-     iters = epochs/6.                                                       */
-  {
-    static float lwork[IRIS_LBFGS_WORK_FLOATS(NI, NH, NO, IRIS_LBFGS_M) + 2];
-    /* learns + generalises */
-    iris *a = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 1234);
-    load_examples(a, 20);
-    iris_reseed(a, 1234);
-    iris_train_lbfgs(a, 800 / 6, lwork, sizeof lwork);
-    float worst_r = 0.0f, worst_g = 0.0f;
-    for (int i = 0; i < iris_count(a); ++i) {
-      float in[NI], want[NO], got[NO];
-      iris_get(a, i, in, want);
-      iris_predict(a, in, got);
-      for (int o = 0; o < NO; ++o) {
-        float e = iris_absf(got[o] - want[o]);
-        if (e > worst_r) worst_r = e;
-      }
-    }
-    for (int x = 0; x <= 10; ++x) for (int y = 0; y <= 10; ++y) {
-      float in[NI] = { x / 10.0f, y / 10.0f }, want[NO], got[NO];
-      truth(in[0], in[1], want);
-      iris_predict(a, in, got);
-      for (int o = 0; o < NO; ++o) {
-        float e = iris_absf(got[o] - want[o]);
-        if (e > worst_g) worst_g = e;
-      }
-    }
-    /* same seed, same instrument — to the bit */
-    iris *b = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 1234);
-    load_examples(b, 20);
-    iris_reseed(b, 1234);
-    iris_train_lbfgs(b, 800 / 6, lwork, sizeof lwork);
-    int bitsame = memcmp(a->w1, b->w1,
-                         sizeof(float) * (size_t)(NH*NI + NH + NO*NH + NO)) == 0;
-    /* the reroll, both halves, at the audit's lively corner */
-    iris *kr = iris_init(arena_r, sizeof arena_r, NI, RR_HID, NO, RR_EX, 1);
-    float near_s = -1.0f, gap_s = -1.0f; int near_n = 0, gap_n = 0;
-    for (int s = 0; s < RR_SEEDS; ++s) {
-      load_examples(kr, RR_EX);
-      iris_reseed(kr, 1000u + (uint32_t)s * 7919u);
-      iris_train_lbfgs(kr, RR_EP / 6, lwork, sizeof lwork);
-      int p = 0;
-      for (int x = 0; x < RR_GRID; ++x) for (int y = 0; y < RR_GRID; ++y, ++p) {
-        float in[NI] = { x / (float)(RR_GRID - 1), y / (float)(RR_GRID - 1) };
-        iris_predict(kr, in, rr_pred[s][p]);
-      }
-    }
-    {
-      load_examples(kr, RR_EX);
-      float sn = 0.0f, sf = 0.0f; int cn = 0, cf = 0, p = 0;
-      for (int x = 0; x < RR_GRID; ++x) for (int y = 0; y < RR_GRID; ++y, ++p) {
-        float in[NI] = { x / (float)(RR_GRID - 1), y / (float)(RR_GRID - 1) };
-        float nov = iris_novelty(kr, in);
-        float worst = 0.0f;
-        for (int i = 0; i < RR_SEEDS; ++i) for (int j = i + 1; j < RR_SEEDS; ++j)
-          for (int o = 0; o < NO; ++o) {
-            float d = iris_absf(rr_pred[i][p][o] - rr_pred[j][p][o]);
-            if (d > worst) worst = d;
-          }
-        if      (nov < RR_NEAR_BAND) { sn += worst; cn++; }
-        else if (nov > RR_FAR_BAND)  { sf += worst; cf++; }
-      }
-      near_n = cn; gap_n = cf;
-      near_s = cn ? sn / (float)cn : -1.0f;
-      gap_s  = cf ? sf / (float)cf : -1.0f;
-    }
-    ok("L-BFGS: learns, generalises, bit-identical", worst_r < 0.06f && worst_g < 0.25f && bitsame,
-       "recall worst %.4f (<0.06), grid worst %.4f (<0.25), same-seed memcmp %d",
-       worst_r, worst_g, bitsame);
-    ok("L-BFGS: reroll keeps both promises", near_n > 0 && gap_n > 0
-       && gap_s > 0.03f && near_s < 0.04f,
-       "gaps move %.4f (want > 0.0300), demos move %.4f (want < 0.0400)",
-       gap_s, near_s);
-  }
-
-  /* --- 18. L-BFGS is monotone on hostile data -----------------------------
-     Duplicates, a 1e6 outlier, a dead input dimension. Every ACCEPTED step's
-     loss must be <= the one before (the Armijo rule, observed rather than
-     assumed) and nothing may go non-finite.                                 */
-  {
-    static float lwork[IRIS_LBFGS_WORK_FLOATS(NI, NH, NO, IRIS_LBFGS_M) + 2];
-    static float trace[512];
-    iris *a = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 1234);
-    iris_clear(a);
-    for (int i = 0; i < 200; ++i) {
-      float u = (i % 3 == 0) ? 0.5f : (float)(i % 17) / 17.0f;
-      float in[NI] = { u, 0.5f }, out[NO];
-      truth(u, 0.5f, out);
-      if (i % 5 == 0) { out[0] = 1e6f; out[1] = -1e6f; }
-      iris_record(a, in, out);
-    }
-    iris_reseed(a, 1234);
-    int iters = 0;
-    iris_internal_train_lbfgs_full(a, 300, 0.0f, lwork, sizeof lwork, trace, 512, &iters);
-    int mono = 1, tn = iters + 1 < 512 ? iters + 1 : 512;
-    for (int i = 1; i < tn; ++i) if (trace[i] > trace[i - 1]) mono = 0;
-    int bad = 0;
-    for (int x = -5; x <= 25; ++x) {
-      float in[NI] = { x / 20.0f, x / 20.0f }, got[NO];
-      iris_predict(a, in, got);
-      for (int o = 0; o < NO; ++o) if (iris_isbad(got[o])) bad++;
-    }
-    ok("L-BFGS: monotone descent on hostile data", mono && bad == 0 && iters > 0,
-       "%d accepted iterations, loss %.4f -> %.4f, monotone %d, %d NaN",
-       iters, trace[0], trace[tn - 1], mono, bad);
-  }
-
-  /* --- 19. the race: L-BFGS vs the 600-epoch baseline ---------------------
-     16 seeds x {20, 50} examples. For each seed, time the baseline to its
-     final error, then time L-BFGS from the SAME initial weights to that
-     exact error. Gate: every seed at least 2x faster (measured mean 4.3x /
-     4.7x, worst seeds 3.2x / 2.5x).                                         */
-  {
-    static float lwork[IRIS_LBFGS_WORK_FLOATS(NI, NH, NO, IRIS_LBFGS_M) + 2];
-    const int excnt[2] = { 20, 50 };
-    float worst_sp[2] = { 1e9f, 1e9f };
-    int misses = 0;
-    for (int e = 0; e < 2; ++e) {
-      for (int sd = 0; sd < 16; ++sd) {
-        uint32_t seed = 1000u + (uint32_t)sd * 7919u;
-        iris *a = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, seed);
-        load_examples(a, excnt[e]);
-        double tb[5], tl[5];
-        float e_base = 0.0f, e_l = 0.0f;
-        for (int r = 0; r < 5; ++r) {
-          iris_reseed(a, seed);
-          double t0 = now_ms(); iris_train_epochs(a, 600); tb[r] = now_ms() - t0;
-        }
-        e_base = iris_eval_loss(a);
-        for (int r = 0; r < 5; ++r) {
-          iris_reseed(a, seed);
-          double t0 = now_ms();
-          e_l = iris_internal_train_lbfgs_full(a, 2000, e_base, lwork, sizeof lwork, 0, 0, 0);
-          tl[r] = now_ms() - t0;
-        }
-        /* median of 5 */
-        for (int i = 0; i < 5; ++i) for (int j = i + 1; j < 5; ++j) {
-          if (tb[j] < tb[i]) { double t = tb[i]; tb[i] = tb[j]; tb[j] = t; }
-          if (tl[j] < tl[i]) { double t = tl[i]; tl[i] = tl[j]; tl[j] = t; }
-        }
-        if (e_l > e_base) misses++;
-        float sp = (float)(tb[2] / (tl[2] > 1e-6 ? tl[2] : 1e-6));
-        if (sp < worst_sp[e]) worst_sp[e] = sp;
-      }
-    }
-    ok("L-BFGS: >= 2x faster to baseline error, every seed", misses == 0
-       && worst_sp[0] >= 2.0f && worst_sp[1] >= 2.0f,
-       "16 seeds: worst 20-ex %.1fx, worst 50-ex %.1fx (want >= 2.0x), %d target misses",
-       worst_sp[0], worst_sp[1], misses);
-  }
-
   /* --- 20. ELM: same seed, same bits; reroll keeps both promises ----------
      The instant trainer's determinism is structural (no rng after the
      frozen draw, fixed accumulation order) — observed here at three widths.
@@ -1341,73 +1185,17 @@ int main(void) {
        IRIS_STRESS_MIN_EX, small_silent);
   }
 
-  /* --- 33. the trainer chosen on error floor, not on time-to-parity -------
-     docs/frontier/REPORT.md ranked the optimisers by how fast they reach the
-     600-epoch baseline. Re-scored on where they STOP, the ranking inverts:
-     L-BFGS — the fast trainer, and the right one when speed is the
-     constraint — plateaus and stays there. 10,000 iterations are
-     indistinguishable from 1,000. Plain SGD carried to convergence goes
-     several times lower and generalises better. This check is that claim,
-     kept honest run to run rather than left in a document.
-
-     ⚠️ WHAT THIS CHECK MEASURES, PRECISELY: our L-BFGS IMPLEMENTATION, not
-     the L-BFGS method. Two defects in experimental/iris_lbfgs.h account for
-     most of the gap — an absolutely-scaled curvature safeguard that discards
-     ~680 of 1000 curvature pairs, and a float32 line search resolving rounding
-     noise below its own Armijo threshold. Repaired, the median training-MSE
-     ratio falls from 4.05x to 1.28x, the per-seed comparison becomes a coin
-     flip (4/8), and THIS ASSERTION FAILS (sc = 5.08e-06 vs l2 = 8.02e-06, so
-     sc < l2*0.5f is false). It also asserts on TRAINING error, whereas
-     scikit-learn's small-data guidance concerns HELD-OUT error on a
-     regularised objective; on held-out error the honest figure is ~6% at 16
-     seeds, not "several times". Do not quote this check as evidence against
-     the field's advice. The full workings and the fair-comparison protocol are
-     in the unpublished research tree iris was extracted from, so they are not
-     re-runnable from this repository -- treat this check as a measurement of
-     this implementation, not of the method.
-
-     Levenberg-Marquardt was measured too and is NOT here, because it is not
-     in the file: it stalls in the same place as L-BFGS (median train MSE
-     1.6e-5 at 20 examples with double-precision normal equations and Nielsen
-     damping) and its normal matrix does not fit — see the trainer table in
-     docs/frontier/REPORT.md.                                               */
+  /* --- 33. the converged trainer reaches a usable fit ---------------------
+     The shipping trainer, run to its plateau on the reference task, must end
+     with a training error under 1e-3. A floor on the trainer actually
+     fitting, not a comparison with any other method.                       */
   {
-    static float lw33[IRIS_LBFGS_WORK_FLOATS(NI, NH, NO, IRIS_LBFGS_M) + 2];
-    iris *k1 = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 4242u);
-    load_examples(k1, 20);
-    float l1 = iris_internal_train_lbfgs_full(k1, 1000, 0.0f, lw33, sizeof lw33, 0, 0, 0);
-    iris *k2 = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 4242u);
-    load_examples(k2, 20);
-    float l2 = iris_internal_train_lbfgs_full(k2, 10000, 0.0f, lw33, sizeof lw33, 0, 0, 0);
     iris *k3 = iris_init(arena_d, sizeof arena_d, NI, NH, NO, CAP, 4242u);
     load_examples(k3, 20);
     float sc = iris_train_converge(k3, 0, 0, 0);
-    /* WHAT IS ASSERTED, AND WHY IT CHANGED TWICE.
-
-       2026-08-26: this asserted `sc < l2 * 0.5f` — that SGD beats our L-BFGS by
-       at least 2x. That was mostly measuring two defects in our own L-BFGS. Both
-       were repaired and the assertion was replaced by a plateau test.
-
-       2026-08-27: the plateau test is dead too, and the reason is worth reading.
-       Fixing the tanh codomain clamp REVERSED the comparison. L-BFGS now reaches
-       a LOWER training error than SGD-to-plateau on this seed, and is still
-       improving at 10,000 iterations rather than plateauing. The old activation
-       let 1-a*a go negative past |s|=3; L-BFGS takes large steps, entered that
-       band routinely, and was being fed wrong-signed gradients. SGD at these
-       hyperparameters never goes there — which is why the core golden hash above
-       did not move and this one did.
-
-       So: assert only what is stable, which is that both trainers actually fit.
-       REPORT the comparison and do not assert it. It has now flipped once, on a
-       change to a function neither trainer owns; a test that pins a comparative
-       ordering here would be pinning an artefact. Anyone quoting the ratio must
-       quote it as our implementation, one seed, one task.
-       See docs/MATH-FIXES.md defect 1.                                        */
-    ok("both trainers reach a usable fit; ratio reported, not asserted",
-       l2 > 0.0f && l2 < 1e-3f && sc > 0.0f && sc < 1e-3f,
-       "L-BFGS 1000 it %.3e -> 10000 it %.3e (%.2fx); SGD-to-plateau %.3e; "
-       "L-BFGS/SGD = %.2fx (REPORTED — flipped on 2026-08-27 when the tanh "
-       "codomain was fixed)", l1, l2, l1 / l2, sc, l2 / sc);
+    ok("the converged trainer reaches a usable fit", sc > 0.0f && sc < 1e-3f,
+       "20 examples trained to the plateau: mean squared error %.3e "
+       "(want < 1e-3)", sc);
   }
 
   /* --- timing: what will this cost on the S3? ----------------------------- */
@@ -1532,11 +1320,10 @@ int main(void) {
   printf("  * S3 columns are the HOST time x270, not board readings.\n"
          "    Measured on hardware: backprop-600 (321 ms @20 ex,\n"
          "    BRINGUP-LOG.md:198) and converge (595 ms @4 demos, 2.7-3.0 s\n"
-         "    @8-20, device_torture test 5). ELM and L-BFGS are UNMEASURED\n"
-         "    on device.\n\n");
-  printf("  examples   backprop-600      S3 x270*  |  L-BFGS-100      S3 x270* |  ELM nh-12       S3 x270*\n");
+         "    @8-20, device_torture test 5). ELM is UNMEASURED on\n"
+         "    device.\n\n");
+  printf("  examples   backprop-600      S3 x270*  |  ELM nh-12       S3 x270*\n");
   const int exs[] = { 10, 20, 50, 100, 200 };
-  static float lwork_t[IRIS_LBFGS_WORK_FLOATS(NI, NH, NO, IRIS_LBFGS_M) + 2];
   for (int e = 0; e < 5; ++e) {
     iris_clear(k);
     for (int i = 0; i < exs[e]; ++i) {
@@ -1549,17 +1336,13 @@ int main(void) {
     double t0 = now_ms();
     iris_train_epochs(k, 600);
     double dt = now_ms() - t0;
-    iris_reseed(k, 4242);
-    double t1 = now_ms();
-    iris_train_lbfgs(k, 100, lwork_t, sizeof lwork_t);
-    double dl = now_ms() - t1;
     /* the closed-form solve is under the timer's resolution; average 200 */
     double t2 = now_ms();
     for (int rep = 0; rep < 200; ++rep)
       iris_train_elm(k, 1e-4f, elm_scratch, sizeof elm_scratch);
     double de = (now_ms() - t2) / 200.0;
-    printf("  %6d   %8.1f ms     ~%5.0f ms   |  %7.2f ms    ~%5.0f ms  |  %7.4f ms    ~%5.2f ms\n",
-           exs[e], dt, dt * IRIS_S3_SCALE, dl, dl * IRIS_S3_SCALE, de, de * IRIS_S3_SCALE);
+    printf("  %6d   %8.1f ms     ~%5.0f ms   |  %7.4f ms    ~%5.2f ms\n",
+           exs[e], dt, dt * IRIS_S3_SCALE, de, de * IRIS_S3_SCALE);
   }
 
   /* THE CONVERGED TRAINER — the default since v0.3.0, and the one number a
