@@ -228,7 +228,9 @@ arm_threads() {
   fi
   tail -1 build/threads_separate.out
   say "PASS  no ThreadSanitizer report from eight instruments on eight threads"
-  if ./build/threads same > build/threads_same.out 2>&1; then st=0; else st=$?; fi
+  # in a subshell, so the shell's own note that the program aborted goes to
+  # the log with ThreadSanitizer's report instead of the terminal
+  if (./build/threads same; exit $?) > build/threads_same.out 2>&1; then st=0; else st=$?; fi
   races=$(grep -c 'WARNING: ThreadSanitizer: data race' build/threads_same.out || true)
   if [ "$st" = 0 ] || [ "$races" = 0 ]; then
     cat build/threads_same.out
