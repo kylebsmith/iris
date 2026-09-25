@@ -471,10 +471,37 @@ IRIS_API int iris_isbad(float x) {
 #define IRIS_FLUSH(v) ((v) < IRIS_TINY && (v) > -IRIS_TINY ? 0.0f : (v))
 #endif
 
-/* Trained-weight audit measured max|w| = 2.8 on the reference tasks; 16 is
-   5.7x headroom, so on any healthy run the divergence check never fires and
-   the clamp provably never changes a bit. A weight past 16 drives tanh/
-   sigmoid so deep into saturation it is indistinguishable from ±1 anyway.   */
+/* THE WEIGHT LIMIT. A weight or bias past it means training is running away:
+   the guard in PART 8 clamps it to exactly this value, reports
+   IRIS_TRAINING_DIVERGED and stops the run, and a trainer that would continue
+   from a weight sitting on it refuses with IRIS_DIVERGED_STUCK. iris_tanh is
+   exactly ±1 beyond |s| = 3, so one weight of 16 on its own saturates its
+   hidden unit whenever its input is more than 3/16 of the way from the centre of its
+   range to either end.
+
+   IT FIRES ON SOME GOOD FITS. Measured with iris_train at the defaults on
+   2,304 fits (6 target shapes x 5, 10, 20, 50 demonstrations x noise 0, 0.05,
+   0.10 x 32 seeds; 2 inputs, 12 hidden, 3 outputs): the healthy fits' largest
+   weight has a median of 4.07 and a 99th percentile of 14.4, and the limit
+   fired on 40, every one at 50 demonstrations and 39 of them on sharp
+   targets (cliffs and ridges). Those 40 are usable instruments, and stopping them helped: allowed
+   to run on (a limit of 32 or 64 gives the same runs; none passes 31.2) they
+   train longer and end 7.6% worse on held-out error (geometric mean; 27 of
+   the 40 are worse). Their status still says they diverged.
+
+   WHY IT IS NOT RAISED. A higher limit clears those 40 and blinds the guard
+   to real runaways. Same 2,304 datasets with the learning rate and momentum
+   forced through iris_internal_set_learning; of the fits whose held-out error
+   came out more than twice the default fit's, how many the guard reported:
+
+                                  limit 16       limit 32       limit 64
+     lr 2.0,  momentum 0.85     512 of 1,718    60 of 1,720     0 of 1,720
+     lr 0.10, momentum 0.99     743 of 1,229   228 of 1,257     0 of 1,257
+     lr 2.0,  momentum 0.99   1,970 of 1,970 1,967 of 1,978 1,579 of 1,992
+
+   against 40, 0 and 0 reports on the default fits. 16 stays. The golden
+   training hash in tests/audit.c is the same at all three limits: no healthy
+   reference run comes near it. */
 #define IRIS_W_LIMIT 16.0f
 
 /* ==========================================================================
