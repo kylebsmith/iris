@@ -1280,6 +1280,9 @@ IRIS_API int iris_capacity(const iris *k) { if (!k) return 0; return k->cap; }
    Reads exactly n_in floats from `in` and n_out from `out`. */
 IRIS_API int iris_record(iris *k, const float *in, const float *out) { if (!k) return 0;
   if (k->n_ex >= k->cap) { k->status = IRIS_STORE_FULL; return 0; }
+  /* Identifiers are never reused, so they can run out: once next_id is the
+     largest int32_t, handing it out and adding one would overflow. */
+  if (k->next_id >= 0x7FFFFFFF) return 0;
 
 #ifndef IRIS_NO_GUARDS
   /* REFUSE A POISONED DEMONSTRATION AT THE DOOR. A NaN or Inf from a glitched
@@ -3322,78 +3325,130 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
    PART 9 — SAVING
 
    A trained instrument has to be a thing you can put somewhere and get back.
-   The file carries the weights AND the examples, so whoever receives it can
-   keep working rather than inheriting a sealed box.
+   The file carries the weights AND the demonstrations, so whoever receives it
+   can keep working rather than inheriting a sealed box.
 
-   Magic number and version go first so that a file from 2026 can still be
-   recognised — or politely refused — in 2036.
+   THE FILE, format version 7. Every number is little-endian and is written
+   and read one byte at a time, so a file means the same thing on every
+   machine and the buffer you hand over needs no particular alignment. A float
+   travels as its 32-bit IEEE-754 bit pattern. In the type column, u32 is an
+   unsigned 32-bit integer, i32 a signed one, and f32 a float.
 
-   THE LAYOUT. Formats 5 and 6 are byte-for-byte the same; the version word
-   alone says whether the instrument had been fitted when it was saved.
+     offset  field                                type     rule on load
+     ------  -----------------------------------  -------  -------------------------
+          0  magic: the letters I R I S           4 bytes  exact
+          4  format version: 7                    u32      exact
+          8  header bytes: 48, the offset of w1   u32      exact
+         12  flags: bit 0 fitted, bit 1 trained   u32      no other bit set; trained
+                                                           only together with fitted
+         16  n_in, n_hid, n_out                   3 x u32  the receiving instrument's
+                                                           shape, and iris_shape_fits
+         28  n_ex, demonstrations stored          u32      at most the receiver's
+                                                           capacity
+         32  seed                                 u32      not 0
+         36  next_id, the next identifier         u32      1 <= next_id < 2^31 - 1
+         40  random-number state                  u32      not 0
+         44  smoothing                            f32      finite, 0 to 1
+         48  w1, b1, w2, b2                       f32s     finite, magnitude at most
+                                                           IRIS_W_LIMIT
+          .  in_lo, in_hi, out_lo, out_hi         f32s     finite, lo < hi, and
+                                                           hi - lo finite
+          .  demonstrations, each one n_in        f32s     finite
+             inputs then n_out outputs
+          .  identifiers, one per demonstration   i32s     1 or more, all different,
+                                                           each below next_id
+      end-4  checksum of every byte before it     u32      exact
+             (CRC-32, see iris_crc32)
 
-     9 words   magic, version, n_in, n_hid, n_out, n_ex, seed, next_id, and
-               the live random-number state -- so that a reloaded
-               instrument's next correction is the one the saved instrument
-               would have made, rather than a fork of it
-     floats    w1, b1, w2, b2, in_lo, in_hi, out_lo, out_hi, then every
-               demonstration (n_in inputs followed by n_out outputs)
-     int32s    one identifier per demonstration
-     1 float   the weight decay behind the smoothing setting (PART 3)
-     1 word    a checksum over every byte before it (see iris_crc32)
+   And the length: exactly what the header says, not a byte more or less.
 
-   Inputs are always scaled to [-1,+1] (PART 5), so a stored weight means one
-   thing only and the file does not need to say which scaling it was fitted
-   under.
+   WHAT THE RULES ARE FOR. The checksum catches accidents -- a flipped bit in
+   flash, a write cut off by a power failure -- but anyone can recompute it,
+   so a file written by a buggy program, or edited by hand, arrives with a
+   good checksum and whatever it happens to contain. The rules catch that
+   second kind. Each one refuses a value that would go wrong later if it were
+   let in:
+
+     - The shape must match because the weights only mean something at the
+       size they were trained at. iris_shape_fits is asked too, because the
+       loader's own working array is sized by this translation unit's
+       IRIS_MAX_IN (see the note above iris_shape_fits).
+     - Unsigned throughout: a count with its top bit set is a large number
+       that fails "at most the capacity", not a negative one that passes it.
+     - next_id stays below 2^31 - 1, the largest int32_t, so a loaded
+       instrument has at least one identifier left to hand out. iris_record
+       hands out next_id and adds one, and refuses once next_id reaches the
+       largest int32_t, so the count never overflows.
+     - A weight past IRIS_W_LIMIT is past the clamp backpropagation enforces
+       (see the note at IRIS_W_LIMIT), and a unit driven that hard is
+       saturated anyway.
+     - lo < hi, strictly: a range of zero width makes the normalisation in
+       PART 5 divide by zero. iris_fit_ranges never leaves one -- it gives a
+       channel that never moved a small width of its own -- so a file that
+       carries one did not come from this library.
+     - An identifier that repeats would make "delete #3" ambiguous, and one
+       at or above next_id would be handed out again by the next record.
+
+   iris_load CHECKS EVERY RULE BEFORE IT WRITES ANYTHING. A refused file
+   returns 0 and leaves the instrument you passed exactly as it was, every
+   byte of it, its status included. There is no half-loaded instrument.
+
+   AFTER A LOAD the instrument is the saved one, and it is at rest: fitted and
+   trained come from the flags, the momentum velocities are zero, the record
+   of which demonstration fights the others (PART 8f) is empty, any sliced
+   training run is over, the status is IRIS_STATUS_OK, and iris_last_error is
+   measured afresh over the demonstrations.
+
+   WHY FITTED AND TRAINED ARE TWO BITS. `fitted` means this instrument has
+   produced a fit and plays it; `trained` means that fit still describes the
+   demonstrations stored with it. Record one more take after training and the
+   instrument is fitted but not trained: it keeps playing. iris_save writes
+   the two separately, so after a save and a load it still plays, the same
+   bits as before, and iris_is_trained still says 0.
+
+   THE SMOOTHING FIELD is the setting, 0 to 1, as iris_get_smoothing reports
+   it, and loading applies it exactly as iris_set_smoothing does. That round
+   trip is exact for every setting iris_set_smoothing can produce: checked
+   over all 1,065,353,217 floats from 0 to 1, the weight decay after a save
+   and a load equals the one before, bit for bit.
+
+   iris_save WRITES ONLY FILES iris_load ACCEPTS. It checks its own output
+   against the same rules and returns 0 -- clearing what it wrote -- if the
+   instrument breaks one. What can make it refuse: weights past IRIS_W_LIMIT,
+   which the closed-form trainer (PART 8d) reaches when its ridge is set well
+   below the default, and which any trainer reaches when built with
+   IRIS_NO_GUARDS; a demonstration that is not finite, which only an
+   IRIS_NO_GUARDS build lets into the store; demonstrations spread so far
+   apart that a range's width overflows a float; and more than two thousand
+   million recorded takes. Refusing at save time tells you while the
+   instrument is still in front of you, rather than after a power cycle.
+
+   ONE THING THE CHECKSUM CANNOT DO. It certifies the bytes that were
+   written, not that they all came from the same instant. If the instrument
+   changes while iris_save is copying it -- a second thread, an interrupt,
+   the sliced trainer driven from a timer -- the buffer holds a mixture of two
+   instruments, and the checksum, computed over the mixture, matches it by
+   construction. If every value in the mixture obeys the rules, it loads. One
+   instrument belongs to one thread (see THREADING in PART 2); do not save an
+   instrument that something else may be touching.
    ========================================================================== */
 
-#define IRIS_MAGIC 0x4B455745u  /* "EWEK" */
-/* EVERY FILE THIS LOADER READS CARRIES A CHECKSUM: every single-bit change
-   anywhere in the file is detected and the load is refused.
+#define IRIS_FILE_MAGIC   "IRIS"   /* the first four bytes of every file       */
+#define IRIS_FILE_VERSION 7u       /* the one format this file reads and writes */
+#define IRIS_FILE_HEADER  48u      /* bytes before w1: the fixed fields above   */
 
-   AND ONE THING THE CHECKSUM CANNOT DO, WHICH IS WORTH SAYING HERE RATHER THAN
-   LEAVING TO BE DISCOVERED. iris_save copies every field into your buffer and
-   computes the checksum over the buffer AFTERWARDS. So the checksum certifies
-   the bytes that were written -- not that they all came from the same instant.
-   If the instrument changes while the copy is running (a second thread, an
-   interrupt, the sliced trainer driven from a timer) the buffer holds a
-   mixture of two instruments, and the checksum is computed over the mixture
-   and therefore matches. By construction, always. A reviewer raced saves
-   against training and got 4,096 of 4,096 torn files loading clean, 32 of them
-   badly wrong while reporting healthy.
+/* CRC-32, the 32-bit cyclic redundancy check of IEEE 802.3 (the one zip and
+   Ethernet use), computed a bit at a time so there is no 1 KB table to carry
+   onto a microcontroller. It runs only on save and load, never while
+   playing. Measured on the development laptop (Apple M4 Max, cc -O2): 5.5
+   microseconds for the 872-byte file of a 2-12-3 instrument with 20
+   demonstrations, about 6.5 nanoseconds a byte.
 
-   This is already out of contract -- see the threading note in PART 1: one
-   instrument belongs to one thread. It is called out again here because this
-   is the one corruption the guard rail specifically cannot catch, and a
-   checksum that passes is exactly the evidence that would persuade you the
-   file is fine. Do not save an instrument that something else may be touching.
-   There is no allocation and no lock in this library to do it for you. */
-/* FORMAT v6 CHANGES NO BYTES AT ALL. Same header, same payload, same length,
-   same checksum as v5. What it changes is one fact ABOUT the instrument: v6
-   means "this was saved before it was ever fitted".
-
-   Why it has to exist. iris_load used to set trained = 1 unconditionally, so
-   record-save-load-play on a never-trained instrument ran the forward pass over
-   the random weights iris_reseed left, returned numbers that vary with the
-   gesture, and reported IRIS_STATUS_OK. The unfitted guard in iris_predict is
-   the defence the front page calls the one thing to get right, and the loader
-   walked around it. Nothing in the bytes could tell the two apart, because
-   untrained weights are just weights.
-
-   v5 means fitted. */
-#define IRIS_FORMAT_V6 6u       /* v5 layout, and it was NOT fitted when saved */
-#define IRIS_FORMAT 5u          /* what iris_save writes when trained */
-
-/* CRC32 (IEEE 802.3), computed a bit at a time so there is no 1 KB table to
-   carry onto a microcontroller. A few KB takes microseconds and it only runs on
-   save and load, never while playing.
-
-   WHY A SAVED INSTRUMENT NEEDS ONE. The file is weights — raw floats with no
-   redundancy. Flip one bit in flash, or lose power halfway through an SD write,
-   and every field still parses: the magic matches, the shape matches, the sizes
-   match, and the instrument loads and plays something subtly wrong with nothing
-   reporting anything. That is the worst failure this library can have, because
-   the musician will assume they mis-trained it. A checksum turns it into a
-   refusal. */
+   WHY A SAVED INSTRUMENT NEEDS ONE. The file is mostly weights, raw floats
+   with no redundancy. Flip one bit in flash and every field may still obey
+   every rule above: the instrument loads and plays something subtly wrong
+   with nothing reporting anything, and the musician assumes they mis-trained
+   it. The checksum turns that into a refusal. */
 IRIS_API uint32_t iris_crc32(const void *buf, size_t n) {
   const unsigned char *p = (const unsigned char *)buf;
   uint32_t c = 0xFFFFFFFFu;
@@ -3405,175 +3460,235 @@ IRIS_API uint32_t iris_crc32(const void *buf, size_t n) {
   return c ^ 0xFFFFFFFFu;
 }
 
-IRIS_API size_t iris_save_size(const iris *k) { if (!k) return 0;
-  return sizeof(uint32_t) * 9                      /* 8 header words + rng.s */
-       + sizeof(float) * (size_t)( k->n_hid*k->n_in + k->n_hid
-                                 + k->n_out*k->n_hid + k->n_out
-                                 + 2*(k->n_in + k->n_out)
-                                 + (size_t)k->n_ex * (k->n_in + k->n_out) )
-       + sizeof(int32_t) * (size_t)k->n_ex
-       /* The smoothing setting. docs/FREEZE.md called this "cheap today and
-          impossible tomorrow" -- the weights round-trip perfectly without it,
-          so nothing sounds wrong until the musician retrains a loaded
-          instrument and gets a different one for a reason the file never
-          recorded. */
-       + sizeof(float)
-       + sizeof(uint32_t);                         /* the trailing checksum */
+/* LITTLE-ENDIAN, ONE BYTE AT A TIME. Casting the caller's buffer to a
+   uint32_t or float pointer instead would demand 4-byte alignment the buffer
+   need not have -- undefined behaviour in C, and a fault on microcontrollers
+   whose loads must be aligned -- and would write the host's byte order into
+   the file. Shifts and masks give the same bytes on every machine. */
+IRIS_API void iris_internal_put_u32(unsigned char *p, uint32_t v) {
+  p[0] = (unsigned char)(v & 0xFFu);
+  p[1] = (unsigned char)((v >> 8) & 0xFFu);
+  p[2] = (unsigned char)((v >> 16) & 0xFFu);
+  p[3] = (unsigned char)((v >> 24) & 0xFFu);
+}
+IRIS_API uint32_t iris_internal_get_u32(const unsigned char *p) {
+  return (uint32_t)p[0] | ((uint32_t)p[1] << 8)
+       | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+/* A float's bit pattern, through a union: reading the member that was not
+   written last reinterprets the same four bytes (C99 6.5.2.3; the GCC manual
+   allows it in C++ too, under -fstrict-aliasing), with no library call. The
+   bits are copied, not converted, so -0 and not-a-number arrive as they left. */
+IRIS_API void iris_internal_put_f32(unsigned char *p, float f) {
+  union { float f; uint32_t u; } c;
+  c.f = f;
+  iris_internal_put_u32(p, c.u);
+}
+IRIS_API float iris_internal_get_f32(const unsigned char *p) {
+  union { float f; uint32_t u; } c;
+  c.u = iris_internal_get_u32(p);
+  return c.f;
+}
+/* A run of n floats; each returns the position just past what it moved. */
+IRIS_API unsigned char *iris_internal_put_f32s(unsigned char *p, const float *src, size_t n) {
+  for (size_t i = 0; i < n; ++i, p += 4) iris_internal_put_f32(p, src[i]);
+  return p;
+}
+IRIS_API const unsigned char *iris_internal_get_f32s(const unsigned char *p, float *dst, size_t n) {
+  for (size_t i = 0; i < n; ++i, p += 4) dst[i] = iris_internal_get_f32(p);
+  return p;
 }
 
-IRIS_API size_t iris_save(const iris *k, void *buf, size_t cap) { if (!k) return 0;
-  size_t need = iris_save_size(k);
-  if (!buf || cap < need) return 0;
-  uint32_t *h = (uint32_t *)buf;
-  h[0] = IRIS_MAGIC;
-  /* v6 when `trained` is clear -- same bytes, and the loader will not claim
-     the instrument is trained. */
-  h[1] = k->trained ? IRIS_FORMAT : IRIS_FORMAT_V6;
-  h[2] = (uint32_t)k->n_in; h[3] = (uint32_t)k->n_hid;
-  h[4] = (uint32_t)k->n_out; h[5] = (uint32_t)k->n_ex;
-  h[6] = k->seed; h[7] = (uint32_t)k->next_id;
-  h[8] = k->rng.s;                                  /* the live rng state */
-  float *f = (float *)(h + 9);
-  #define IRIS_PUT(src, n) do { for (int _i = 0; _i < (n); ++_i) *f++ = (src)[_i]; } while (0)
-  IRIS_PUT(k->w1, k->n_hid*k->n_in);  IRIS_PUT(k->b1, k->n_hid);
-  IRIS_PUT(k->w2, k->n_out*k->n_hid); IRIS_PUT(k->b2, k->n_out);
-  IRIS_PUT(k->in_lo, k->n_in);   IRIS_PUT(k->in_hi, k->n_in);
-  IRIS_PUT(k->out_lo, k->n_out); IRIS_PUT(k->out_hi, k->n_out);
-  IRIS_PUT(k->ex, (int)((size_t)k->n_ex * (k->n_in + k->n_out)));
-  #undef IRIS_PUT
-  int32_t *ids = (int32_t *)f;
-  for (int i = 0; i < k->n_ex; ++i) ids[i] = k->ex_id[i];
-  {
-    /* The smoothing word, then the checksum over everything written so far. */
-    uint32_t *tail = (uint32_t *)(ids + k->n_ex);
-    float *sm = (float *)tail;
-    *sm = k->l2;
-    tail = (uint32_t *)(sm + 1);
-    *tail = iris_crc32(buf, need - sizeof(uint32_t));
+/* The exact length of a file of this instrument's shape holding n_ex
+   demonstrations. Called only with n_ex at most the capacity, and the arena
+   already holds every one of these floats (and more), so the sum fits a
+   size_t on any machine the instrument exists on. */
+IRIS_API size_t iris_internal_file_bytes(const iris *k, uint32_t n_ex) {
+  const size_t floats = (size_t)k->n_hid * k->n_in + k->n_hid
+                      + (size_t)k->n_out * k->n_hid + k->n_out
+                      + 2u * ((size_t)k->n_in + k->n_out)
+                      + (size_t)n_ex * ((size_t)k->n_in + k->n_out);
+  return IRIS_FILE_HEADER + 4u * (floats + (size_t)n_ex) + 4u;
+}
+
+/* One stored range: both ends finite, lo strictly below hi, and a width that
+   is itself a finite number. Two tests are enough for all of that: lo < hi is
+   false when either end is not-a-number, and hi - lo is infinite whenever an
+   end that passed it is infinite. */
+IRIS_API int iris_internal_range_ok(float lo, float hi) {
+  return lo < hi && !iris_isbad(hi - lo);
+}
+
+/* EVERY RULE IN THE TABLE ABOVE, reading the file and writing nothing. It
+   answers one question -- would this file load into k? -- and two callers ask
+   it: iris_load, before it touches the instrument, and iris_save, of the bytes
+   it has just written. One copy of the rules, so the writer and the reader
+   cannot come to disagree about what a valid file is. */
+IRIS_API int iris_internal_file_ok(const iris *k, const unsigned char *b, size_t bytes) {
+  const size_t ni = (size_t)k->n_in, nh = (size_t)k->n_hid, no = (size_t)k->n_out;
+  const unsigned char *p;
+  uint32_t flags, n_ex, next_id, top = 0u;
+  size_t i, j;
+  if (bytes < IRIS_FILE_HEADER + 4u) return 0;
+  for (i = 0; i < 4; ++i) if (b[i] != (unsigned char)IRIS_FILE_MAGIC[i]) return 0;
+  if (iris_internal_get_u32(b + 4) != IRIS_FILE_VERSION) return 0;
+  if (iris_internal_get_u32(b + 8) != IRIS_FILE_HEADER)  return 0;
+  flags = iris_internal_get_u32(b + 12);
+  if (flags & ~3u)  return 0;                  /* a bit this reader does not know */
+  if (flags == 2u)  return 0;                  /* trained, but never fitted       */
+  if (iris_internal_get_u32(b + 16) != (uint32_t)ni
+   || iris_internal_get_u32(b + 20) != (uint32_t)nh
+   || iris_internal_get_u32(b + 24) != (uint32_t)no) return 0;
+  n_ex = iris_internal_get_u32(b + 28);
+  if (n_ex > (uint32_t)k->cap) return 0;
+  if (bytes != iris_internal_file_bytes(k, n_ex)) return 0;
+  if (iris_crc32(b, bytes - 4u) != iris_internal_get_u32(b + bytes - 4u)) return 0;
+  if (iris_internal_get_u32(b + 32) == 0u) return 0;                   /* seed */
+  next_id = iris_internal_get_u32(b + 36);
+  if (next_id < 1u || next_id >= 0x7FFFFFFFu) return 0;
+  if (iris_internal_get_u32(b + 40) == 0u) return 0;       /* random state */
+  { const float s = iris_internal_get_f32(b + 44);
+    if (iris_isbad(s) || s < 0.0f || s > 1.0f) return 0; }
+
+  p = b + IRIS_FILE_HEADER;
+  for (i = 0; i < nh * ni + nh + no * nh + no; ++i, p += 4) {
+    const float w = iris_internal_get_f32(p);
+    if (iris_isbad(w) || w > IRIS_W_LIMIT || w < -IRIS_W_LIMIT) return 0;
+  }
+  for (i = 0; i < ni; ++i)                       /* in_lo[i] against in_hi[i] */
+    if (!iris_internal_range_ok(iris_internal_get_f32(p + 4 * i),
+                                iris_internal_get_f32(p + 4 * (ni + i)))) return 0;
+  p += 8 * ni;
+  for (i = 0; i < no; ++i)                     /* out_lo[i] against out_hi[i] */
+    if (!iris_internal_range_ok(iris_internal_get_f32(p + 4 * i),
+                                iris_internal_get_f32(p + 4 * (no + i)))) return 0;
+  p += 8 * no;
+  for (i = 0; i < (size_t)n_ex * (ni + no); ++i, p += 4)
+    if (iris_isbad(iris_internal_get_f32(p))) return 0;
+
+  /* The identifiers. The store keeps them in the order they were handed out,
+     so each one is normally larger than every one before it and so cannot
+     repeat any of them; only an identifier that is not needs the search back
+     through the others. */
+  for (i = 0; i < (size_t)n_ex; ++i) {
+    const uint32_t id = iris_internal_get_u32(p + 4 * i);
+    if (id < 1u || id >= next_id) return 0;
+    if (id <= top)
+      for (j = 0; j < i; ++j) if (iris_internal_get_u32(p + 4 * j) == id) return 0;
+    if (id > top) top = id;
+  }
+  return 1;
+}
+
+/* Bytes iris_save needs for this instrument as it stands: exactly the length
+   it writes, and the only length iris_load accepts for it. */
+IRIS_API size_t iris_save_size(const iris *k) { if (!k) return 0;
+  return iris_internal_file_bytes(k, (uint32_t)k->n_ex);
+}
+
+/* Writes the instrument into buf, in the order of the table above. Returns the
+   number of bytes written, or 0 if buf is missing or smaller than
+   iris_save_size(k), or if the instrument breaks a rule (see "iris_save
+   WRITES ONLY FILES iris_load ACCEPTS" above; buf is then cleared). */
+IRIS_API size_t iris_save(const iris *k, void *buf, size_t cap) {
+  unsigned char *b = (unsigned char *)buf, *p;
+  size_t need, i;
+  if (!k || !b) return 0;
+  need = iris_save_size(k);
+  if (cap < need) return 0;
+  for (i = 0; i < 4; ++i) b[i] = (unsigned char)IRIS_FILE_MAGIC[i];
+  iris_internal_put_u32(b + 4,  IRIS_FILE_VERSION);
+  iris_internal_put_u32(b + 8,  IRIS_FILE_HEADER);
+  iris_internal_put_u32(b + 12, (k->fitted ? 1u : 0u) | (k->trained ? 2u : 0u));
+  iris_internal_put_u32(b + 16, (uint32_t)k->n_in);
+  iris_internal_put_u32(b + 20, (uint32_t)k->n_hid);
+  iris_internal_put_u32(b + 24, (uint32_t)k->n_out);
+  iris_internal_put_u32(b + 28, (uint32_t)k->n_ex);
+  iris_internal_put_u32(b + 32, k->seed);
+  iris_internal_put_u32(b + 36, (uint32_t)k->next_id);
+  iris_internal_put_u32(b + 40, k->rng.s);   /* so the next training step after
+                                                a load is the one this instrument
+                                                would have taken, not a fork */
+  iris_internal_put_f32(b + 44, iris_get_smoothing(k));
+  p = b + IRIS_FILE_HEADER;
+  p = iris_internal_put_f32s(p, k->w1, (size_t)k->n_hid * k->n_in);
+  p = iris_internal_put_f32s(p, k->b1, (size_t)k->n_hid);
+  p = iris_internal_put_f32s(p, k->w2, (size_t)k->n_out * k->n_hid);
+  p = iris_internal_put_f32s(p, k->b2, (size_t)k->n_out);
+  p = iris_internal_put_f32s(p, k->in_lo,  (size_t)k->n_in);
+  p = iris_internal_put_f32s(p, k->in_hi,  (size_t)k->n_in);
+  p = iris_internal_put_f32s(p, k->out_lo, (size_t)k->n_out);
+  p = iris_internal_put_f32s(p, k->out_hi, (size_t)k->n_out);
+  p = iris_internal_put_f32s(p, k->ex, (size_t)k->n_ex * ((size_t)k->n_in + k->n_out));
+  for (i = 0; i < (size_t)k->n_ex; ++i, p += 4) iris_internal_put_u32(p, (uint32_t)k->ex_id[i]);
+  iris_internal_put_u32(p, iris_crc32(b, need - 4u));
+  if (!iris_internal_file_ok(k, b, need)) {
+    for (i = 0; i < need; ++i) b[i] = 0;
+    return 0;
   }
   return need;
 }
 
-IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 0;
-  if (!buf || bytes < sizeof(uint32_t) * 8) return 0;
-  const uint32_t *h = (const uint32_t *)buf;
-  if (h[0] != IRIS_MAGIC) return 0;
-  if (h[1] != IRIS_FORMAT && h[1] != IRIS_FORMAT_V6) {
-    k->status = IRIS_NAN_TRAPPED; return 0; }
+/* Reads a file written by iris_save into k, an instrument of the same shape.
+   Returns 1, or 0 with k untouched. */
+IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
+  const unsigned char *b = (const unsigned char *)buf, *p;
+  if (!k || !b) return 0;
+  if (!iris_shape_fits(k)) return 0;
+  if (!iris_internal_file_ok(k, b, bytes)) return 0;
 
-  /* VERIFY THE CHECKSUM before trusting a single weight. A mismatch means the
-     file is damaged -- refuse it rather than play weights that will be subtly
-     wrong with nothing reporting anything.
-     No bounds test here: the function refuses anything under 8 words at
-     entry, so bytes >= 32 and the 4-byte trailer is always present. */
-  {
-    const unsigned char *b8 = (const unsigned char *)buf;
-    uint32_t stored;
-    const unsigned char *tp = b8 + bytes - sizeof(uint32_t);
-    int i; stored = 0u;
-    for (i = 0; i < 4; ++i) stored |= (uint32_t)tp[i] << (8 * i);
-    if (iris_crc32(buf, bytes - sizeof(uint32_t)) != stored) return 0;
-  }
-  if (bytes < sizeof(uint32_t) * 9) return 0;
-  if ((int)h[2] != k->n_in || (int)h[3] != k->n_hid || (int)h[4] != k->n_out) return 0;
-  /* n_ex is validated UNSIGNED: a corrupted high byte makes (int)h[5]
-     negative, which sails under a signed "> cap" check and loads an
-     instrument with -16 million examples. */
-  if (h[5] > (uint32_t)k->cap) return 0;
-  /* And the whole payload must actually be present. The header alone used
-     to be enough to start the copy loops, so a truncated file with a valid
-     header read kilobytes past the caller's buffer and loaded garbage —
-     silently. Compute what this header promises and refuse anything short. */
-  {
-    const size_t hdr  = sizeof(uint32_t) * 9;
-    const size_t nex  = (size_t)h[5];
-    const size_t body = sizeof(float) * ( (size_t)k->n_hid*k->n_in + k->n_hid
-                                        + (size_t)k->n_out*k->n_hid + k->n_out
-                                        + 2u*((size_t)k->n_in + k->n_out)
-                                        + nex * ((size_t)k->n_in + k->n_out) )
-                      + sizeof(int32_t) * nex
-                      + sizeof(float)                         /* smoothing */
-                      + sizeof(uint32_t);                     /* checksum */
-
-    /* EXACTLY, not at least. The checksum covers whatever length the caller
-       passes, so it cannot notice a file that is longer or shorter than its
-       own header describes; the length can. */
-    if (bytes != hdr + body) return 0;
-  }
-  k->n_ex = (int32_t)h[5]; k->seed = h[6]; k->next_id = (int32_t)h[7];
-  k->rng.s = h[8] ? h[8] : (k->seed ? k->seed : 1u);
-  const float *f = (const float *)(h + 9);
-  #define IRIS_GET(dst, n) do { for (int _i = 0; _i < (n); ++_i) (dst)[_i] = *f++; } while (0)
-  IRIS_GET(k->w1, k->n_hid*k->n_in);  IRIS_GET(k->b1, k->n_hid);
-  IRIS_GET(k->w2, k->n_out*k->n_hid); IRIS_GET(k->b2, k->n_out);
-  IRIS_GET(k->in_lo, k->n_in);   IRIS_GET(k->in_hi, k->n_in);
-  IRIS_GET(k->out_lo, k->n_out); IRIS_GET(k->out_hi, k->n_out);
-  IRIS_GET(k->ex, (int)((size_t)k->n_ex * (k->n_in + k->n_out)));
-  #undef IRIS_GET
-  const int32_t *ids = (const int32_t *)f;
-  for (int i = 0; i < k->n_ex; ++i) k->ex_id[i] = ids[i];
-
-  /* THE RANGES COME OUT OF THE FILE UNCHECKED. iris_fit_ranges floors a
-     degenerate OUTPUT range so that dividing by its width cannot produce
-     not-a-number, but that floor only ran when ranges were FITTED. A file can
-     carry a zero-width range -- written by an older build, or corrupted within
-     a valid checksum -- and the loaded instrument then divided by zero on
-     every prediction and played the middle of its range for ever. Same floor,
-     same reason, at the other door. An INPUT range of zero width is left as
-     it is: it marks an input that never moved, which iris_norm_in reads as 0
-     (PART 5), and widening it would bring back the enormous gain that rule
-     exists to prevent. */
-  for (int i = 0; i < k->n_out; ++i) {
-    float w = iris_absf(k->out_lo[i]) * 1e-5f; if (w < 1e-6f) w = 1e-6f;
-    if (k->out_hi[i] - k->out_lo[i] < w) k->out_hi[i] = k->out_lo[i] + w;
+  /* EVERY RULE HAS PASSED. Nothing from here on can refuse, so nothing from
+     here on can leave the instrument half-loaded. */
+  { const uint32_t flags = iris_internal_get_u32(b + 12);
+    k->n_ex    = (int32_t)iris_internal_get_u32(b + 28);
+    k->seed    = iris_internal_get_u32(b + 32);
+    k->next_id = (int32_t)iris_internal_get_u32(b + 36);
+    k->rng.s   = iris_internal_get_u32(b + 40);
+    iris_set_smoothing(k, iris_internal_get_f32(b + 44));
+    p = b + IRIS_FILE_HEADER;
+    p = iris_internal_get_f32s(p, k->w1, (size_t)k->n_hid * k->n_in);
+    p = iris_internal_get_f32s(p, k->b1, (size_t)k->n_hid);
+    p = iris_internal_get_f32s(p, k->w2, (size_t)k->n_out * k->n_hid);
+    p = iris_internal_get_f32s(p, k->b2, (size_t)k->n_out);
+    p = iris_internal_get_f32s(p, k->in_lo,  (size_t)k->n_in);
+    p = iris_internal_get_f32s(p, k->in_hi,  (size_t)k->n_in);
+    p = iris_internal_get_f32s(p, k->out_lo, (size_t)k->n_out);
+    p = iris_internal_get_f32s(p, k->out_hi, (size_t)k->n_out);
+    p = iris_internal_get_f32s(p, k->ex, (size_t)k->n_ex * ((size_t)k->n_in + k->n_out));
+    for (int i = 0; i < k->n_ex; ++i, p += 4) k->ex_id[i] = (int32_t)iris_internal_get_u32(p);
+    k->fitted  = (flags & 1u) ? 1 : 0;
+    k->trained = (flags & 2u) ? 1 : 0;
   }
 
-  /* THE SMOOTHING SETTING TRAVELS WITH THE FILE. The weights do not depend
-     on it; it matters the moment somebody retrains. */
-  { const float *sm = (const float *)(ids + k->n_ex);
-    k->l2 = iris_clampf(*sm, 0.0f, 0.3f); }
+  /* At rest: nothing carried over from whatever this arena held before. */
+  iris_zero_velocity(k);
+  for (int i = 0; i < k->cap; ++i) k->ex_res[i] = 0.0f;
+  k->res_epochs = 0;
+  k->tr_done = 0; k->tr_ceiling = 0; k->tr_running = 0; k->tr_n_ex = 0; k->tr_ref = 0.0f;
+  k->status = IRIS_STATUS_OK;
 
-  /* v6 says this instrument was saved before it was ever fitted, so do not
-     claim it is; v5 means fitted. Without this the loader walked around
-     iris_predict's unfitted guard: record, save, load, play, and the forward
-     pass ran over random weights while the status read healthy. */
-  { const int was_fit = (h[1] != IRIS_FORMAT_V6);
-    k->trained = was_fit;
-    /* AND `fitted` TOO, which is the one iris_predict actually guards on.
-       `fitted` means "has EVER produced a fit" and is what stops the forward
-       pass running over random weights; `trained` only means "the fit still
-       matches the examples" and is cleared by any record or delete, which must
-       NOT silence an instrument mid-performance. Setting only `trained` here
-       left the hole open: is_trained said 0 and iris_predict played anyway. */
-    k->fitted  = was_fit; }
-  k->status = IRIS_STATUS_OK;   /* a freshly loaded instrument carries no stale error */
-
-  /* MEASURE the loaded instrument's error instead of leaving whatever the
-     destination happened to hold -- which for a fresh one is 1.0, the WORST
-     possible value, so a user interface showing "training error" read 1.0 for
-     a perfectly good instrument. The error is not in the file (that would be a
-     format change), but the demonstrations are, so it can simply be computed:
-     one forward pass per demonstration, once, at load. */
-  { const int st_ = k->n_in + k->n_out;
-    float e_ = 0.0f;
+  /* The training error is not in the file, but the fit and the demonstrations
+     are, so it is measured: one forward pass per demonstration, in the units
+     every trainer reports. With no fit, or nothing to measure it over, it is
+     1, the value a fresh instrument reports. It is 1 as well if the sum is not
+     a number, which takes a demonstration so far outside the stored ranges
+     that normalising it overflows a float. */
+  k->last_error = 1.0f;
+  if (k->fitted && k->n_ex > 0) {
+    const int stride = k->n_in + k->n_out;
+    float xn[IRIS_MAX_IN], e = 0.0f;
     for (int r = 0; r < k->n_ex; ++r) {
-      const float *row = k->ex + (size_t)r * st_;
-      float xn[IRIS_MAX_IN];
+      const float *row = k->ex + (size_t)r * stride;
       for (int i = 0; i < k->n_in; ++i) xn[i] = iris_norm_in(k, i, row[i]);
       iris_forward_norm(k, xn);
       for (int o = 0; o < k->n_out; ++o) {
-        float d = k->out[o] - iris_norm_out(k, o, row[k->n_in + o]);
-        e_ += d * d;
+        const float d = k->out[o] - iris_norm_out(k, o, row[k->n_in + o]);
+        e += d * d;
       }
     }
-    k->last_error = (k->n_ex > 0) ? e_ / (float)(k->n_ex * k->n_out) : 0.0f;
+    e /= (float)(k->n_ex * k->n_out);
+    if (!iris_isbad(e)) k->last_error = e;
   }
-  /* The residual ledger belongs to a training run, not to a file: a loaded
-     instrument has not been trained in this process, so it has no opinion
-     about which demonstration is fighting the others until it is. */
-  for (int i = 0; i < k->cap; ++i) k->ex_res[i] = 0.0f;
-  k->res_epochs = 0;
-  k->tr_done = 0; k->tr_ceiling = 0; k->tr_running = 0; k->tr_ref = 0.0f;
   return 1;
 }
 

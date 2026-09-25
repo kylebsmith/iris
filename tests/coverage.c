@@ -235,10 +235,9 @@ int main(void) {
     check("iris_train's answer agrees with iris_is_trained", consistent, d); }
 
   /* ---- save/load must not invent a trained instrument --------------------
-     iris_load set fitted = 1 unconditionally, so record-save-load-play on a
-     never-trained instrument ran the forward pass over the random weights
-     iris_reseed left and reported IRIS_STATUS_OK. Format v6 marks "not fitted
-     when saved" without changing a byte. */
+     Record-save-load-play on a never-trained instrument must not run the
+     forward pass over the random weights iris_reseed left. The flags word
+     (offset 12, little-endian; iris.h PART 9) says fitted 0, trained 0. */
   { iris *k = iris_init(A, sizeof A, 2, 12, 2, 32, 1234u);
     for (int i = 0; i < 6; ++i) {
       float a2[2] = { (float)i/5.0f, 0.5f }, b2[2] = { (float)i/5.0f, 0.25f };
@@ -247,31 +246,38 @@ int main(void) {
     /* deliberately NOT trained */
     static unsigned char blob[2048];
     size_t n = iris_save(k, blob, sizeof blob);
-    unsigned ver = n ? ((const uint32_t *)blob)[1] : 0u;
+    /* little-endian words: version at offset 4, flags at 12 */
+    unsigned long ver   = (unsigned long)blob[4]  | (unsigned long)blob[5]  << 8
+                        | (unsigned long)blob[6]  << 16 | (unsigned long)blob[7]  << 24;
+    unsigned long flags = (unsigned long)blob[12] | (unsigned long)blob[13] << 8
+                        | (unsigned long)blob[14] << 16 | (unsigned long)blob[15] << 24;
     iris *r = iris_init(B, sizeof B, 2, 12, 2, 32, 9u);
     int ok = n && iris_load(r, blob, n);
     float o[2] = { -1.0f, -1.0f };
     iris_predict(r, in, o);
     int refused = (iris_get_status(r) == IRIS_NOT_FITTED) && !iris_is_trained(r);
-    snprintf(d, sizeof d, "version %u, load %d, is_trained %d, status %d",
-             ver, ok, iris_is_trained(r), (int)iris_get_status(r));
+    snprintf(d, sizeof d, "version %lu, flags %lu, load %d, is_trained %d, status %d",
+             ver, flags, ok, iris_is_trained(r), (int)iris_get_status(r));
     check("an unfitted instrument survives save/load as unfitted",
-          ok && ver == 6u && refused, d); }
+          ok && ver == 7u && flags == 0u && refused, d); }
 
-  /* and a TRAINED one must still round-trip bit-identically as format 5 */
+  /* and a TRAINED one must still round-trip bit-identically, fitted and trained */
   { iris *k = filled(A, sizeof A, 6);
     iris_train(k);
     float a1[2]; iris_predict(k, in, a1);
     static unsigned char blob[2048];
     size_t n = iris_save(k, blob, sizeof blob);
-    unsigned ver = ((const uint32_t *)blob)[1];
+    unsigned long ver   = (unsigned long)blob[4]  | (unsigned long)blob[5]  << 8
+                        | (unsigned long)blob[6]  << 16 | (unsigned long)blob[7]  << 24;
+    unsigned long flags = (unsigned long)blob[12] | (unsigned long)blob[13] << 8
+                        | (unsigned long)blob[14] << 16 | (unsigned long)blob[15] << 24;
     iris *r = iris_init(B, sizeof B, 2, 12, 2, 32, 9u);
     int ok = iris_load(r, blob, n);
     float a2[2]; iris_predict(r, in, a2);
-    snprintf(d, sizeof d, "version %u, is_trained %d, %.6f vs %.6f",
-             ver, iris_is_trained(r), (double)a1[0], (double)a2[0]);
+    snprintf(d, sizeof d, "version %lu, flags %lu, is_trained %d, %.6f vs %.6f",
+             ver, flags, iris_is_trained(r), (double)a1[0], (double)a2[0]);
     check("a trained instrument round-trips bit-identically",
-          ok && ver == 5u && iris_is_trained(r)
+          ok && ver == 7u && flags == 3u && iris_is_trained(r)
           && a1[0] == a2[0] && a1[1] == a2[1], d); }
 
   printf(fails ? "\n  %d FAILING\n\n" : "\n  all pass\n\n", fails);
