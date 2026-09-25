@@ -70,7 +70,7 @@ library's odd decisions are for:
 
 - **No dependencies**, so there is nothing to rot. One C compiler, for ever.
 - **A frozen playing contract.** What a saved instrument plays is pinned, bit
-  for bit, by golden files in the test suite, and no release with the same
+  for bit, by a golden file in the test suite, and no release with the same
   major version may change it. Training may get better, but only measured,
   announced, and never behind your back: see
   [What is promised, and what is not](#what-is-promised-and-what-is-not).
@@ -87,7 +87,7 @@ nice-to-have. It is the whole product.
 
 ## What it is
 
-`iris.h` is a single header of 4,473 lines, 1,290 of them code once comments
+`iris.h` is a single header of 4,505 lines, 1,290 of them code once comments
 and blank lines are stripped, implementing the interactive machine learning
 loop that Wekinator made standard in 2009, rebuilt for boards that have no
 operating system. The interface is 41 functions, listed with one line each at
@@ -110,17 +110,18 @@ the top of the header.
   and requires zero.
 - **Deterministic.** Same seed and same demonstrations give the same bits.
   The header refuses to compile under `-ffast-math`, `-Ofast`,
-  `-ffinite-math-only`, GCC's `-freciprocal-math` and
-  `-funsafe-math-optimizations`, and 32-bit x86 builds that compute floats on
-  the old x87 unit; it stops the compiler fusing a*b + c into one
-  multiply-add instruction (which rounds once instead of twice, and so changes
-  the last bit) in its own code and only its own code; and golden hashes pin
-  the results in the tests.
+  `-ffinite-math-only`, and, on GCC (the GNU Compiler Collection),
+  `-freciprocal-math` and `-funsafe-math-optimizations`, and on 32-bit x86
+  builds that compute floats on the old x87 unit; it stops the compiler
+  fusing a*b + c into one multiply-add instruction (which rounds once
+  instead of twice, and so changes the last bit) in its own code and only
+  its own code; and golden hashes pin the results in the tests.
   `sh build.sh determinism` checks the golden hash at `-O0` to `-Os` with
   contraction off, on and at the compiler's default. What the header cannot
-  see, and you must not use: clang's `-ffp-contract=fast` and
-  `-ffp-model=fast`, clang's `-freciprocal-math` and
-  `-funsafe-math-optimizations`, and GCC's `-fassociative-math`.
+  see, and you must not use: clang's `-ffp-contract=fast`,
+  `-freciprocal-math` and `-funsafe-math-optimizations`, clang 22's
+  `-ffp-model=fast` (Apple clang 17 refuses it), and GCC's
+  `-fassociative-math`.
 - **The demonstrations are the interface.** Every demonstration is
   individually listable, auditionable and deletable, because that is how
   practitioners repair these models. In Fiebrink, Cook and Trueman's study of
@@ -187,13 +188,13 @@ the main loop.
 | `iris_train`, 8 to 20 demonstrations | ESP32-S3 | 2.7–3.0 s | same |
 
 "Laptop" is the development machine, an Apple M4 Max, with Apple clang `-O2`.
-The board figures were taken with iris 0.1.0; 0.2.0 plays and trains with the
-same arithmetic, bit for bit on the host, but has not itself been timed on the
-board. The prediction figure is a mean, not a worst case, and the training
-figures come from a recipe whose two inputs move together and which stops after
-3,800 to 9,300 epochs, where representative data takes 18,000 to 22,000 at 20
-demonstrations. **Representative training time on the board is not yet
-measured.**
+The board figures were taken with iris 0.1.0. On the host, 0.2.0 trains and
+plays those recipes bit for bit as 0.1.0 did, but it has not itself been timed
+on the board. The prediction figure is a mean, not a worst case, and the
+training figures come from a recipe whose two inputs move together and which
+stops after 3,800 to 9,300 epochs, where the reference task of `tests/audit.c`
+takes 18,000 at 20 demonstrations. **Representative training time on the
+board is not yet measured.**
 
 For audio, 14.9 µs against the 20.8 µs of one sample at 48 kHz is 1.4 times of
 margin: 72% of a core spent on playing alone. It is enough to run per sample and
@@ -234,7 +235,7 @@ It stops at the first failure and says which check failed. One check at a time:
 | `sh build.sh pragma` | the contraction pragmas do not leak into your code |
 | `sh build.sh fuzz-load [seconds]` | coverage-guided fuzzing of `iris_load`: mutated files, steered toward code not yet reached (needs clang's libFuzzer) |
 | `sh build.sh determinism` | the golden hash across optimisation levels and contraction settings |
-| `sh build.sh cov` | line and branch coverage of the test programs, with thresholds |
+| `sh build.sh cov` | line and branch coverage of `iris.h` across the test programs, with thresholds (needs clang's `llvm-cov`) |
 | `sh build.sh mutate` | an advisory mutation run; it reports, it never fails the build |
 | `sh build.sh reference` | an independent double-precision reference in Python (skips without numpy, Python's numerical library) |
 | `sh build.sh mpe`, `sh build.sh sinks` | the output ports in [`extras/`](extras/) |
@@ -286,11 +287,12 @@ settings.
 ## Honest limitations
 
 - **The machine-learning figures come from synthetic data.** Every accuracy
-  figure in this repository was measured on synthetic target functions, most
-  with added Gaussian noise, never on recorded human gesture. The programs
-  that produced many of the older ones were not kept, and the figures quoted
-  here are the ones that were re-run and replicated. Treat them as bounded by
-  that.
+  figure in this repository was measured on synthetic target functions, many
+  with added Gaussian noise, never on recorded human gesture. The figures
+  quoted here are ones that were re-run and replicated, but apart from those
+  that name a program in this repository (`tests/elm.c measure`,
+  `docs/gain-sweep.c`, `docs/degrees-of-freedom.c`, `sh build.sh audit`), the
+  programs that produced them are not in it. Treat them as bounded by that.
 - **Training to a plateau fits noise.** With smoothing at its default of 0, on
   demonstrations with output noise of standard deviation 0.05 or more,
   `iris_train` is 1.2 to 2.2 times worse on held-out error than a fixed
@@ -315,7 +317,7 @@ settings.
   `0xB7FC47A0`, which `tests/starter_recipes.c` still reproduces; no run of it
   on a board has been recorded.
 
-The board test plan closes the last three: `device_torture` run twice on each
+The board test plan closes the last two: `device_torture` run twice on each
 of two boards with its raw serial log kept; the determinism sketch; and a timing
 probe that reads the cycle counter with the empty loop subtracted, reports
 per-call percentiles and an interrupts-masked batch for three shapes, times
@@ -350,8 +352,10 @@ output scaling to [0.1, 0.9], the clamp to the range you demonstrated, the
 nearest-neighbour paths, and what every byte of the file means. Changing any of
 that needs a new major version and a new file-format number, and the old files
 keep loading. The tests hold this with a golden file: a saved instrument,
-committed in `tests/golden/`, whose predictions are compared bit for bit, not
-within a tolerance.
+committed in `tests/golden/`, whose `iris_predict` outputs at 625 points are
+compared bit for bit, not within a tolerance. The nearest-neighbour paths and
+`iris_novelty` are checked in `tests/audit.c` and `tests/playing.c` but have no
+golden file yet.
 
 **Training may get better.** Training again is something you choose to do. A
 minor release (0.3, 0.4 and so on) may change how training reaches its weights:
@@ -364,18 +368,19 @@ retraining gives you a different instrument.
 
 Within one release, the same seed and the same demonstrations give the same
 instrument, bit for bit, on every build `sh build.sh determinism` checks
-(Apple clang, clang 22 and gcc-15 on 64-bit ARM, `-O0` to `-Os`, contraction
-off, on and at the default, and gcc in GNU mode) and on the other builds it has
-been measured on: 64-bit ARM and x86-64 Linux, and 32-bit x86 using its SSE
-vector unit (Streaming SIMD Extensions). On the ESP32-S3 that has not yet been
-recorded (see the limitations above).
+(`-O0` to `-Os`, contraction off, on and at the default, and `-std=gnu99` on
+gcc; run with `CC` set to each of Apple clang, clang 22 and gcc-15 on 64-bit
+ARM) and on the other builds it has been measured on: 64-bit ARM and x86-64 Linux,
+and 32-bit x86 using its SSE vector unit (Streaming SIMD Extensions, SIMD
+meaning single instruction, multiple data). On the ESP32-S3 that has not yet
+been recorded (see the limitations above).
 
 That needs float arithmetic done in single precision, in the order written. The
 header refuses to compile under `-ffast-math`, `-Ofast`, `-ffinite-math-only`,
 on GCC under `-freciprocal-math` and `-funsafe-math-optimizations`, and on
 32-bit x86 builds that use the old x87 floating-point unit. It cannot see
-these, so do not use them: `-ffp-contract=fast` and `-ffp-model=fast` on clang,
-`-freciprocal-math` and `-funsafe-math-optimizations` on clang, and
+these, so do not use them: `-ffp-contract=fast`, `-freciprocal-math` and
+`-funsafe-math-optimizations` on clang, `-ffp-model=fast` on clang 22, and
 `-fassociative-math` on GCC.
 
 **The functions follow semantic versioning.** The version is MAJOR.MINOR.PATCH.

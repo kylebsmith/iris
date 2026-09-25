@@ -31,6 +31,10 @@ in two sets, and they are treated differently.
 | Playback | What a saved file plays: `tests/golden/v7-instrument.bin` loads and plays the 625 predictions in `tests/golden/v7-expected.txt`, bit for bit | `tests/load.c` | Only with a new major version and a new file-format number; before 1.0, only to fix a measured defect, with a migration note |
 | Training | How training reaches its weights: `0x6805FB0D` (`tests/audit.c`), the starter kit's `0xB7FC47A0` and `0x203834ED` (`tests/starter_recipes.c`), and the closed-form solves (`tests/elm.c`) | as listed | In a minor release, in the commit that changes training, with a changelog entry |
 
+The playback file pins `iris_predict`. The nearest-neighbour paths and
+`iris_novelty` have no golden file yet, so a change to what they play is caught
+only by the checks in `tests/audit.c` and `tests/playing.c`.
+
 If a change moves a hash you did not mean to move, you have made a mistake:
 revert it. If you mean to change training, the pull request says so, re-pins
 the training hashes in the same commit, and adds a CHANGELOG.md entry under
@@ -200,8 +204,8 @@ be lost. Explain *why*, not *what*.
 2. If you touched `iris.h`: `sh build.sh sanitize`, `threads`, `noheap`,
    `freestanding`, `targets`, `pragma` and `determinism` pass, and
    `sh build.sh fuzz-load 300` finds nothing if you touched the save format.
-3. Zero warnings with `-std=c99 -Wall -Wextra` on clang and GCC, as C and as
-   C++.
+3. Zero warnings with `-std=c99 -Wall -Wextra` on clang and GCC (the GNU
+   Compiler Collection), as C and as C++.
 4. Every new check was seen to fail, and the commit says how.
 5. If `iris.h` changed: `sh sync-iris.sh` in the starter kit.
 6. If a sketch changed: compile it with `--warnings all` and confirm no

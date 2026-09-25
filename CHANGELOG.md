@@ -90,7 +90,9 @@ Removed:
 
 - The [0,1] input scaling that instruments restored from format 1 and 2 files
   kept for life, with `in_center`, its golden hash `0xFEFAEDF6` and its
-  fixtures. Every instrument scales its inputs to [-1, +1].
+  fixtures. Every instrument scales its inputs to [-1, +1]. Without the field,
+  `struct iris`, and so every `IRIS_ARENA`, is 8 bytes smaller on a 64-bit
+  host (248 bytes) and 4 smaller on the ESP32-S3 (164).
 - `experimental/iris_lbfgs.h`, the limited-memory quasi-Newton trainer (L-BFGS,
   the Broyden–Fletcher–Goldfarb–Shanno method with a bounded history), with its
   checks and hashes. It had no caller outside the tests.
@@ -152,9 +154,9 @@ Behaviour changes on the playing path:
   identifier, reachable through a loaded file; it now refuses once
   identifiers run out.
 - The square root called the C library's `sqrtf` on the ESP32-S3 and, for
-  negative inputs, on GCC and Linux clang, so freestanding builds had an
-  undefined symbol. It is now computed in integers and correctly rounded,
-  checked against the hardware for all 2^32 inputs.
+  negative inputs, on GCC (the GNU Compiler Collection) and Linux clang, so
+  freestanding builds had an undefined symbol. It is now computed in integers
+  and correctly rounded, checked against the hardware for all 2^32 inputs.
 - On the ESP32-S3, `iris_suggest_smoothing` copied its table of settings
   with `memcpy`; the table is now `static const`.
 - gcc-15 warned that `bi` may be used uninitialized in `iris_knn_predict`
