@@ -123,7 +123,7 @@ int main(void){
     if(!k){ check("F collapse detector",0,"iris_init refused -- arena too small"); goto done; }
     for(int i=0;i<20;i++){ float in[2]={i/19.0f,(i%4)/3.0f},
       o[3]={0.1f+i*0.04f,0.5f,0.9f-i*0.03f}; iris_record(k,in,o); }
-    iris_train_elm(k,1.0f/0.0f,scr,sizeof scr);
+    iris_train_elm(k,1e6f,scr,sizeof scr);
     int flagged_collapse = (iris_get_status(k)==IRIS_DIVERGED_STUCK);
 
     iris *k2=iris_init(A,sizeof A,2,16,3,64,5);
