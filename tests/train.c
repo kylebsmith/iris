@@ -18,6 +18,9 @@
         continues from the current weights refuses on every call -- no
         alternation, whatever touches the status in between -- and iris_train
         is the way out, to the instrument a cold start gives.
+     5. iris_suggest_smoothing puts every byte of the arena back, on a stale
+        instrument that is still playing with live momentum, and its answer
+        does not move when one output is recorded in units 1000 times larger.
 
    Not-a-number and infinity are built with __builtin_nanf and __builtin_inff,
    never by dividing by zero, so -fsanitize=float-divide-by-zero can run over
@@ -60,6 +63,32 @@ static void record_n(iris *k, int n, unsigned long seed) {
       out[o] = 100.0f * (float)(o + 1) + 40.0f * iris_tanh(0.15f * s - 0.4f * (float)o);
     iris_record(k, in, out);
   }
+}
+
+/* Three outputs that want different amounts of smoothing: two smooth ones
+   with take-to-take noise of about +/-amp, and one sharp, clean step. The
+   step can be recorded in other units by scale2. */
+static float noise(void) {       /* three draws, in an order C guarantees */
+  const float a = lcg01(), b = lcg01(), c = lcg01();
+  return a + b + c - 1.5f;
+}
+static void record_mixed(iris *k, int n, unsigned long seed, float amp, float scale2) {
+  lcg = seed;
+  for (int r = 0; r < n; ++r) {
+    float in[2], out[3];
+    in[0] = lcg01(); in[1] = lcg01();
+    out[0] = 0.5f + 0.3f * iris_tanh(2.0f * (in[0] - 0.5f)) + amp * noise();
+    out[1] = 0.4f + 0.3f * in[1] + amp * noise();
+    out[2] = (in[0] + in[1] > 1.0f ? 0.8f : 0.2f) + 0.2f * iris_tanh(6.0f * (in[0] - in[1]));
+    out[2] *= scale2;
+    iris_record(k, in, out);
+  }
+}
+static const float LADDER[5] = { 0.0f, 0.05f, 0.15f, 0.5f, 1.0f };   /* iris_suggest_smoothing's */
+static int argmin5(const float *s) {
+  int b = 0;
+  for (int i = 1; i < 5; ++i) if (s[i] < s[b]) b = i;
+  return b;
 }
 
 /* An instrument with a history: trained, then warm-trained (so the momentum
@@ -331,6 +360,89 @@ int main(void) {
     snprintf(d, sizeof d, "weight at 15.9953 trained (%.2e), bias at -limit refused (%.1f, status %d)",
              (double)inside, (double)on, (int)iris_get_status(k));
     check("stuck means exactly on the limit, biases included", inside_ok && on_ok, d);
+  }
+
+  /* ---- 5. asking for a smoothing value leaves the arena exactly -------- */
+  {
+    /* An instrument in the state most likely to be damaged by a save and load
+       round trip: trained, warm-trained (live velocities), then a take
+       recorded after training (stale but playing), and a status set by a
+       refused reading. The scratch is exactly iris_size bytes, from the heap,
+       so a sanitizer sees any access past it. */
+    const int shapes[3][5] = { { 2, 12, 3, 32, 14 }, { 5, 16, 2, 40, 20 }, { 1, 8, 1, 16, 9 } };
+    int ok_all = 1; char first[200] = "";
+    for (int s = 0; s < 3; ++s) {
+      const int *sh = shapes[s];
+      iris *k = lived_in(sh[0], sh[1], sh[2], sh[3], sh[4], 60u + (uint32_t)s);
+      { float bad[5] = { __builtin_nanf(""), 0, 0, 0, 0 }, o[5] = { 0, 0, 0, 0, 0 };
+        iris_record(k, bad, o); }
+      const size_t need = iris_size(sh[0], sh[1], sh[2], sh[3]);
+      unsigned char *scratch = (unsigned char *)malloc(need);
+      if (!scratch) return 2;
+      const int stale = !iris_is_trained(k) && k->fitted && iris_get_status(k) == IRIS_NAN_TRAPPED;
+      memcpy(SNAP, A, sizeof A);
+      float v = iris_suggest_smoothing(k, scratch, need);
+      const int on_ladder = v == 0.0f || v == 0.05f || v == 0.15f || v == 0.5f || v == 1.0f;
+      const int same = same_arena();
+      /* and a warm run afterwards is the warm run that would have happened */
+      iris_train_epochs(k, 20);
+      memcpy(RA, A, sizeof A);
+      memcpy(A, SNAP, sizeof A);
+      iris_train_epochs(k, 20);
+      const int continues = memcmp(RA, A, sizeof A) == 0;
+      /* one byte short, or overlapping the instrument itself, is refused */
+      memcpy(A, SNAP, sizeof A);
+      const float short1 = iris_suggest_smoothing(k, scratch, need - 1);
+      const float overlap = iris_suggest_smoothing(k, A, sizeof A);
+      const int refusals = short1 == -1.0f && overlap == -1.0f && same_arena();
+      free(scratch);
+      if (!(stale && on_ladder && same && continues && refusals)) {
+        ok_all = 0;
+        if (!first[0]) snprintf(first, sizeof first, " -- shape %d: stale %d, pick %.2f, unchanged %d, continues %d, refusals %d",
+                                s, stale, (double)v, same, continues, refusals);
+      }
+    }
+    snprintf(d, sizeof d, "3 shapes, stale-but-playing with live velocities: every byte restored, warm run unchanged, "
+             "short and overlapping scratch refused%s", first);
+    check("iris_suggest_smoothing restores the arena exactly", ok_all, d);
+  }
+  {
+    /* Scale one of three outputs by 1000 and the suggestion must not move.
+       Two datasets where it matters: scored in raw units the picks differ
+       (checked below, so the data cannot quietly stop testing anything). */
+    const unsigned long ds[2] = { 19ul * 7919ul, 13ul * 7919ul };
+    const float amp[2] = { 0.03f, 0.06f };
+    int ok_all = 1; char msg[200] = "";
+    for (int t = 0; t < 2; ++t) {
+      float pick[2], norm[2][5], raw[2][5];
+      for (int sc = 0; sc < 2; ++sc) {
+        iris *k = iris_init(A, sizeof A, 2, 12, 3, 32, 4242u);
+        record_mixed(k, 16, ds[t], amp[t], sc ? 1000.0f : 1.0f);
+        iris_train(k);
+        static unsigned char scratch[sizeof A];
+        memcpy(SNAP, A, sizeof A);
+        for (int i = 0; i < 5; ++i) {
+          iris_set_smoothing(k, LADDER[i]);
+          norm[sc][i] = iris_internal_loo(k, 0, 1); memcpy(A, SNAP, sizeof A);
+          iris_set_smoothing(k, LADDER[i]);
+          raw[sc][i]  = iris_internal_loo(k, 0, 0); memcpy(A, SNAP, sizeof A);
+        }
+        pick[sc] = iris_suggest_smoothing(k, scratch, sizeof scratch);
+      }
+      float worst = 0.0f;
+      for (int i = 0; i < 5; ++i) {
+        float r = (norm[1][i] - norm[0][i]) / norm[0][i];
+        if (r < 0.0f) r = -r;
+        if (r > worst) worst = r;
+      }
+      const int raw_differs = argmin5(raw[0]) != argmin5(raw[1]);
+      const int ok = pick[0] == pick[1] && pick[0] == LADDER[argmin5(norm[0])] && worst < 1e-4f && raw_differs;
+      if (!ok) ok_all = 0;
+      snprintf(msg + strlen(msg), sizeof msg - strlen(msg), "%spick %.2f/%.2f (raw units would pick %.2f/%.2f), score moved %.1e",
+               t ? "; " : "", (double)pick[0], (double)pick[1],
+               (double)LADDER[argmin5(raw[0])], (double)LADDER[argmin5(raw[1])], (double)worst);
+    }
+    check("the suggestion ignores the units an output is recorded in", ok_all, msg);
   }
 
   if (fails) printf("\n  %d FAILING\n", fails);

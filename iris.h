@@ -2181,6 +2181,20 @@ IRIS_API float iris_retrain_new(iris *k, uint32_t seed, int epochs) { if (!k) re
   iris_reseed(k, seed);
   return iris_train_epochs(k, epochs);
 }
+
+/* The demonstrated range of output j across the first n stored rows, in
+   double so that the difference of two finite floats cannot overflow. */
+IRIS_API double iris_internal_out_span(const iris *k, int n, int j) {
+  const int stride = k->n_in + k->n_out;
+  float lo = k->ex[k->n_in + j], hi = lo;
+  for (int r = 1; r < n; ++r) {
+    const float v = k->ex[(size_t)r * stride + k->n_in + j];
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  return (double)hi - (double)lo;
+}
+
 /* LEAVE-ONE-OUT CROSS-VALIDATION — a real held-out error, at a size where you
    can afford it.
 
@@ -2239,8 +2253,16 @@ IRIS_API float iris_retrain_new(iris *k, uint32_t seed, int epochs) { if (!k) re
    THE INSTRUMENT IS LEFT REFITTED ON ALL EXAMPLES, from that same seed, so it
    is valid to play afterwards — but it is NOT the instrument you had before you
    called this, because it has been retrained. Save first if that matters. */
-IRIS_API float iris_loo_error(iris *k, int epochs) { if (!k) return -1.0f;
-  if (k->n_ex < 3 || !iris_internal_trainable(k)) return -1.0f;
+
+/* The sweep itself, shared by iris_loo_error and iris_suggest_smoothing.
+   per_range = 0 sums each miss in the demonstrations' own units, which is
+   what iris_loo_error reports. per_range = 1 first divides each output's miss
+   by that output's demonstrated range across all n demonstrations, so no
+   output outweighs another because of the units it was recorded in; an output
+   whose demonstrations never moved has no range, carries no evidence about
+   smoothing, and is left out. */
+IRIS_API float iris_internal_loo(iris *k, int epochs, int per_range) {
+  if (!k || k->n_ex < 3 || !iris_internal_trainable(k)) return -1.0f;
   const int n = k->n_ex, ni = k->n_in, no = k->n_out, stride = ni + no;
   const uint32_t seed0 = k->seed;
   const int ep = epochs > 0 ? epochs : 600;
@@ -2262,6 +2284,11 @@ IRIS_API float iris_loo_error(iris *k, int epochs) { if (!k) return -1.0f;
     iris_predict(k, held, pred);
     for (j = 0; j < no; ++j) {
       double e = (double)pred[j] - (double)held[ni + j];
+      if (per_range) {
+        const double span = iris_internal_out_span(k, n, j);
+        if (span <= 0.0) continue;
+        e /= span;
+      }
       total += e * e;
     }
     k->n_ex = n;                                            /* put it back */
@@ -2275,87 +2302,100 @@ IRIS_API float iris_loo_error(iris *k, int epochs) { if (!k) return -1.0f;
   return (float)(total / ((double)n * (double)no));
 }
 
+IRIS_API float iris_loo_error(iris *k, int epochs) { return iris_internal_loo(k, epochs, 0); }
+
 /* SUGGEST A SMOOTHING VALUE — an explicit, occasional act, not an automatic one.
 
-   Runs leave-one-out across five smoothing settings and returns the one that
-   scored best. IT DOES NOT APPLY IT. You get the number, you decide.
+   Runs leave-one-out (above) at each of five smoothing settings -- 0, 0.05,
+   0.15, 0.5 and 1 -- and returns the one that scored best, or -1 if it
+   refused. IT DOES NOT APPLY IT. You get the number, you decide.
+
+   WHAT IT SCORES IS A PROXY. Every fold is a fixed 600-epoch fit from the
+   instrument's seed, NOT the plateau run iris_train makes and you then play:
+   a plateau fit costs about 25 times more, averaging 14,000 to 15,600 epochs
+   at 20 demonstrations (the error-floor note in the engine has the
+   measurement). The proxy has a price. Measured on 36 datasets (six target
+   shapes, three noise levels, two draws of 20 demonstrations) with 8 rerolls
+   each, against held-out error on a clean grid: the pick was the best of the
+   five settings for the 600-epoch fit it scores 41% of the time, and for the
+   plateau-trained instrument 35% of the time; following it cost a
+   geometric-mean 6.6% over the best setting for the 600-epoch fit, and 16.2%
+   for the plateau-trained instrument. So it is a noisy selector even for the
+   model it scores, and the budget mismatch more than doubles what following
+   it costs.
+
+   UNITS DO NOT MATTER. Each output's miss on the hidden demonstration is
+   divided by that output's demonstrated range before it is squared, so an
+   output recorded in thousands counts the same as one recorded in fractions:
+   "Units: none" from the front page, applied here. iris_loo_error itself
+   reports raw units. An output whose demonstrations never moved carries no
+   evidence about smoothing and is left out.
 
    WHY IT IS NOT AUTOMATIC — this was tested as an automatic default and it
-   failed the bar set for it:
+   failed the bar set for it. On the same 36 datasets with 16 rerolls each:
 
-     - IT IS NOT STABLE. On ONE fixed dataset, re-rolled 16 times, it returned
-       2.36 distinct values on average. An instrument whose smoothing changes
-       when you reroll is an instrument that stops being predictable, which is
-       worse than one that is merely unsmoothed.
-     - IT IS SOMETIMES WORSE THAN DOING NOTHING. On 16.7% of datasets its pick
-       scored worse than smoothing 0.
-     - IT IS SLOW. Five leave-one-out sweeps: ~120 ms on a laptop, but roughly
-       37 s on the ESP32-S3 at 20 demonstrations and 202 s at 50, scaled from
-       the one measured on-device figure. That is not something to hide inside
+     - IT IS NOT STABLE. Rerolling the same demonstrations changed its answer:
+       2.17 distinct values per dataset on average. An instrument whose
+       smoothing changes when you reroll is an instrument that stops being
+       predictable, which is worse than one that is merely unsmoothed.
+     - IT IS SOMETIMES WORSE THAN DOING NOTHING. 10.9% of its picks gave the
+       plateau-trained instrument a worse held-out error than smoothing 0.
+     - IT IS SLOW. Five sweeps of n + 1 fits: 104 ms at 20 demonstrations and
+       640 ms at 50 on an Apple M4 Max (2 inputs, 12 hidden, 3 outputs). On
+       the ESP32-S3, scaling the one measured on-device figure (321 ms for a
+       600-epoch fit at 20 demonstrations) in proportion to demonstrations
+       times epochs gives about 32 s at 20 demonstrations and 200 s at 50 --
+       an estimate, not a board reading. That is not something to hide inside
        a training call.
 
    WHAT IT IS GOOD FOR: an honest starting point when you genuinely do not know,
-   on a machine where 120 ms is nothing. It captured about 80% of what a perfect
-   oracle would have gained at realistic noise levels. Treat the number as a
-   suggestion to audition, not an answer — and if you like where you land, pin
-   it in your code rather than re-deriving it, so your instrument stays put. */
-/* Forward declarations: the save/load functions are defined further down the
-   file, and this one needs them to protect the caller's instrument. */
-IRIS_API size_t iris_save_size(const iris *k);
-IRIS_API size_t iris_save(const iris *k, void *buf, size_t cap);
-IRIS_API int    iris_load(iris *k, const void *buf, size_t bytes);
+   on a machine where 100 ms is nothing. It captured 81% of what always picking
+   the best setting would have gained. Treat the number as a suggestion to
+   audition, not an answer — and if you like where you land, pin it in your
+   code rather than re-deriving it, so your instrument stays put.
 
-/* ASKING FOR ADVICE MUST NOT COST YOU YOUR INSTRUMENT.
-
-   This runs a leave-one-out sweep across five smoothing settings, and each
-   one refits the network from scratch, once per demonstration. It used to
-   restore only the SETTING, so a performer who called it to ask a question got
-   their answer and, silently, a different instrument: whatever the last rung
-   of the ladder left behind at a 600-epoch budget, in place of the one they
-   had trained to a plateau. Measured drift on one output: 0.14 of full scale,
-   which on a filter cutoff is plainly audible.
-
-   So it now saves the instrument first and puts it back afterwards, which is
-   why it needs scratch space: the arena is exactly sized and has nowhere to
-   keep a copy. Give it iris_save_size(k) bytes. It refuses rather than
-   proceeding if you do not -- refusing an answer is recoverable, and quietly
-   replacing someone's instrument is not.
+   ASKING FOR ADVICE MUST NOT COST YOU YOUR INSTRUMENT. Every fold refits the
+   network, so before the first one this copies every byte the instrument
+   owns -- weights, momentum velocities, ranges, demonstrations, the residual
+   ledger, the random state, the progress counters, the status, `fitted` and
+   `trained` -- into your scratch, and copies it all back afterwards. A stale
+   instrument that is still playing goes on playing, and a warm trainer
+   called afterwards continues exactly as it would have. The arena is exactly
+   sized and has nowhere to keep that copy, hence the scratch: give it at
+   least IRIS_ARENA(n_in, n_hid, n_out, cap) bytes -- the size of the
+   instrument's own arena, which iris_size returns at run time -- at any
+   alignment, not overlapping the instrument. It refuses otherwise, and on
+   anything iris_loo_error refuses, having written nothing: refusing an
+   answer is recoverable, and quietly replacing someone's instrument is not.
 
    It still suggests; it still does not decide. Applying the number is yours. */
 IRIS_API float iris_suggest_smoothing(iris *k, void *scratch, size_t scratch_bytes) {
   if (!k) return -1.0f;
-  if (k->n_ex < 3 || !iris_internal_trainable(k)) return -1.0f;  /* what iris_loo_error refuses */
-  if (!scratch || scratch_bytes < iris_save_size(k)) return -1.0f;
+  if (k->n_ex < 3 || !iris_internal_trainable(k)) return -1.0f;   /* what the sweep refuses */
   {
-    const size_t saved = iris_save(k, scratch, scratch_bytes);
-    if (saved == 0) return -1.0f;
-    {
-      const float ladder[5] = { 0.0f, 0.05f, 0.15f, 0.5f, 1.0f };
-      const float keep        = iris_get_smoothing(k);
-      const int32_t keep_done = k->tr_done;
-      const float keep_err    = k->last_error;
-      const int32_t keep_status = k->status;
-      float best_v = 0.0f, best_e = -1.0f;
-      int i;
-      for (i = 0; i < 5; ++i) {
-        iris_set_smoothing(k, ladder[i]);
-        {
-          float e = iris_loo_error(k, 0);
-          if (e >= 0.0f && (best_e < 0.0f || e < best_e)) { best_e = e; best_v = ladder[i]; }
-        }
-      }
-      /* Put the performer's instrument back, exactly. The file carries the
-         weights, the demonstrations and the smoothing setting -- but not what
-         the instrument REPORTS about its own training, so a caller watching
-         iris_train_epochs_done saw it fall to zero after asking a question.
-         Snapshot those fields and restore them on top of the load. */
-      iris_load(k, scratch, saved);
-      iris_set_smoothing(k, keep);
-      k->tr_done   = keep_done;
-      k->last_error = keep_err;
-      k->status    = keep_status;
-      return best_e < 0.0f ? -1.0f : best_v;
+    /* The instrument is every byte from its structure to the end of order[],
+       the last array iris_init carves. That span is always smaller than the
+       arena iris_size asks for, which also holds the alignment slack. */
+    unsigned char *inst = (unsigned char *)k, *copy = (unsigned char *)scratch;
+    const size_t span = (size_t)((unsigned char *)(k->order + k->cap) - inst);
+    const size_t need = iris_size(k->n_in, k->n_hid, k->n_out, k->cap);
+    const float ladder[5] = { 0.0f, 0.05f, 0.15f, 0.5f, 1.0f };
+    float best_v = 0.0f, best_e = 0.0f;
+    /* need == 0 first: size_t is unsigned, so `scratch_bytes < 0` would wave
+       any buffer through (the sentinel trap described above iris_size). */
+    if (!copy || need == 0 || scratch_bytes < need) return -1.0f;
+    if ((uintptr_t)copy < (uintptr_t)inst + span
+        && (uintptr_t)inst < (uintptr_t)copy + span) return -1.0f;   /* overlaps */
+
+    for (size_t i = 0; i < span; ++i) copy[i] = inst[i];
+    for (int i = 0; i < 5; ++i) {
+      float e;
+      iris_set_smoothing(k, ladder[i]);
+      e = iris_internal_loo(k, 0, 1);
+      if (i == 0 || e < best_e) { best_e = e; best_v = ladder[i]; }
     }
+    for (size_t i = 0; i < span; ++i) inst[i] = copy[i];
+    return best_v;
   }
 }
 
