@@ -1430,9 +1430,10 @@ IRIS_API int iris_internal_nearest(iris *k, const float *in);
    1.16 and the first take is the one you are standing on.
 
    Deletes nothing, and returns 0, when the store is empty, the reading is
-   not finite, or the instrument's shape is too big for this translation
-   unit (see iris_shape_fits). On an instrument that has never been fitted it
-   fits the ranges first, as the neighbour functions do. */
+   not finite (which also reports IRIS_NAN_TRAPPED, and changes nothing
+   else), or the instrument's shape is too big for this translation unit
+   (see iris_shape_fits). On an instrument that has never been fitted it fits
+   the ranges first, as the neighbour functions do. */
 /* LENGTHS, same rule as iris_predict and just as unchecked.
    Reads exactly n_in floats from `in`. */
 IRIS_API int iris_delete_nearest(iris *k, const float *in) { if (!k) return 0;
@@ -3861,13 +3862,20 @@ IRIS_API float iris_internal_distance2(const iris *k, const float *inv,
    or one so far out that its square overflows). The search starts at the
    largest finite float, so every smaller distance counts however far outside
    the demonstrations the query is. Like iris_knn_predict it fits the ranges
-   of an instrument that has never been fitted.
+   of an instrument that has never been fitted -- but first it refuses a
+   reading that is not finite, which has no nearest demonstration, and then
+   the one thing it writes is the status, IRIS_NAN_TRAPPED, as iris_record
+   does for a reading it refuses.
 
    iris_classify_1nn and iris_delete_nearest (PART 4) both use it, so the
    demonstration you delete by standing on it is the one the classifier
    names. */
 IRIS_API int iris_internal_nearest(iris *k, const float *in) {
   if (!iris_shape_fits(k) || k->n_ex == 0) return -1;
+#ifndef IRIS_NO_GUARDS
+  for (int i = 0; i < k->n_in; ++i)
+    if (iris_isbad(in[i])) { k->status = IRIS_NAN_TRAPPED; return -1; }
+#endif
   if (!k->fitted) iris_fit_ranges(k);
   float inv[IRIS_MAX_IN];
   iris_internal_neighbour_scale(k, inv);
@@ -3891,7 +3899,9 @@ IRIS_API int iris_internal_nearest(iris *k, const float *in) {
 
    WHAT IT WRITES INSIDE THE INSTRUMENT: the status, when it has something to
    report, and the ranges of an instrument that has never been fitted (see
-   below). That is why it takes a non-const instrument. */
+   below). That is why it takes a non-const instrument. A reading that is not
+   finite is refused before any fitting, so then the status is all it
+   writes. */
 /* LENGTHS, same rule as iris_predict and just as unchecked.
    Reads exactly n_in floats from `in` and writes exactly n_out into `out`. */
 IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { if (!k) return;
@@ -3900,12 +3910,6 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
     k->status = IRIS_NOT_FITTED;
     return;
   }
-  /* The distance needs input ranges, and an instrument that has never been
-     fitted has none of its own: iris_init's 0..1 describes nothing it was
-     shown. So they are fitted here from the demonstrations -- the same work
-     iris_fit_ranges does, depending on nothing else -- rather than leaving
-     the caller an ordering rule to forget. */
-  if (!k->fitted && k->n_ex > 0) iris_fit_ranges(k);
   const int NIn = k->n_in, NOut = k->n_out;
   if (k->n_ex <= 0) { for (int o = 0; o < NOut; ++o) out[o] = 0.0f; return; }
   /* THE NEIGHBOUR COUNT, clamped to at least 1 and at most n_ex and
@@ -3917,6 +3921,25 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
   if (kk > k->n_ex) kk = k->n_ex;
   if (kk > IRIS_KNN_MAXK) kk = IRIS_KNN_MAXK;
   if (kk < 1) kk = 1;
+
+#ifndef IRIS_NO_GUARDS
+  /* A reading that is not finite -- a disconnected sensor -- has no nearest
+     demonstrations. Refuse it here, before the ranges below are fitted, so
+     that the refusal changes nothing in the instrument but the status: the
+     substitute, and IRIS_NAN_TRAPPED, as the MLP backstop does. */
+  for (int i = 0; i < NIn; ++i)
+    if (iris_isbad(in[i])) {
+      for (int o = 0; o < NOut; ++o) out[o] = iris_internal_centre(k, o);
+      k->status = IRIS_NAN_TRAPPED;
+      return;
+    }
+#endif
+  /* The distance needs input ranges, and an instrument that has never been
+     fitted has none of its own: iris_init's 0..1 describes nothing it was
+     shown. So they are fitted here from the demonstrations -- the same work
+     iris_fit_ranges does, depending on nothing else -- rather than leaving
+     the caller an ordering rule to forget. */
+  if (!k->fitted) iris_fit_ranges(k);
 
   float inv[IRIS_MAX_IN];
   iris_internal_neighbour_scale(k, inv);
@@ -3944,11 +3967,12 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
   }
 
 #ifndef IRIS_NO_GUARDS
-  /* A non-finite query (or one so far out that every distance overflows to
-     +inf) makes every comparison false, so no row is ever inserted and each
-     bi[n] is still -1 — and -1 * stride is an out-of-bounds read into
-     whatever sits beside the arena. Refuse instead: write the substitute
-     (iris_internal_centre) and report, exactly like the MLP backstop. */
+  /* A query so far out that every distance overflows to +inf -- a reading
+     that is not finite was refused above -- makes every comparison false, so
+     no row is ever inserted and each bi[n] is still -1, and -1 * stride is an
+     out-of-bounds read into whatever sits beside the arena. Refuse instead:
+     write the substitute (iris_internal_centre) and report, exactly like the
+     MLP backstop. */
   if (bi[0] < 0) {
     for (int o = 0; o < NOut; ++o) out[o] = iris_internal_centre(k, o);
     k->status = IRIS_NAN_TRAPPED;
@@ -4044,7 +4068,9 @@ IRIS_API int iris_classify_1nn(iris *k, const float *in, float *out) { if (!k) r
     if (out) for (int o = 0; o < NOut; ++o) out[o] = 0.0f;
     return -1;
   }
-  int best = iris_internal_nearest(k, in);   /* fits a never-fitted instrument */
+  int best = iris_internal_nearest(k, in);   /* fits a never-fitted instrument,
+                                                after refusing a reading that
+                                                is not finite */
 #ifndef IRIS_NO_GUARDS
   /* A query whose distance to every demonstration is not finite -- a
      disconnected sensor reading not-a-number -- has no nearest row. Answering

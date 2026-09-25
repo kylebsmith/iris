@@ -570,6 +570,40 @@ int main(void) {
     check("a finite query far outside still finds its nearest",
           nn_ok && knn_ok && del == 1 && del_nan == 0 && iris_count(k) == 3, d); }
 
+  /* ---- a reading that is not finite changes nothing but the status --------
+     On an instrument that has never been fitted, the neighbour functions fit
+     its ranges before they measure -- but a not-a-number or an infinity has
+     no nearest demonstration, so it is refused first: every byte but the
+     status stays as it was, and the status says IRIS_NAN_TRAPPED. k-NN and
+     1-NN write the centre of the demonstrations; the delete deletes nothing. */
+  { static unsigned char snap[sizeof A];
+    iris *k = iris_init(A, sizeof A, 2, 12, 2, 64, 1u);
+    for (int r = 0; r < 4; ++r) {
+      float in[2] = { 10.0f * (float)(r & 1), 5.0f + (float)(r >> 1) }, out[2] = { (float)r, 1.0f + (float)r };
+      iris_record(k, in, out);
+    }
+    const size_t at = (size_t)((unsigned char *)&k->status - A), n = sizeof k->status;
+    const float bad[3][2] = { { __builtin_nanf(""), 5.0f }, { 3.0f, __builtin_inff() },
+                              { -__builtin_inff(), 5.5f } };
+    int wrong = 0;
+    for (int q = 0; q < 3; ++q)
+      for (int path = 0; path < 3; ++path) {
+        float o[2] = { 7.0f, 7.0f };
+        k->status = IRIS_STATUS_OK;
+        memcpy(snap, A, sizeof A);
+        int ret = 0;
+        if (path == 0) iris_knn_predict(k, bad[q], o, 3);
+        if (path == 1) ret = iris_classify_1nn(k, bad[q], o) != -1;
+        if (path == 2) ret = iris_delete_nearest(k, bad[q]) != 0;
+        const int same = memcmp(A, snap, at) == 0
+                      && memcmp(A + at + n, snap + at + n, sizeof A - at - n) == 0;
+        const int centre = path == 2 || (o[0] == 1.5f && o[1] == 2.5f);
+        if (ret || !same || !centre || iris_get_status(k) != IRIS_NAN_TRAPPED) wrong++;
+        memcpy(A, snap, sizeof A);
+      }
+    snprintf(d, sizeof d, "%d of 9 refusals wrong; still never fitted %d", wrong, !k->fitted);
+    check("a reading that is not finite changes only the status", wrong == 0 && !k->fitted, d); }
+
   /* ---- scaling every input or every output by two -------------------------
      See scaled_store above. Five playing paths, both properties. */
   { const char *names[5] = { "unfitted", "iris_train", "iris_train_elm", "k-NN", "1-NN" };
