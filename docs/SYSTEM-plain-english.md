@@ -20,7 +20,7 @@ a chip the size of a postage stamp.
 
 ## Showing it how you like your coffee
 
-Here is the analogy I want to keep for the rest of this.
+One analogy runs through the rest of this page.
 
 Suppose you are teaching a friend to make coffee the way you like it. You never
 give them a recipe. You just stand at the counter and make four or five cups in
@@ -58,23 +58,53 @@ layers, each layer feeding the next — is what people mean by a **neural networ
 It is called that because the layered shape was loosely inspired by neurons. The
 resemblance stops there. It is arithmetic.
 
+## The network is a surface
+
+Here is the picture to hold on to. Imagine one input and one output: hand
+height along the bottom of a graph, brightness up the side. Each demonstration
+is a dot on that graph. The network, whatever its weights happen to be, draws
+a smooth curve across the whole graph: for every hand height, some brightness.
+With two inputs the curve becomes a surface, like a sheet of fabric draped over
+a floor, its height at each spot the sound you get with your hand there. More
+inputs and outputs mean more dimensions than anyone can draw, but the idea does
+not change.
+
+**Training is fitting that curve through your dots.** The seventy-five weights
+set the shape of the curve. Change a weight and the curve bends. Training means
+finding weights whose curve passes through, or very close to, every dot you
+demonstrated.
+
+## How training finds the curve: guess, measure, nudge, repeat
+
 At the start, the sixty connection strengths are set to small random values, and
-the fifteen offsets are set to exactly zero. The network is a friend who has never
+the fifteen offsets are set to exactly zero. That draws some arbitrary curve
+that passes near none of your dots. The network is a friend who has never
 tasted your coffee and is guessing. Then this happens, over and over:
 
-1. Take one of your demonstrations. Feed the hand position in.
-2. See what sound comes out.
-3. Compare it to the sound you actually wanted. The gap is the **error**.
-4. Nudge every weight a tiny bit in the direction that would have made that gap
-   smaller.
+1. **Guess.** Take one of your demonstrations. Feed the hand position in and
+   see what sound comes out: that is the curve's current height at that spot.
+2. **Measure the error.** Compare it with the sound you actually wanted. The
+   gap is the **error**.
+3. **Nudge.** Change every weight a tiny bit in the direction that would have
+   made that gap smaller. The curve moves a little towards that dot.
+4. **Repeat**, with the next demonstration.
 
-One pass through all your demonstrations is called an **epoch**. iris does
-thousands of them. In a small worked example that ships with the library — three
-demonstrations, two inputs, three outputs — it runs 2,557 epochs and gets the
-error down to about one millionth. On a laptop that takes less than a
-millisecond. This whole loop is what the word **training** means, and the trained
-bundle of weights is what people call a **model**. I will call it the instrument,
-because that is what it is.
+Each nudge is small, and a nudge towards one dot can pull the curve slightly
+away from another, which is why it takes many rounds for the curve to settle
+through all of them at once. One pass through all your demonstrations is called
+an **epoch**. iris does thousands of them, and stops when another two thousand
+epochs would no longer make the error meaningfully smaller. In a small worked
+example that ships with the library (`examples/01_hello.c`: three
+demonstrations, two inputs, three outputs) it runs 2,557 epochs and gets the
+error down to about one millionth. This whole loop is what the word
+**training** means, and the trained bundle of weights is what people call a
+**model**. Here it is called the instrument, because that is what it is.
+
+**Delete a take and train again, and the curve re-fits without it.** Training
+always starts over from the same starting weights and fits whatever dots are
+there now. Remove a dot and the next training run draws a curve through the
+rest as if that dot had never existed. Add one and the curve bends to reach it.
+That is how you edit an instrument: change the demonstrations, then train.
 
 ## The part that matters: the gestures you never showed
 
@@ -99,7 +129,7 @@ behaviour too, and it is a real choice, not a worse one: the lookup returns your
 demonstrations back exactly, which the network never quite does — in the
 library's tests it misses its own demonstrations by a fraction of a percent.
 The network is better everywhere in between, by roughly two-fold at every
-number of demonstrations tested.)
+number of demonstrations tested; iris-studies S14 holds that comparison.)
 
 Two related things worth knowing. First, it is repeatable: on the same machine,
 built the same way, the same starting random numbers plus the same
@@ -108,9 +138,9 @@ the compiler settings and that can break — the library refuses to build under
 the fastest, loosest maths settings for exactly this reason.) Second, you can
 deliberately re-roll those starting random numbers and get a *different*
 instrument that agrees with your demonstrations almost as closely but takes a
-different path between them. Measured: after a re-roll the sound at your
-demonstrated poses moves about four and a half times less than the sound in
-the gaps. Your
+different path between them. In the library's test program, after a re-roll
+the sound at your demonstrated poses moves about four and a half times less
+than the sound in the gaps. Your
 demonstrations stay put; the in-between changes character. That is a creative
 tool, not a bug.
 
@@ -139,8 +169,7 @@ to call iris AI, and it is more useful to call it a small neural network.
 
 ## What it cannot do, and how it breaks
 
-None of this is magic, and the library's own documentation is unusually blunt
-about the limits. Take them seriously.
+None of this is magic. Take the limits seriously.
 
 **One bad demonstration can wreck it.** Back to the counter. Suppose one day you
 had a cold, tasted a cup you would normally hate, and said "yes, that one." Your
@@ -149,7 +178,9 @@ do not know which one is the lie, so they compromise, and every cup they make
 afterward is slightly wrong.
 
 The same thing happens with a bad take — a gesture recorded while your hand
-slipped. There is a worked example of exactly this. An instrument trained on
+slipped: the curve bends towards the wrong dot and drags its surroundings with
+it. There is a worked example of exactly this (`examples/02_fix_a_mistake.c`).
+An instrument trained on
 fourteen good demonstrations answered one particular gesture with the three sound
 settings 0.618, 0.500 and 0.383 (each parameter runs from 0 to 1). One bad
 demonstration was added, and the same gesture then produced 0.087, 0.937, 0.071.
@@ -167,7 +198,8 @@ of its outputs and everything else is clean, it names that take nearly every
 time, even when the take is only five percent off. Real mistakes are messier
 than that, and it has never been tried on recorded human gestures. It also
 raises false alarms: on clean sessions with nothing wrong, it points at
-something loudly enough to flag it a few times in every hundred. So treat what it
+something loudly enough to flag it a few times in every hundred (the library's
+`tests/elm.c` measures both). So treat what it
 names as a take to listen to again, not a take to delete unheard.
 
 When it does find one: you delete that demonstration and train again. In the
@@ -207,30 +239,30 @@ to 100 percent by pushing your hand further. You get a wall. This was chosen on
 purpose, so the instrument can never send an insane value to hardware, and it is
 a genuine cost.
 
-**The evidence has holes, and they are disclosed.** Every accuracy number was
+**The evidence has holes.** Every accuracy number was
 measured on artificial test data, some of it with noise added to imitate shaky
 takes. iris recommends one way of doing the training loop described earlier:
 keep going until the error stops improving. On noisy test data that method gets
 noticeably *worse* than a cruder one that simply stops early, because a good
-learner will happily learn the noise along with the signal. The smoothing
+learner will happily learn the noise along with the signal (iris-studies S08
+holds that comparison). The smoothing
 setting repairs most of that, but it costs accuracy on clean data, so no single
 setting suits both, and the default waits for a study of real recorded
 gestures. Nothing has yet been tested against real recorded human gesture.
 
-Only a few timings have been taken on the actual chip, all of them with the
-previous version of the library and none with a saved record of the run yet.
-One prediction takes 14.9 millionths of a second. Training took 595
-milliseconds at four demonstrations and 2.7 to 3.0 seconds at eight to twenty,
-but on test data that finishes after about 4,000 to 9,000 passes. The
-library's own test set of twenty demonstrations needs about 18,000 passes, and
-that has not been timed on the chip, so nobody yet knows how long typical
-training takes there.
+Training takes much longer on the small chip than on a laptop. On one board,
+an ESP32-S3 running at 240 MHz, the library's own test set of twenty
+demonstrations needs about 18,000 epochs and took 13.4 seconds; ten
+demonstrations took 10.6 seconds and fifty took 22.1 seconds (the board log,
+[`board/2026-09-25-es3c28p.txt`](board/2026-09-25-es3c28p.txt)). A sketch can
+train in small slices so the screen keeps drawing meanwhile. Only one board has
+been measured.
 
 ## What it costs to run
 
 Once trained, playing the instrument is cheap. One gesture in, one set of sound
 parameters out, in about thirty-six billionths of a second on a laptop. On the
-small chip it is 14.9 millionths of a second, read from the board itself. At a
+small chip it is 14.9 millionths of a second (the same board log). At a
 thousand gestures per second, that is about 1.5 percent of the chip's time.
 
 The whole instrument, including room for 256 stored demonstrations, occupies

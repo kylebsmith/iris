@@ -111,7 +111,7 @@ jobs:
       - name: tiny (iris_train written again, agreeing to the bit)
         if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
         run: sh build.sh tiny
-      - name: docs (keywords.txt, the programs in docs/, CONTRIBUTING's commands, the version check)
+      - name: docs (keywords.txt, docs/tiny.c, the README program, CONTRIBUTING's commands, the version check)
         if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
         run: sh build.sh docs
       - name: noheap (zero allocator calls, with positive controls)
@@ -132,12 +132,6 @@ jobs:
       - name: targets (every processor builds; x87 is refused)
         if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
         run: sh build.sh targets
-      - name: mpe (the polyphonic-expression port, byte by byte)
-        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
-        run: sh build.sh mpe
-      - name: sinks (the control-change and Open Sound Control ports)
-        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
-        run: sh build.sh sinks
       # Homebrew gcc on macOS ships no sanitizer runtime.
       - name: fuzz (random call sequences under AddressSanitizer)
         if: ${{ !cancelled() && steps.cc.outcome == 'success' && !(runner.os == 'macOS' && matrix.compiler == 'gcc') }}

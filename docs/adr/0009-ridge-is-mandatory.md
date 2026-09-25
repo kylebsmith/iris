@@ -1,67 +1,76 @@
-# 0009 — Ridge is mandatory: the float32 Gram is rank-deficient even on friendly data
+# 0009 — The ridge is mandatory: the single-precision normal matrix is rank-deficient even on friendly data
 
-**Status:** accepted, 2026-08-21 (decision made in quantnum + experiment E1, before integration)
-**Affects:** `iris.h` (the Cholesky inside `iris_train_elm_ex`),
-`tests/audit.c` check 21.
+**Status:** accepted, 2026-08-21. Governs `iris.h` 0.2.0; the handling of an
+exhausted escalation is superseded, see the Decision.
+**Affects:** `iris.h` PART 8d (the Cholesky factorisation inside
+`iris_internal_train_elm_ex`), `tests/audit.c` ("ELM: solve cannot fail on
+hostile data").
 
 ## Context
 
-The obvious reading of ridge regression is "regularisation you tune, maybe
-to zero". That reading is wrong here, and this ADR exists because someone
-will eventually propose λ=0 "for exactness".
+The obvious reading of ridge regression is "regularisation you tune, maybe to
+zero". That reading is wrong here, and this record exists because someone will
+propose λ = 0 "for exactness".
 
-Measured (quantnum, confirmed at scale by E1): the unridged tanh-feature
-normal matrix is numerically rank-deficient in float32 in **every realistic
-scenario tested** — including the benign one, 20 well-spread examples (min
-eigenvalue ≤ 0 at float32; Cholesky fails at λ=0 in all three quantnum
-scenarios). This is not hostile-input insurance; it is the friendly case.
+Without a ridge, the normal matrix of the closed-form trainer's tanh features
+is numerically rank-deficient in single precision in every realistic scenario
+tested, including the benign one of 20 well-spread demonstrations: its smallest
+eigenvalue is at or below zero, and the Cholesky factorisation fails at λ = 0
+in all three scenarios examined (recorded; program in iris-studies S16). This
+is not insurance against hostile input; it is the friendly case.
 
 ## Decision
 
-- **Relative ridge:** λ = λ0 · trace(A)/(nh+1), added to the diagonal — it
-  scales with the data instead of being an absolute magic number.
-- **Deterministic escalation:** if the factorisation fails, double λ and
-  retry, at most 8 times, from a pristine copy of the matrix (the
-  factorisation writes only the lower triangle; the diagonal is parked).
-  The count is returned and any escalation is reported via
-  `IRIS_RIDGE_ESCALATED`. The schedule is fixed, so same seed + same examples
-  is bit-identical even through escalation.
-- The result: the solve **cannot fail** — SPD by construction. Verified in
-  the integrated core, check 21: six hostile scenarios (256 duplicates,
-  conflicting duplicates, dead dimension, 1e6 outliers, tight clusters,
-  all-equal outputs) × five λ values × three widths = 90 solves, zero
-  unfixable failures, at most 2 escalations ever used, zero non-finite
-  outputs on probes including outside the input box.
-- If escalation is somehow exhausted (unreachable by construction; it would
-  mean the Gram accumulated to non-finite), the core reseeds to a finite
-  deterministic state and reports `IRIS_NAN_TRAPPED` — never sits on broken
-  weights, per ADR 0004.
+- **A relative ridge:** λ = lam0 · trace(A)/(nh+1), plus a floor of 1e-7,
+  added to the diagonal, where A is the normal matrix and nh the number of
+  hidden units. It scales with the data instead of being an absolute
+  constant.
+- **Deterministic escalation:** if the factorisation fails, double λ and try
+  again, at most 8 times, from an untouched copy of the matrix (the
+  factorisation writes only the lower triangle, and the diagonal is kept
+  aside). The number of doublings is returned, and any escalation is reported
+  as `IRIS_RIDGE_ESCALATED`. The schedule is fixed, so the same seed and the
+  same demonstrations give the same bits even through escalation.
+- On friendly and hostile data at the recommended `lam0` the solve does not
+  fail: `tests/audit.c` runs six hostile scenarios (256 duplicates,
+  conflicting duplicates, an input that never moves, outliers of 1e6, tight
+  clusters, outputs all equal) at five values of `lam0` and three widths, 90
+  solves, with no unfixable failure, at most 2 doublings, and no non-finite
+  output on probes inside and outside the demonstrated range.
+- Escalation can run out, and then the solve refuses: `lam0` = 0 on 128
+  demonstrations all made at one gesture fails all nine attempts (`iris.h`
+  PART 8d). A refusal leaves every byte of the instrument as it was and
+  reports through the return value, following
+  [0004](0004-guards-report-never-mutate.md). This replaces the earlier
+  handling of an exhausted escalation, which reseeded the instrument.
 
 ## Rejected alternatives
 
-**λ = 0 "for exact interpolation".** Rejected by the measurement this ADR
-exists to preserve: it fails Cholesky on *friendly* data. There is no
-λ=0 regime in float32 on this feature matrix.
+**λ = 0 "for exact interpolation".** Rejected by the measurement this record
+exists to preserve: the factorisation fails on friendly data. There is no
+λ = 0 regime in single precision on this feature matrix.
 
-**Absolute λ.** Rejected: the right magnitude depends on the trace, which
-depends on nh and the example count. An absolute default that works at
-nh=12/20 examples is wrong at nh=48/256.
+**An absolute λ.** Rejected: the right magnitude depends on the trace, which
+depends on the number of hidden units and of demonstrations. An absolute value
+that works at 12 hidden units and 20 demonstrations is wrong at 48 and 256.
 
-**SVD or QR instead of Cholesky.** Rejected: 3–10× the flops and a large
-workspace, to buy robustness the ridge already guarantees more cheaply on a
-(nh+1)² problem that tops out at 49×49.
+**Singular value or QR decomposition instead of Cholesky.** Rejected: several
+times the arithmetic and a large workspace (an estimate from operation counts,
+not a measurement), to buy robustness the ridge already provides more cheaply
+on a problem of at most 65 × 65.
 
-**Compensated summation to postpone the rank deficiency.** Rejected — same
-finding as ADR 0008: weight-space-only error, no audible or grid-level
-effect; and it would not remove the deficiency, only move it.
+**Compensated summation to postpone the rank deficiency.** Rejected for the
+reason in [0008](0008-elm-same-network-better-math.md): the error it removes is
+in weight space only, with no effect on the probe grid, and it would move the
+deficiency, not remove it.
 
 ## Consequences
 
-- λ0 becomes the stability/liveliness knob with a floor, not an off switch
-  (1e-5 never failed anywhere; the shipped defaults are 1e-4/1e-3).
-- Escalation is visible to callers (return count + status), so "the data
-  was harder than usual" is a fact the instrument can display, not a
-  mystery.
-- Re-derive: `./build.sh audit` (check 21); the eigenvalue evidence is in
-  the quantnum scratch fork. Measured on Apple M4 Max (arm64), Apple clang
-  17.0.0, `-O2`, 2026-08-21.
+- `lam0` is a knob between stability and liveliness with a floor, not an off
+  switch (1e-5 never failed in the scenarios examined, recorded in iris-studies
+  S16; the recommended values are 1e-4 at 12 hidden units and 1e-3 at 48).
+- Escalation is visible to callers through the return count and the status,
+  so "the data was harder than usual" is a fact the instrument can display.
+- Re-derive: `sh build.sh audit`.
+
+Measurements: iris-studies S16.

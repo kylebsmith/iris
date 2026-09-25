@@ -3,8 +3,10 @@
 **Version 0.2.0.** BSD 3-Clause, `Copyright (c) 2026, Kyle Smith`. One header,
 no build system: `cc -std=c99 -O2 -I. -o hello examples/01_hello.c`. This page
 summarises the design for a technical reader; [`iris.h`](../iris.h) is the
-authority. A figure below names the check or recipe that produces it, or says
-that it comes from a study whose program is not in this repository.
+authority. A figure below names the check or recipe that produces it, the
+board log it was read from, or the study in
+[iris-studies](https://github.com/kylebsmith/iris-studies) that holds it,
+cited as "(iris-studies Snn)".
 The plain-language companion is [SYSTEM-plain-english.md](SYSTEM-plain-english.md).
 
 ## 1. System
@@ -57,9 +59,10 @@ contraction off, on and at the default, and with gcc in GNU C (`-std=gnu99`).
 Freestanding builds of the golden and starter recipes give the same three
 hashes on 64-bit ARM Linux, x86-64 Linux and 32-bit x86 using SSE (Streaming
 SIMD Extensions, SIMD meaning single instruction, multiple data: its
-single-precision vector unit). On the ESP32-S3 the starter kit's
-`device_torture` test 1 compares against `0xB7FC47A0`; no board run of it is
-recorded yet.
+single-precision vector unit). On an ES3C28P (ESP32-S3) the golden recipe,
+the starter kit's `device_torture` test 1 (`0xB7FC47A0`) and its
+`determinism_check` (`0x203834ED`) all match the laptop
+([log](board/2026-09-25-es3c28p.txt)).
 
 The header includes `<stddef.h>` and `<stdint.h>` only. With `-ffreestanding
 -fno-stack-protector` (and `-fno-tree-loop-distribute-patterns` on GCC) a unit
@@ -97,10 +100,10 @@ the accurate functions give 1.3% higher held-out error as a geometric mean
 (the [7/6] rational) to 53% (the C library's `tanhf`) more per epoch. The
 backward pass uses the true-tanh derivative, a surrogate; the exact derivative
 of the rational makes no measurable difference (geometric mean 0.997, 95%
-interval 0.988 to 1.005). The maximum error is in
-[`docs/MATH-FIXES.md`](MATH-FIXES.md); the other figures in this paragraph come
-from studies whose programs are not in this repository. The nonlinearity is frozen because saved instruments
-depend on it.
+interval 0.988 to 1.005). The maximum error is recorded in iris-studies S04;
+the comparisons with accurate functions and the exact derivative are
+iris-studies S01. The nonlinearity is frozen because saved instruments depend
+on it.
 
 ## 3. Trainers
 
@@ -129,8 +132,8 @@ scaled by `1/n_ex`.
   fixed-epoch recursion the golden hash pins. After a deleted bad take they keep
   its influence: on 20 demonstrations of a smooth target plus one contradictory
   take, trained, deleted and trained again, continuing leaves the instrument 14
-  times further from the true mapping than `iris_train` (40 of 40 seeds, from a
-  study whose program is not in this repository). While
+  times further from the true mapping than `iris_train` (40 of 40 seeds;
+  iris-studies S13). While
   a weight sits exactly on ±16 they refuse with `IRIS_DIVERGED_STUCK` on every
   call; `iris_train` is the way out.
 - **`iris_train_elm`**, the closed-form trainer (an extreme learning machine):
@@ -148,13 +151,21 @@ scaled by `1/n_ex`.
   regression (k clamped to 8, exact when the neighbours agree) and a
   bit-verbatim nearest-demonstration snap, both training-free, with distances
   in fractions of each input's range.
-- **`iris_loo_error`** and **`iris_suggest_smoothing`**: leave-one-out over
-  600-epoch fits, the second at five smoothing settings, restoring every byte
-  of the arena afterwards.
+- **`iris_loo_error`**: leave-one-out over 600-epoch fits from the
+  instrument's seed. It puts every demonstration and identifier back in its
+  place, but it does not restore the weights: it leaves the instrument
+  refitted on all demonstrations by `iris_continue` for the same 600 epochs
+  from the same seed, which plays but is not the instrument you had (not the
+  plateau fit, and with its own residual ledger, error and status). Save
+  first, or call `iris_train` afterwards.
+- **`iris_suggest_smoothing`**: the same sweep at five smoothing settings,
+  returning the best without applying it. It copies every byte the instrument
+  owns into the caller's scratch (at least `iris_size` bytes) first and copies
+  it back afterwards, so the instrument is unchanged.
 
-The limited-memory quasi-Newton trainer (L-BFGS, the limited-memory
-Broyden–Fletcher–Goldfarb–Shanno method) that 0.1.0 carried as an
-experiment is no longer part of the library.
+There is no quasi-Newton trainer. L-BFGS (the limited-memory
+Broyden–Fletcher–Goldfarb–Shanno method) was measured and is not in the
+library (iris-studies S09).
 
 ## 4. Relation to Wekinator and Weka 3.6.12
 
@@ -255,19 +266,21 @@ These are load-bearing, not caveats.
 
 1. **No head-to-head comparison with another implementation.**
    `sh build.sh reference` compares iris with an independent double-precision
-   reference of the same algorithm; nothing compares it with another library.
+   reference of the same algorithm; nothing compares it with another library
+   (iris-studies S22, which has no result yet).
 2. **The default stopping rule and smoothing are provisional.** On six
    synthetic target shapes with Gaussian output noise of standard deviation
    0.05 or more, `iris_train` at smoothing 0 is 1.2 to 2.2 times worse on
    held-out error than a fixed 100-epoch run. Smoothing 0.33 repairs most of
    that and costs 16%, 29% and 66% on clean data at 10, 20 and 50
-   demonstrations. The decision waits for a study of recorded human gesture.
+   demonstrations (recorded; iris-studies S08). The decision waits for a study
+   of recorded human gesture.
 3. **Nothing is verified on recorded human gesture**: not accuracy, not the
    plateau rule, not the ledger's premise.
 4. **The weight limit flags good fits**: 40 of 2,304 default fits, nearly all
    on sharp targets at 50 demonstrations, report `IRIS_TRAINING_DIVERGED`
-   although they play as well as the healthy ones (a study whose program is
-   not in this repository).
+   although they play as well as the healthy ones (the note at `IRIS_W_LIMIT`
+   in `iris.h` gives the protocol).
 5. **Hardware figures come from one board**: an ES3C28P measured on
    2026-09-25 ([log](board/2026-09-25-es3c28p.txt)); a second board has not been run.
 6. **Recording order matters a little.** Recording the same demonstrations in

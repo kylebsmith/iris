@@ -1,13 +1,15 @@
 # Negative result — dyadic positional encoding
 
-**Extracted from `iris.h` PART 8g on 2026-08-26.** It was compiled out
-(`#ifdef IRIS_OPT_POSENC`), had no callers anywhere in the tree, and was removed from
-the core to keep the shipped header to the validated path only. The measurement and the
-reasoning are preserved here in full because a documented negative result is worth
-keeping; the dead code was not.
+Dyadic positional encoding is not in `iris.h`. This page keeps its code, its
+measurements and the reasons it is off, so the idea can be judged on its
+record rather than rediscovered. The tables are recorded figures; the study is
+iris-studies S20. [The negative-results index](README.md) gives the one-line
+summary.
 
-To revive it, paste the code block below back into the header, or into its own
-optional module once the core is validated.
+The code below is written for inputs scaled to [0, 1]. `iris.h` scales inputs
+to [-1, +1] ([ADR 0018](../adr/0018-the-input-scaling-travels-with-the-file.md)),
+so reviving it means adapting the encoder's range first, then pasting it into
+its own optional module.
 
 ```c
 /* ==========================================================================
@@ -21,8 +23,9 @@ optional module once the core is validated.
 
    WHAT IT IS. Replace the raw input vector x with
        [ x, sin(2^0 pi x), cos(2^0 pi x), ..., sin(2^(L-1) pi x), cos(...) ]
-   the encoding NeRF (Mildenhall et al., ECCV 2020) uses to let a small MLP
-   represent high-frequency detail, computed here with ONE sin/cos pair per
+   the encoding NeRF (neural radiance fields; Mildenhall et al., ECCV 2020,
+   the European Conference on Computer Vision) uses to let a small
+   multilayer perceptron represent high-frequency detail, computed here with ONE sin/cos pair per
    input dimension and every higher octave from the double-angle identity.
 
    WHAT IT BUYS, measured on a detail-bearing truth (two narrow bumps added
@@ -35,12 +38,13 @@ optional module once the core is validated.
      dyadic L=3       14   0.0014   0.0649     0.00417      20.3
      dyadic L=4       18   0.0008   0.0794     0.00959      17.1
 
-   Recall of the musician's own demonstrations improves up to 20x. Encoder
-   cost is 0.32 us on the S3 at L=3 and +1,152 arena bytes at 8 outputs.
+   Recall of the musician's own demonstrations improves up to 20x. The
+   encoder adds 1,152 arena bytes at 8 outputs.
 
    AND IT ALSO SETTLED AN OLDER QUESTION, WHICH IS THE PART WORTH KEEPING.
-   REPORT.md 4.3 concluded that the ~25-48% ceiling on a contradictory
-   +0.15 correction is "a capacity bound of the 12-hidden net". It is not.
+   The frontier report (iris-studies S19) concluded that the ~25-48%
+   ceiling on a contradictory +0.15 correction is "a capacity bound of the
+   12-hidden net". It is not.
    Widening the hidden layer is FLAT; changing the input representation is
    not:
 
@@ -54,7 +58,8 @@ optional module once the core is validated.
 
    The edit authority a musician has over one demonstration is bounded by
    what the INPUT REPRESENTATION can localise, not by how many hidden units
-   there are. That correction is recorded in docs/frontier/REPORT.md.
+   there are. That correction is recorded in the frontier report
+   (iris-studies S19).
 
    WHY IT IS NOT ON.
 
@@ -66,7 +71,8 @@ optional module once the core is validated.
         axis that matters and it is not moving.
 
      2. IT TRIPLES THE NEAR-DEMO REROLL SPREAD. Roughness rises 1.4x at L=2
-        and 5.1x at L=4. Audit check 7 requires rerolls to stay STEADY on
+        and 5.1x at L=4. The tests/audit.c check "reroll is steady at the
+        demonstrations" requires rerolls to stay STEADY on
         demonstrated ground while moving in the gaps; that band is a
         designed musical property, not a numerical tolerance, and this
         encoding aims straight at it.

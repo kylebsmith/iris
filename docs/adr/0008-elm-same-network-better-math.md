@@ -1,85 +1,105 @@
-# 0008 — ELM: same network, better math
+# 0008 — The closed-form trainer: same network, different mathematics
 
-**Status:** accepted, 2026-08-21 (decision made in experiment E1, before integration)
-**Affects:** `iris.h` (`iris_train_elm`, `iris_retrain_elm_new`,
-`iris_artanh`, `iris_logit`, `IRIS_ELM_SCRATCH`), `tests/audit.c` checks 20–22.
+**Status:** accepted, 2026-08-21. Governs `iris.h` 0.2.0 (`iris_train_elm`).
+**Affects:** `iris.h` PART 8d (`iris_train_elm`,
+`iris_internal_train_elm_ex`, `iris_internal_artanh`, `iris_internal_logit`,
+`IRIS_ELM_SCRATCH`, `IRIS_ARENA_ELM`), `tests/audit.c` (the three "ELM:"
+checks), `tests/elm.c`.
 
 ## Context
 
-Keep the exact Wekinator topology; never backprop. Freeze the seeded random
-hidden layer, solve the output layer exactly by ridge least squares — one
-(nh+1)×(nh+1) Cholesky. E1's numbers against the 600-epoch baseline:
+Keep the network Wekinator trains, one hidden layer feeding the outputs, and
+fit it without backpropagation: freeze the seeded random hidden layer and solve
+the output layer exactly by ridge least squares, one (nh+1) × (nh+1) Cholesky
+factorisation, where nh is the number of hidden units. This is an extreme
+learning machine (ELM). Against 600 epochs of backpropagation, on the
+development laptop (Apple M4 Max, Apple clang 17, `-O2`; recorded, program in
+iris-studies S15):
 
-| nh | examples | backprop | ELM | speedup | bp recall/grid | ELM recall/grid |
+| nh | demonstrations | backpropagation | closed form | speed-up | backpropagation recall / grid | closed-form recall / grid |
 |---|---|---|---|---|---|---|
 | 12 | 50 | 2.590 ms | 0.0061 ms | 425× | .0074 / .0112 | .0103 / .0133 |
 | 48 | 50 | 7.926 ms | 0.0268 ms | 296× | .0077 / .0116 | **.0066 / .0109** |
 
-Retrain at 50 examples in well under a millisecond estimated on the S3, and
-at nh=48 the fit is *better* than backprop on both recall and
-generalisation. The reroll finding is the reason this is not merely a speed
-feature: at nh=12 the ELM reroll is **simultaneously steadier at the demos
-(0.016 vs 0.017) and ~45% livelier in the gaps (0.11 vs 0.076)**. The frozen
-random layer delivers the seed's character undiluted — backprop partially
-trains its randomness away — while the exact solve nails the demos
-regardless of seed. A new seed literally *is* a new instrument.
+At 48 hidden units the fit is better than backpropagation's on both recall and
+held-out error; `tests/audit.c` holds that ("ELM: nh=48 fit floor beats
+backprop"). On the board the solve takes 1.5 ms at 20 demonstrations and 3.5 ms
+at 50 (ES3C28P, [log](../board/2026-09-25-es3c28p.txt)).
 
-Two findings are load-bearing:
+The reroll is the reason this is more than a speed feature. A frozen random
+layer delivers the seed's character undiluted, where backpropagation trains
+part of its randomness away, while the exact solve holds the demonstrations
+whatever the seed. At 12 hidden units the closed-form reroll moved the sound at
+the demonstrations less than backpropagation's (0.016 against 0.017) and in the
+gaps about 45% more (0.11 against 0.076) (recorded; iris-studies S15).
+`tests/audit.c` ("ELM: same seed, same bits; reroll character") prints the
+current figures. A new seed is a new instrument.
 
-- **Gain 2/√n_in** for the frozen layer (measured optimum of {0.71..4.0}).
-  At the backprop init scale, tanh of a [0,1] input is nearly linear, the
-  features are nearly collinear, and the float32 Gram is rank-deficient.
-- **The ridge is mandatory** — separate ADR (0009), because it will be
-  proposed for deletion independently.
+Two measurements make the solve work in single precision:
+
+- **A hidden-layer gain of 2/√n_in** for the frozen layer. At the
+  backpropagation starting scale, tanh of a normalised input is nearly
+  linear, the features are nearly collinear, and the single-precision normal
+  matrix is rank-deficient. The sweep behind the constant is printed in
+  `iris.h` PART 8d; its program is iris-studies S06.
+- **The ridge is mandatory**: a separate record,
+  [0009](0009-ridge-is-mandatory.md), because it will be proposed for
+  deletion on its own.
 
 ## Decision
 
-- `iris_train_elm(k, lam0, scratch, bytes)` and `iris_retrain_elm_new(...)`,
-  caller-supplied scratch via `IRIS_ELM_SCRATCH` (884 B at nh=12, 10.4 KB at
-  nh=48), hard refusal with weights untouched if short.
-- Defaults: **λ0 = 1e-4 at nh=12** (reroll bands pass with room: near
-  0.017, gap 0.110). **nh=48 / λ0 = 1e-3** documented as the
-  "fits better than backprop" configuration.
-- **Refuse nh < 8.** Four frozen random features cannot recall five demos —
-  the near-band fails at every λ measured. Shipping that config would break
-  the reroll promise; refusal is the honest interface.
-- The solve targets logit space (`iris_logit`, the exact inverse of our Padé
-  sigmoid) so the shipping sigmoid forward pass lands on the normalized
-  targets, and the trained artifact is an ordinary v1/v2 instrument
-  (bit-identical save/load round trip, 441 probes). **Stated plainly: this
-  is a bounded-output *variant* of the backprop head, not an equivalent.**
-  The measured disagreement between the logit-space sigmoid head and a
-  linear-head ELM reaches 4.6e-2, largest *near the demos* — structural,
-  not a bug. Nobody gets to claim equivalence later; this paragraph is why.
-- Default trainer unchanged. ELM is chosen per-instrument.
+- `iris_train_elm(k, lam0, scratch, bytes)`, with working memory the caller
+  supplies, sized by `IRIS_ELM_SCRATCH(nh, n_out)`. A refusal leaves every byte
+  of the instrument as it was, except that a poisoned demonstration sets
+  `IRIS_NAN_TRAPPED`.
+- Recommended `lam0`: **1e-4 at 12 hidden units**, and **1e-3 at 48**, the
+  configuration that fits better than backpropagation.
+- **Refuse fewer than 8 hidden units.** Four frozen random features cannot
+  recall five demonstrations. (`iris_init` refuses fewer than 8 for every
+  trainer.)
+- The solve targets logit space (`iris_internal_logit`, the exact inverse of
+  the library's sigmoid), so the ordinary forward pass lands on the normalised
+  targets, and the result is an ordinary instrument that plays, saves and
+  loads like any other. **It is a bounded-output variant of the
+  backpropagation network's output layer, not an equivalent.** The
+  disagreement between this logit-space head and a closed-form head with
+  linear outputs reached 4.6e-2, largest near the demonstrations (recorded;
+  iris-studies S15). That is structural, not a defect, and it is why no
+  equivalence is claimed.
+- The default trainer stays `iris_train`. The closed-form trainer is chosen per
+  instrument.
 
 ## Rejected alternatives
 
-**Make ELM the default trainer.** Rejected: its reroll character is a
-different musical object (frozen randomness, linear-in-logit head), and the
-default's character is the tested, documented behaviour. Character changes
-are opt-in.
+**Make the closed-form trainer the default.** Rejected: its reroll character is
+a different musical object (frozen randomness, a head that is linear in logit
+space), and the default's character is the tested, documented behaviour.
+Changes of character are opt-in.
 
-**Allow nh=4 "lively corner" ELM configs.** Rejected by measurement, above.
-The lively corner simply lives at nh=12 for a frozen layer.
+**Allow 4 hidden units for a "lively corner".** Rejected by the recall failure
+above. The lively corner lives at 12 hidden units for a frozen layer.
 
-**Compensated (Kahan) summation in the Gram build.** Rejected: float32 β
-misses the double-precision reference by 2–6e-4 *in weight space only*;
-grid RMSE is unchanged. Paying cycles to fix an error nobody can hear or
-measure downstream is decoration.
+**Compensated (Kahan) summation in building the normal matrix.** Rejected: the
+single-precision output weights miss a double-precision reference by 2e-4 to
+6e-4 in weight space only, and the error on the probe grid is unchanged
+(recorded; iris-studies S15). Paying cycles to fix an error nobody can hear or
+measure downstream buys nothing.
 
-**Overlay the scratch on the momentum arrays.** Rejected: (nh+1)² floats vs
-~nh·(ni+no) — ~24× too small at nh=48. A separate caller-supplied block is
-honest about the real cost.
+**Overlay the working memory on the momentum arrays.** Rejected: the solve
+needs (nh+1)² floats, the velocities are about nh·(n_in + n_out), far too few
+at 48 hidden units. A separate block the caller supplies states the real cost.
 
 ## Consequences
 
-- The reroll button gets objectively better at nh=12, not just faster —
-  release-notes headline ("a new reroll feel").
-- `IRIS_RIDGE_ESCALATED` enters the status vocabulary: escalation is valid
-  and reported, never silent.
-- ELM does not advance `k->rng` (a closed-form solve is not an event in the
-  correction history); `iris_retrain_elm_new` resets the stream exactly as
-  `iris_retrain_new` does.
-- Re-derive: `./build.sh audit` (checks 20–22, cost table). Measured on
-  Apple M4 Max (arm64), Apple clang 17.0.0, `-O2`, 2026-08-21.
+- `IRIS_RIDGE_ESCALATED` is in the status vocabulary: escalation is valid and
+  reported, never silent.
+- The solve does not advance the instrument's random state (a closed-form
+  solve is not an event in the training history); it draws the frozen layer
+  from the seed with a local generator.
+- Output weights may exceed the weight limit of 16. Such an instrument plays,
+  saves and loads normally; `iris_train` is the way back to gradient training
+  (see `IRIS_W_LIMIT` in `iris.h`).
+- Re-derive: `sh build.sh audit` (the "ELM:" checks and the training-cost
+  table) and `sh build.sh elm`.
+
+Measurements: iris-studies S15, S06.

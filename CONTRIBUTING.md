@@ -45,8 +45,7 @@ seed on the same data, which is the noise floor; one that is not goes into
 change is a new major version.
 
 Changes that move no hash are free: anything additive to the interface,
-diagnostics, messages, documentation, the output ports in `extras/`, and the
-starter kit's sketches.
+diagnostics, messages, documentation, and the starter kit's sketches.
 
 ## Commands
 
@@ -64,7 +63,7 @@ groups them:
 ```sh
 # the test programs
 sh build.sh audit          # the correctness checks and the golden hash 0x6805FB0D, the status values in order, the guards with and without
-sh build.sh regressions    # one test per fixed defect
+sh build.sh regressions    # one test per defect the library must not repeat
 sh build.sh coverage       # the refusal paths
 sh build.sh load           # the save format, and the playback golden file
 sh build.sh train          # the trainers' state logic, byte by byte
@@ -76,9 +75,7 @@ sh build.sh tu             # two translation units with different maxima
 sh build.sh fuzz [N]       # N random call sequences (400) under AddressSanitizer
 sh build.sh examples       # every example, with -Werror, run
 sh build.sh tiny           # docs/tiny.c, iris_train written again, against the library to the bit
-sh build.sh mpe            # the polyphonic-expression output port
-sh build.sh sinks          # the control-change and Open Sound Control ports
-sh build.sh docs           # keywords.txt, the programs in docs/, this list and the version check, against the code
+sh build.sh docs           # keywords.txt, docs/tiny.c, the README program, this list and the version check, against the code
 
 # the whole suite under a tool
 sh build.sh sanitize       # every test program and example under AddressSanitizer and UndefinedBehaviorSanitizer
@@ -94,7 +91,6 @@ sh build.sh fuzz-load [S]  # libFuzzer on iris_load for S seconds (60); needs cl
 sh build.sh cov            # line and branch coverage, with thresholds; needs clang and llvm-cov
 sh build.sh mutate [...]   # advisory mutation run; reports, never fails; needs Python
 sh build.sh reference      # the Python double-precision reference; needs numpy and scikit-learn
-sh build.sh bench          # rebuild the browser benchmark
 sh build.sh clean          # remove build/
 ```
 
@@ -155,22 +151,21 @@ positive control that must be detected, decides without asking you.
 | [`examples/`](examples/) | `00_minimal.c` is the smallest one; `iris_smallest/` is the Arduino one. |
 | [`tests/`](tests/) | The test programs and the playback golden file. |
 | [`tools/`](tools/) | Programs the tests use. |
-| [`extras/ports/`](extras/ports/) | Where sound goes out: control change, polyphonic expression, Open Sound Control. |
-| [`docs/`](docs/README.md) | Design notes, decision records and negative results; [`docs/README.md`](docs/README.md) says which describe the current library. |
+| [`docs/`](docs/README.md) | The two explanations of the system, the decision records, the negative-results index and the board logs. |
 
 - **`iris.h` is the core.** It has no dependencies and no allocation, and both
   are checked. A change that adds either will be rejected.
-- **New output formats go in `extras/ports/`.** Copy
-  `extras/ports/template/` and implement the sink interface in
-  `extras/iris_sink.h`. Nothing above the port layer may know what your
-  hardware is.
-- **New sensors go behind `extras/iris_source.h`.** Same rule in the other
-  direction: the core must not be able to tell what produces the numbers.
-- **Research goes elsewhere** until it has a caller and a measurement.
-  Negative results go in `docs/negative-results/`: things that did not work are
-  worth keeping, and not in the engine room.
+- **The core knows nothing about sensors or sound.** Numbers go in and numbers
+  come out; turning them into MIDI (Musical Instrument Digital Interface),
+  Open Sound Control or a voltage belongs to the sketch that uses iris.
+- **Research lives in [iris-studies](https://github.com/kylebsmith/iris-studies)**
+  until it has a caller and a measurement. A negative result gets one
+  paragraph in [`docs/negative-results/README.md`](docs/negative-results/README.md),
+  and its study, with its program and the iris commit it ran against, goes in
+  iris-studies: things that did not work are worth keeping, and not in the
+  engine room.
 - **No dead code, no commented-out code.** If it is worth keeping, it is worth
-  a negative-results note saying what it measured.
+  a negative-results entry and a study saying what it measured.
 
 ## Writing anything a person will read
 

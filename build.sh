@@ -24,7 +24,7 @@
 # 32-bit x86 floating-point unit, which computes in 80 bits and so cannot
 # give iris's bits.
 #
-# THE TEST PROGRAMS, each its own arm, each built with -std=c99 -Wall -Wextra
+# The test programs, each its own arm, each built with -std=c99 -Wall -Wextra
 #   audit        tests/audit.c, the pinned golden hash and exact checks; that
 #                iris.h declares the iris_status values in value order; then
 #                tests/guards_ab.c built with and without -DIRIS_NO_GUARDS:
@@ -45,23 +45,22 @@
 #                exit 0 and print no not-a-number or infinity
 #   tiny         docs/tiny.c, iris_train written again by hand, which must
 #                agree with iris.h to the bit
-#   mpe, sinks   extras/tests/, every byte the output ports in extras/ emit
-#                (polyphonic expression; control change and Open Sound
-#                Control), built with -Werror
 #   docs         the files that describe the code, held to it: keywords.txt
 #                (the highlighting of the Arduino IDE, its integrated
 #                development environment) lists every public function and
-#                type, the study programs in docs/ build with -Werror,
-#                CONTRIBUTING.md lists exactly this script's arms, and
+#                type, docs/tiny.c and the first code block of README.md
+#                build with -Werror, CONTRIBUTING.md lists exactly this
+#                script's arms, and
 #                tests/version_check.sh holds tools/version-check.sh to its
 #                rule (a release date only on a release tag)
 #
-# THE WHOLE SUITE UNDER A TOOL
+# The whole suite under a tool
 #   sanitize     every test program and example above under
 #                AddressSanitizer and UndefinedBehaviorSanitizer, with
 #                float-divide-by-zero and float-cast-overflow, stopping at
 #                the first report
-#   threads      tests/threads.c and audit check 36 under ThreadSanitizer;
+#   threads      tests/threads.c and the concurrency check of tests/audit.c
+#                under ThreadSanitizer;
 #                the same-instrument positive control must be reported
 #   noheap       tests/noheap.c under the allocator interposer
 #                tests/noheap_interpose.c: zero allocator calls from iris,
@@ -78,7 +77,7 @@
 #                contraction pragmas iris.h must lose the golden hash,
 #                wherever this processor can fuse
 #
-# NEEDS MORE THAN A C COMPILER, SO NOT IN test
+# Needs more than a C compiler, so not in test
 #   fuzz-load [S]  tests/fuzz_load.c under libFuzzer for S seconds (60);
 #                  needs a clang with libFuzzer
 #   cov            line and branch coverage of iris.h over every test
@@ -91,7 +90,6 @@
 #                  written in Python; needs NumPy and scikit-learn, and skips
 #                  with a message when either is missing (a failure when CI
 #                  or IRIS_REQUIRE_REFERENCE is set)
-#   bench          the browser prototype, build/bench.html
 #   clean          remove build/
 set -e
 ROOT=$(cd "$(dirname "$0")" && pwd)
@@ -219,11 +217,13 @@ arm_docs() {
   done
   if [ -n "$missing" ]; then fail "docs: keywords.txt does not list:$missing"; fi
   say "PASS  keywords.txt lists the $(public_functions | wc -l | tr -d ' ') public functions and the 3 types"
-  n=0
-  for f in docs/*.c; do
-    "$CC" $CFLAGS -Werror -c "$f" -o "build/docs_$(basename "$f" .c).o"; n=$((n + 1))
-  done
-  say "PASS  the $n programs in docs/ build with -Werror"
+  "$CC" $CFLAGS -Werror -c docs/tiny.c -o build/docs_tiny.o
+  # the first fenced C block of README.md is the program a newcomer copies
+  awk '/^```c$/ { on = 1; next } on && /^```$/ { exit } on' README.md > build/docs_readme.c
+  if [ ! -s build/docs_readme.c ]; then fail "docs: README.md has no fenced C block"; fi
+  "$CC" $CFLAGS -Werror -o build/docs_readme build/docs_readme.c -lm
+  ./build/docs_readme
+  say "PASS  docs/tiny.c and the first program in README.md build with -Werror; the README program runs"
   # every arm_ function is an arm (fuzz_load is spelled fuzz-load)
   sed -n 's/^arm_\([a-z_]*\)() *{.*/\1/p' "$ROOT/build.sh" | tr _ - | sort -u > build/docs_arms
   sed -n '/^## Commands/,/^## [A-Z]/s/^sh build\.sh \([a-z][a-z-]*\).*/\1/p' CONTRIBUTING.md \
@@ -264,9 +264,6 @@ arm_sanitize() {
   sanitized fuzz 2000 -- tests/fuzz.c
   sanitized threads separate -- tests/threads.c
   sanitized tiny -- docs/tiny.c
-  sanitized mpe -- extras/tests/mpe_test.c extras/ports/mpe/iris_mpe.c extras/ports/mpe/iris_mpe_wire.c
-  sanitized cc -- extras/tests/cc_test.c extras/ports/cc/iris_cc.c
-  sanitized osc -- extras/tests/osc_test.c extras/ports/osc/iris_osc.c
   for f in examples/*.c; do sanitized "example_$(basename "$f" .c)" -- "$f"; done
 }
 
@@ -492,69 +489,11 @@ arm_reference() {
   CC=$CC python3 tests/reference/run.py --quick
 }
 
-# The two port arms assert every byte their encoders emit. Their 32-bit
-# structure sizes are _Static_asserts, checked by compiling for wasm32, a
-# 32-bit target, with clang's front end only (any clang, Apple's included).
-# Where no clang is installed that one step is skipped with a note, unless
-# IRIS_REQUIRE names cross-clang (as continuous integration does on Linux).
-wasm_syntax() {
-  WC=""
-  for c in $CC clang /opt/homebrew/opt/llvm/bin/clang; do
-    if command -v "$c" > /dev/null 2>&1 && is_clang "$c"; then WC=$c; break; fi
-  done
-  if [ -z "$WC" ]; then
-    case " ${IRIS_REQUIRE:-} " in
-      *" cross-clang "*) fail "the 32-bit size assertions need a clang for the wasm32 front end" ;;
-    esac
-    say "SKIP  32-bit sizes: no clang for the wasm32 front end"
-    return 1
-  fi
-  # called as an if condition, where set -e does not reach: each failure exits here
-  for f in "$@"; do
-    "$WC" --target=wasm32 -std=c99 -Wall -Wextra -Werror -I. -fsyntax-only "$f" \
-      || fail "32-bit size assertions: $f"
-  done
-}
-arm_mpe() {
-  "$CC" $CFLAGS -Werror -o build/mpe_test extras/tests/mpe_test.c extras/ports/mpe/iris_mpe.c \
-    extras/ports/mpe/iris_mpe_wire.c -lm
-  ./build/mpe_test
-  if wasm_syntax extras/ports/mpe/iris_mpe_wire.c; then
-    say "PASS  32-bit sizes: bytes 8, desc 12, sink 36, voice 18, pool 132, mpe 276"
-  fi
-}
-arm_sinks() {
-  "$CC" $CFLAGS -Werror -o build/cc_test extras/tests/cc_test.c extras/ports/cc/iris_cc.c -lm
-  ./build/cc_test
-  "$CC" $CFLAGS -Werror -o build/osc_test extras/tests/osc_test.c extras/ports/osc/iris_osc.c -lm
-  ./build/osc_test
-  if wasm_syntax extras/ports/cc/iris_cc.c extras/ports/osc/iris_osc.c extras/ports/template/iris_yoursink.c; then
-    say "PASS  32-bit sizes: cc_cfg 28, cc 224, osc_cfg 20, osc 480; the template builds"
-  fi
-}
-
-# The browser prototype needs a clang with the wasm32 code generator and
-# wasm-ld; Apple clang has neither, so it is Homebrew's LLVM on macOS.
-arm_bench() {
-  BC=""
-  for c in $CC clang /opt/homebrew/opt/llvm/bin/clang; do
-    if echo 'int f(void){return 0;}' | "$c" --target=wasm32 -c -x c - -o /dev/null 2> /dev/null; then BC=$c; break; fi
-  done
-  if [ -z "$BC" ]; then fail "bench needs a clang with the wasm32 code generator (brew install llvm lld)"; fi
-  if [ -d /opt/homebrew/opt/lld/bin ]; then PATH="/opt/homebrew/opt/lld/bin:$PATH"; fi
-  "$BC" --target=wasm32 -O2 -nostdlib -ffreestanding \
-    -Wl,--no-entry -Wl,--export-dynamic -Wl,--allow-undefined \
-    -Wl,-z,stack-size=32768 -Wl,--initial-memory=1114112 \
-    -o build/iris.wasm extras/ports/wasm/wasm_shim.c
-  python3 -c "import base64;w=base64.b64encode(open('build/iris.wasm','rb').read()).decode();\
-open('build/bench.html','w').write(open('extras/bench/page.html').read().replace('__WASM_B64__',w))"
-  say "built build/bench.html; open it in a browser"
-}
 arm_clean() { rm -rf build; trap - EXIT; }
 
 # The host arms `test` runs. The three that need a sanitizer runtime join
 # only when this compiler can link one, and say so when it cannot.
-HOST_ARMS="audit regressions coverage load train elm playing portability recipes tu examples tiny docs noheap determinism pragma freestanding targets mpe sinks"
+HOST_ARMS="audit regressions coverage load train elm playing portability recipes tu examples tiny docs noheap determinism pragma freestanding targets"
 arm_test() {
   arms=$HOST_ARMS
   if can_asan; then arms="$arms fuzz sanitize"
@@ -572,13 +511,13 @@ arm_test() {
 
 case "$ARM" in
   test|audit|regressions|coverage|load|train|elm|playing|portability|recipes|tu|fuzz|examples|tiny|docs|\
-  sanitize|threads|noheap|freestanding|targets|pragma|determinism|cov|mutate|reference|mpe|sinks|bench|clean)
+  sanitize|threads|noheap|freestanding|targets|pragma|determinism|cov|mutate|reference|clean)
     "arm_$ARM" "$@" ;;
   fuzz-load) arm_fuzz_load "$@" ;;
   *) trap - EXIT
      say "usage: sh build.sh [test | audit | regressions | coverage | load | train | elm | playing |"
      say "       portability | recipes | tu | fuzz [N] | examples | tiny | docs | sanitize | threads | noheap |"
      say "       freestanding | targets | pragma | determinism | fuzz-load [S] | cov | mutate [...] |"
-     say "       reference | mpe | sinks | bench | clean]"
+     say "       reference | clean]"
      exit 2 ;;
 esac

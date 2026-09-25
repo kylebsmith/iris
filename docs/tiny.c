@@ -2,7 +2,7 @@
    tiny.c — iris_train, written again by hand in one short file, and checked
    against the library.
 
-   It answers one question a reviewer or a student is entitled to ask: is
+   It answers one question a reader is entitled to ask: is
    iris.h doing anything mysterious, or is it this, plus guards, persistence,
    neighbours and documentation? This file is the whole algorithm -- scale
    the demonstrations, draw the starting weights, shuffle, forward pass,
@@ -19,7 +19,7 @@
    one way, iris.h refuses to compile where a compiler would carry wider
    intermediate results, and both switch fused multiply-add contraction off.
    So the two agree on every C99 compiler (Apple clang, clang and gcc, at -O0
-   to -Os, measured) or one of them no longer computes the model the header
+   to -Os) or one of them no longer computes the model the header
    describes, and then this program exits 1. Changing the momentum in iris.h
    from 0.85f to 0.8499f fails it, as does stretching iris's output scaling
    by one part in a million.
@@ -93,10 +93,16 @@ static void forward(const float *x) {
   }
 }
 
-/* A velocity this small can never move a weight again; it is set to zero,
-   as iris.h does, so that a host with gradual underflow and the ESP32-S3,
-   whose floating-point unit flushes denormal numbers to zero, compute the
-   same bits. */
+/* A velocity or weight smaller than 1e-30 moves nothing; it is set to zero,
+   as iris.h's IRIS_FLUSH does, so that neither ever becomes a subnormal
+   number, which some processors flush to zero in hardware and others keep,
+   and a host and a board cannot disagree about one. iris.h flushes the
+   velocities and, after the weight-decay step, the weights; this file does
+   both. Without smoothing the weight flush changes nothing on a healthy run,
+   because no weight comes within 1e-30 of zero (tests/guards_ab.c builds
+   the library with and without the flush and requires the same bits), but
+   copying it keeps this file the same computation rather than one that
+   agrees on this task. */
 static float flush(float v) { return (v < 1e-30f && v > -1e-30f) ? 0.0f : v; }
 
 int main(void) {
@@ -157,14 +163,14 @@ int main(void) {
       for (int o = 0; o < NO; ++o) {                     /* nudge, with momentum */
         for (int h = 0; h < NH; ++h) {
           v2[o][h] = flush(mom * v2[o][h] - lr * d_out[o] * hid[h]);
-          w2[o][h] += v2[o][h];
+          w2[o][h] = flush(w2[o][h] + v2[o][h]);
         }
         vb2[o] = flush(mom * vb2[o] - lr * d_out[o]); b2[o] += vb2[o];
       }
       for (int h = 0; h < NH; ++h) {
         for (int i = 0; i < NI; ++i) {
           v1[h][i] = flush(mom * v1[h][i] - lr * d_hid[h] * x[i]);
-          w1[h][i] += v1[h][i];
+          w1[h][i] = flush(w1[h][i] + v1[h][i]);
         }
         vb1[h] = flush(mom * vb1[h] - lr * d_hid[h]); b1[h] += vb1[h];
       }

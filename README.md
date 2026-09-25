@@ -50,6 +50,27 @@ starting at the top of the file.
 
 ---
 
+## Start here
+
+1. **Read one sketch.** [`examples/iris_smallest/iris_smallest.ino`](examples/iris_smallest/iris_smallest.ino)
+   records two demonstrations, trains, and asks about the points between them.
+   Install the library, open it from File > Examples > iris, upload, and open
+   the Serial Monitor at 115200 baud.
+2. **Learn three calls.** `iris_record(k, input, output)` stores one
+   demonstration: this gesture should make this sound. `iris_train(k)` fits a
+   smooth curve through every demonstration you have recorded.
+   `iris_predict(k, input, output)` asks the curve what to play for a gesture
+   you never demonstrated. Everything else in the library refines one of these.
+3. **Watch a network learn.** The starter kit's
+   [`iris_scope`](https://github.com/kylebsmith/iris-starter/tree/master/iris_scope)
+   draws the curve on a laptop screen as you tilt a sensor: record two poses
+   and it appears; record a bad one and it bends; delete that one and it
+   re-fits.
+4. **Understand why it works.** [`docs/SYSTEM-plain-english.md`](docs/SYSTEM-plain-english.md)
+   explains the network from scratch, for someone who has never trained one;
+   [`docs/SYSTEM-technical.md`](docs/SYSTEM-technical.md) says the same for a
+   technical reader.
+
 ## The hardware half
 
 The starter kit, https://github.com/kylebsmith/iris-starter, is what a
@@ -103,8 +124,8 @@ nice-to-have. It is the whole product.
 
 `iris.h` is a single header, most of it explanation, implementing the
 interactive machine learning loop that Wekinator made standard in 2009, rebuilt for boards that have no
-operating system. The interface is 41 functions, listed with one line each at
-the top of the header.
+operating system. Every public function is listed with one line at the top of
+the header.
 
 - **No dependencies.** The header includes `<stddef.h>` and `<stdint.h>` and
   nothing else: no C library, no `math.h`, no `printf`. A unit that calls every
@@ -230,7 +251,7 @@ It stops at the first failure and says which check failed. One check at a time:
 | Command | What it checks |
 |---|---|
 | `sh build.sh audit` | the correctness checks, including the golden hash `0x6805FB0D` |
-| `sh build.sh regressions` | one test per fixed defect |
+| `sh build.sh regressions` | one test per defect the library must not repeat |
 | `sh build.sh coverage` | the refusal paths: each case asks a function to refuse and checks that it does, and says so |
 | `sh build.sh load` | the save format: round trips, every rule, a committed saved instrument played back bit for bit |
 | `sh build.sh train` | refusals change nothing, sliced training equals `iris_train`, the stuck-divergence refusal, the smoothing suggestion |
@@ -252,10 +273,8 @@ It stops at the first failure and says which check failed. One check at a time:
 | `sh build.sh cov` | line and branch coverage of `iris.h` across the test programs, with thresholds (needs clang's `llvm-cov`) |
 | `sh build.sh mutate` | an advisory mutation run; it reports, it never fails the build (needs Python) |
 | `sh build.sh reference` | an independent double-precision reference in Python (skips without numpy, Python's numerical library, and scikit-learn, its machine-learning library) |
-| `sh build.sh mpe`, `sh build.sh sinks` | the output ports in [`extras/`](extras/) |
 | `sh build.sh tiny` | [`docs/tiny.c`](docs/tiny.c), `iris_train` written out again by hand, which must agree with the library to the bit |
-| `sh build.sh docs` | `keywords.txt` lists every public function and type, the programs in [`docs/`](docs/) build with `-Werror`, `CONTRIBUTING.md` lists every command, and the release version check keeps its rule |
-| `sh build.sh bench` | the browser benchmark in [`extras/bench/`](extras/bench/) |
+| `sh build.sh docs` | `keywords.txt` lists every public function and type, `docs/tiny.c` and the first program in this README build with `-Werror` and the README program runs, `CONTRIBUTING.md` lists every command, and the release version check keeps its rule |
 | `sh build.sh clean` | remove `build/` |
 
 AddressSanitizer and UndefinedBehaviorSanitizer are compiler instrumentation
@@ -270,9 +289,8 @@ before a pull request.
 | [`iris.h`](iris.h) | The whole library. Start at the top. |
 | [`examples/`](examples/) | `00_minimal.c` draws the learned space; `01_hello.c` three gestures; `02_fix_a_mistake.c` the repair loop; `03_reroll.c` same demonstrations, different instrument; `iris_smallest/` the Arduino one |
 | [`tests/`](tests/) | The test programs and the committed saved instrument in `tests/golden/` |
-| [`extras/`](extras/) | Output ports, the two port interfaces, and the browser benchmark. **Nothing in the library calls any of it.** |
 | [`tools/`](tools/) | Programs the tests use, such as the exhaustive square-root comparison |
-| [`docs/`](docs/) | Design notes, decision records, negative results; [`docs/README.md`](docs/README.md) is the index |
+| [`docs/`](docs/) | The two explanations of the system, decision records, the negative-results index and the board logs; [`docs/README.md`](docs/README.md) is the index |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to change iris without breaking it |
 
@@ -302,15 +320,15 @@ count you pass), not the instrument you trained, so save first or call
 `iris_train` afterwards. `iris_suggest_smoothing` runs the same sweep and puts
 every byte back.
 
-## Honest limitations
+## Limitations
 
 - **The machine-learning figures come from synthetic data.** Every accuracy
   figure in this repository was measured on synthetic target functions, many
   with added Gaussian noise, never on recorded human gesture. The figures
-  quoted here are ones that were re-run and replicated, but apart from those
-  that name a program in this repository (`tests/elm.c measure`,
-  `docs/gain-sweep.c`, `docs/degrees-of-freedom.c`, `sh build.sh audit`), the
-  programs that produced them are not in it. Treat them as bounded by that.
+  quoted here are ones that were re-run and replicated. Those that name a
+  program in this repository (`tests/elm.c measure`, `sh build.sh audit`)
+  re-run from here; the rest are studies in iris-studies (see below). Treat
+  them as bounded by that.
 - **Training to a plateau fits noise.** With smoothing at its default of 0, on
   demonstrations with output noise of standard deviation 0.05 or more,
   `iris_train` is 1.2 to 2.2 times worse on held-out error than a fixed
@@ -383,8 +401,9 @@ instrument, bit for bit, on every build `sh build.sh determinism` checks
 gcc; run with `CC` set to each of Apple clang, clang 22 and gcc-15 on 64-bit
 ARM) and on the other builds it has been measured on: 64-bit ARM and x86-64 Linux,
 and 32-bit x86 using its SSE vector unit (Streaming SIMD Extensions, SIMD
-meaning single instruction, multiple data). On the ESP32-S3 that has not yet
-been recorded (see the limitations above).
+meaning single instruction, multiple data). On the ESP32-S3 it has been
+recorded on one board: the [board log](docs/board/2026-09-25-es3c28p.txt)
+matches every host hash.
 
 That needs float arithmetic done in single precision, in the order written. The
 header refuses to compile under `-ffast-math`, `-Ofast`, `-ffinite-math-only`,
@@ -418,9 +437,9 @@ preview and are not read.
 first three promises above, but only to fix something measured to be wrong, only
 with a note in `CHANGELOG.md` saying what moved and what to do about it, and
 never silently. The file-format promise holds from 0.2.0 regardless. 1.0 comes
-when two things exist: a study of real recorded gestures that settles when
-training should stop and how much smoothing is the default, and a recorded run
-of the determinism check on the ESP32-S3 that matches the host.
+when a study of real recorded gestures settles when training should stop and
+how much smoothing is the default, and the determinism check has matched the
+host on more than one ESP32-S3 board.
 
 ### What each part of the version number permits
 
@@ -482,9 +501,15 @@ times changes its answer, about two distinct values per dataset on average over
 than one that is merely unsmoothed.
 
 The measurements behind this section are summarised beside each setting in
-`iris.h`. [`docs/KNOB-AUDIT.md`](docs/KNOB-AUDIT.md) is the original study, kept
-as a historical record; some of its figures did not replicate and are not quoted
-here.
+`iris.h`, and the study is iris-studies S02; some of the original study's
+figures did not replicate and are not quoted here.
+
+## Where the numbers come from
+
+A figure in this repository names the program that reproduces it. Where that
+program is not here, the citation "(iris-studies Snn)" names a study in
+[kylebsmith/iris-studies](https://github.com/kylebsmith/iris-studies), which
+holds the program or the record, and the iris commit it ran against.
 
 ## Licence
 
