@@ -1,7 +1,6 @@
 /* audit.c — does the thing actually work?
    Each check prints PASS or FAIL and a number you can argue with.
    Build:  cc -O2 -o audit audit.c -lm && ./audit
-   Run from the library root: check 11 opens tests/golden/ by relative path.
    ./build.sh audit also runs the guards-are-inert A/B (tests/guards_ab.c),
    which needs two builds of the core and so lives outside this binary. */
 
@@ -62,33 +61,20 @@ static uint32_t fnv1a(const void *p, size_t n) {
   return h;
 }
 
-/* View a saved blob as its v1-layout bytes, in place: a v1 blob passes
-   through untouched; a v2 or v3 blob (v1 plus one rng word after the 8-word
-   header — v3 has the same layout as v2 and differs only in what the weights
-   MEAN) has that word removed and the version stamp set back to 1.
-   Returns the v1-layout byte count. Keeps the golden-blob constant
-   meaningful across the format bumps. */
 /* Reduce a saved file to the bytes that describe the INSTRUMENT, discarding
-   everything that is file plumbing: the trailing checksum, the trailing
-   smoothing word, and the v2+ random-generator word in the header.
-
-   This used to handle v2 and v3 only, so each format bump dragged its new
-   trailing word into the hash and the golden constants had to be re-pinned --
-   which is precisely what a frozen behavioural contract must not require,
-   because a hash that moves for bookkeeping reasons teaches you to re-pin it
-   without asking why. After this, the hash covers weights, ranges,
-   demonstrations and identifiers, and nothing else; a future format bump
-   cannot move it. */
-static size_t golden_v1_bytes(unsigned char *buf, size_t n) {
+   the file plumbing: the random-number word in the header, the trailing
+   smoothing word and the checksum. The version word is overwritten with a
+   fixed value (1), so the hash covers the shape, seed, weights, ranges,
+   demonstrations and identifiers, and nothing a change of file format can
+   move -- a hash that moves for bookkeeping reasons teaches you to re-pin it
+   without asking why. */
+static size_t instrument_bytes(unsigned char *buf, size_t n) {
   uint32_t *h = (uint32_t *)buf;
-  if (n < 8 * sizeof(uint32_t)) return n;
-  if (h[1] == 5u) n -= 2 * sizeof(uint32_t);   /* smoothing word + checksum */
-  else if (h[1] == 4u) n -= sizeof(uint32_t);  /* checksum */
-  if (n >= 9 * sizeof(uint32_t) && h[1] >= 2u && h[1] <= 5u) {
-    memmove(buf + 8 * sizeof(uint32_t), buf + 9 * sizeof(uint32_t),
-            n - 9 * sizeof(uint32_t));
-    n -= sizeof(uint32_t);
-  }
+  if (n < 11 * sizeof(uint32_t)) return n;
+  n -= 2 * sizeof(uint32_t);                     /* smoothing word + checksum */
+  memmove(buf + 8 * sizeof(uint32_t), buf + 9 * sizeof(uint32_t),
+          n - 9 * sizeof(uint32_t));             /* the random-number word */
+  n -= sizeof(uint32_t);
   h[1] = 1u;
   return n;
 }
@@ -492,145 +478,35 @@ int main(void) {
        "on an example %.3f, far away %.3f", n_at, n_far);
   }
 
-  /* --- 11. the golden v1 file loads and predicts bit-identically ----------
-     tests/golden/v1-instrument.bin was written by tests/golden/make_golden.c
-     (the exact check-5 recipe). It was frozen against v0.1.0 first, then
-     re-frozen ONCE — a deliberate, documented act — when the FP_CONTRACT
-     OFF determinism contract landed and moved every trained float to the
-     contraction-off bit class (see docs/adr/0003). tests/golden/
-     v1-expected.txt holds the prediction BITS (hex uint32) at 21 fixed
-     probes. Old saved instruments must keep loading forever; this check is
-     that promise, made mechanical. It also catches flag drift and
-     accidental math changes in the predict path: bits, not tolerances.     */
-  {
-    static unsigned char file[64 * 1024];
-    FILE *fb = fopen("tests/golden/v1-instrument.bin", "rb");
-    FILE *ft = fopen("tests/golden/v1-expected.txt", "r");
-    size_t n = 0;
-    int loaded = 0, probes_read = 0, mismatches = 0;
-    if (fb) { n = fread(file, 1, sizeof file, fb); fclose(fb); }
-    iris *kg = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 99);
-    if (kg && n > 0) loaded = iris_load(kg, file, n);
-    if (ft) {
-      for (int a = 0; a < 21; ++a) {
-        unsigned want[NO];
-        if (fscanf(ft, "%x %x %x", &want[0], &want[1], &want[2]) != NO) break;
-        probes_read++;
-        if (loaded) {
-          float in[NI] = { a / 20.0f, 0.4f }, got[NO];
-          iris_predict(kg, in, got);
-          for (int o = 0; o < NO; ++o) {
-            unsigned bits; memcpy(&bits, &got[o], sizeof bits);
-            if (bits != want[o]) mismatches++;
-          }
-        }
-      }
-      fclose(ft);
-    }
-    ok("golden v1 file loads, predicts bit-identically",
-       fb && ft && loaded && probes_read == 21 && mismatches == 0,
-       "%zu bytes, %d examples, %d probes x %d outputs, %d bit mismatches",
-       n, loaded && kg ? iris_count(kg) : -1, probes_read, NO, mismatches);
-  }
-
   /* --- 12. the golden blob: the TRAINING path, pinned to the bit ----------
-     Check 11 pins the predict path against a frozen file. This one pins the
-     training path: run the check-5 recipe and hash the saved bytes. Any
-     compiler-flag drift, contraction leak, or accidental math change in
-     train/save fails this check loudly. The hash is taken over the v1-layout
-     bytes so the constants survive format bumps (v2/v3 = v1 + one inserted
-     rng word).
+     Run the check-5 recipe and hash the saved bytes. Any compiler-flag drift,
+     contraction leak, or accidental math change in train/save fails this
+     check loudly. The hash is taken over the instrument's bytes only (see
+     instrument_bytes), so a change of file format cannot move it, and fnv1a
+     is taken over exactly those bytes, so a wrong length gives a wrong hash:
+     the hash is the check.
 
-     TWO constants, because there are now two input scalings and both are
-     live in every build:
-
-       0xFEFAEDF6  the [0,1] scaling — E8's measured -ffp-contract=off blob
-                   hash, the only flag-robust class (O0/O1/O2 all
-                   bit-identical). UNCHANGED since v0.1.0 and re-frozen only
-                   once, when FP_CONTRACT OFF landed (ADR 0003). v0.3.0 did
-                   NOT re-freeze it: iris_internal_set_legacy_norm puts the instrument
-                   back on the old scaling and the old bits come back, which
-                   is the mechanical proof that the v1/v2 path in iris_load is
-                   still the code it always was.
-       0x6805FB0D  the [-1,+1] scaling that v3 files are written in. Frozen
-                   at v0.3.0 by this audit, on this contraction-off class.  */
+     0x6805FB0D is the [-1,+1] input scaling on the contraction-off bit class
+     (docs/adr/0003). */
   {
     static unsigned char file[64 * 1024];
     /* fresh instrument: the blob carries example ids, so the recipe must
-       start from iris_init exactly as make_golden.c does */
-    for (int pass = 0; pass < 2; ++pass) {
-      iris *kb = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 1234);
-      iris_internal_set_legacy_norm(kb, pass == 0);       /* pass 0: v1/v2, pass 1: v3 */
-      for (int i = 0; i < 20; ++i) {
-        float u = (float)((i * 7919) % 97) / 97.0f;
-        float v = (float)((i * 6131) % 89) / 89.0f;
-        float in[NI] = { u, v }, out[NO];
-        truth(u, v, out);
-        iris_record(kb, in, out);
-      }
-      iris_retrain_new(kb, 1234, 800);
-      size_t n = iris_save(kb, file, sizeof file);
-      size_t n1 = golden_v1_bytes(file, n);     /* v1-layout view of the blob */
-      uint32_t h = fnv1a(file, n1);
-      /* Both values are the ORIGINAL v0.3.0 constants. The [-1,+1] one was re-pinned
-   to 0x123FD0C8 on 2026-08-27 when format v4 added a trailing checksum -- but
-   that re-pin was unnecessary and it is now reverted: the file had grown, the
-   instrument had not, and golden_v1_bytes simply was not stripping the new
-   trailing word. It strips every format's plumbing now, so the constant came
-   straight back to 0x6805FB0D when format v5 was added, and a future bump
-   cannot move it either. Verified alongside this: predictions over a 441-point
-   grid are bit-identical across the v4-to-v5 change. */
-      uint32_t want = pass == 0 ? 0xFEFAEDF6u : 0x6805FB0Du;
-      /* AND THE L-BFGS PATH, for one specific reason. The v0.3.0 scaling
-         change edited exactly one piece of arithmetic that neither golden
-         blob covers: iris_internal_lbfgs_pass folds the input scaling into a
-         precomputed reciprocal and now adds an offset term, which is
-         identically 0.0f on the legacy scaling. "Identically zero" is a claim
-         about float semantics, so it is pinned rather than argued.
-         0xFB5BE623 is the current value, re-pinned 2026-08-26 after the
-         L-BFGS repair (relative curvature test + double-precision loss).
-         0x8260169D was the pre-repair value, measured against the previous
-         header. */
-      static float lw12[IRIS_LBFGS_WORK_FLOATS(NI, NH, NO, IRIS_LBFGS_M) + 2];
-      iris *kl = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 1234);
-      iris_internal_set_legacy_norm(kl, pass == 0);
-      load_examples(kl, 20);
-      iris_train_lbfgs(kl, 300, lw12, sizeof lw12);
-      /* Use the library's own macro, not a hand-copy of the same expression.
-         The golden hash at the next line is only meaningful if this weight
-         count matches what the trainer actually wrote; a hand-recomputed
-         duplicate can drift out of sync silently and the hash would then be
-         hashing the wrong number of bytes. Fixed 2026-08-26. */
-      const int nw12 = (int)IRIS_LBFGS_NW(NI, NH, NO);
-      uint32_t hl = fnv1a(kl->w1, (size_t)nw12 * sizeof(float));
-      /* Re-pinned 2026-08-26: the L-BFGS trainer was repaired (relative curvature
-   test + double-precision loss accumulation), which deliberately changes the
-   weights it produces. The old value was 0x8260169D. The core SGD hash above
-   is UNCHANGED, which is the point — the repair touched only
-   experimental/iris_lbfgs.h. */
-      /* Re-pinned 2026-08-27 (was 0xFB5BE623). The tanh codomain clamp moved from
-   |x|>4.9 to the codomain itself, which changes the weights L-BFGS reaches.
-   The CORE SGD hash on the line above is UNCHANGED, which is the informative
-   part: at the reference task SGD never drives a pre-activation past 3, so the
-   old defect was inert for it. L-BFGS takes larger steps, entered the band
-   routinely, and was being fed wrong-signed gradients. */
-      uint32_t wantl = pass == 0 ? 0x1648FA1Eu : 0u;
-      ok(pass == 0 ? "golden blob: [0,1] training path bit-pinned"
-                   : "golden blob: [-1,+1] training path bit-pinned",
-         /* n1 is a v1-LAYOUT VIEW of the blob, not the save size, so it is not
-            derivable from iris_save_size. It was hardcoded at 852, which broke
-            the moment format v4 appended a CRC32. The length does not need its
-            own assertion: fnv1a is taken over exactly n1 bytes, so a wrong
-            length gives a wrong hash. The hash is the check. */
-         n1 > 0 && h == want && (pass != 0 ? 1 : hl == wantl),
-         /* Print wantl, do not retype it. This message used to hardcode
-            0xFB5BE623 while wantl was 0x1648FA1E, so a student debugging a real
-            failure was told to expect a number the check was not asking for. */
-         "%zu v1-layout bytes, fnv1a 0x%08X (want 0x%08X); L-BFGS weights "
-         "0x%08X (want 0x%08X%s)", n1, h, want, hl, wantl,
-         pass == 0 ? ", re-pinned after the 2026-08-26 L-BFGS repair"
-                   : " -- not compared on this path");
+       start from iris_init */
+    iris *kb = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 1234);
+    for (int i = 0; i < 20; ++i) {
+      float u = (float)((i * 7919) % 97) / 97.0f;
+      float v = (float)((i * 6131) % 89) / 89.0f;
+      float in[NI] = { u, v }, out[NO];
+      truth(u, v, out);
+      iris_record(kb, in, out);
     }
+    iris_retrain_new(kb, 1234, 800);
+    size_t n = iris_save(kb, file, sizeof file);
+    size_t n1 = instrument_bytes(file, n);
+    uint32_t h = fnv1a(file, n1);
+    const uint32_t want = 0x6805FB0Du;
+    ok("golden blob: [-1,+1] training path bit-pinned", n1 > 0 && h == want,
+       "%zu instrument bytes, fnv1a 0x%08X (want 0x%08X)", n1, h, want);
   }
 
   /* --- 13. NaN never reaches the audio path -------------------------------
@@ -748,12 +624,11 @@ int main(void) {
        all_same, after_delete);
   }
 
-  /* --- 15. format v2 round trip; the v1 loader is untouched ---------------
-     v2 = v1 + one rng word. The test that matters is not "the bytes come
-     back" but "the FUTURE comes back": a correction after save->load must
-     be bit-identical to the correction the in-memory instrument would have
-     made. And a v1 file must still load with the old semantics (rng reset
-     to seed) — old files are sacred.                                       */
+  /* --- 15. save and load carry the random state --------------------------
+     The file stores the live rng word. The test that matters is not "the
+     bytes come back" but "the FUTURE comes back": a correction after
+     save->load must be bit-identical to the correction the in-memory
+     instrument would have made.                                            */
   {
     static unsigned char file[64 * 1024];
     iris *a = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 42);
@@ -776,15 +651,9 @@ int main(void) {
     iris_record(a, in, out); iris_correct(a, 20);
     iris_record(b, in, out); iris_correct(b, 20);
     int future = state_identical(a, b);
-    /* v1 semantics: the golden file is v1; loading it must reset rng to seed */
-    FILE *fb = fopen("tests/golden/v1-instrument.bin", "rb");
-    size_t n1 = 0;
-    if (fb) { n1 = fread(file, 1, sizeof file, fb); fclose(fb); }
-    iris *g = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 99);
-    int v1_ok = n1 > 0 && iris_load(g, file, n1) && g->rng.s == g->seed;
-    ok("format v2 round trip; v1 loader permanent", exact && future && v1_ok,
-       "v2 %zu B (v1 layout + 4) state exact %d, post-reload correction bit-identical %d, "
-       "v1 loads with old semantics %d", n2, exact, future, v1_ok);
+    ok("save round trip carries the random state", exact && future,
+       "%zu B, state exact %d, post-reload correction bit-identical %d",
+       n2, exact, future);
   }
 
   /* --- 16. the correction reaches parity without wrecking the map ---------
@@ -1382,108 +1251,6 @@ int main(void) {
   }
 
 
-  /* --- 29. the golden v3 file loads and predicts bit-identically ----------
-     The v3 twin of check 11. tests/golden/v3-instrument.bin is the SAME
-     recipe as the v1 golden — seed 1234, 20 examples, 800 epochs — trained
-     and saved under the v3 input scaling ([-1,+1]), frozen at v0.3.0. Two
-     goldens, because there are now two scalings and both are permanent:
-     check 11 proves the old one still works, this one gives the new one the
-     same protection from the day it ships rather than a year later.       */
-  {
-    static unsigned char file[64 * 1024];
-    FILE *fb = fopen("tests/golden/v3-instrument.bin", "rb");
-    FILE *ft = fopen("tests/golden/v3-expected.txt", "r");
-    size_t n = 0;
-    int loaded = 0, probes_read = 0, mismatches = 0, ver = 0, centered = 0;
-    if (fb) { n = fread(file, 1, sizeof file, fb); fclose(fb); }
-    if (n >= 8) ver = (int)((uint32_t *)file)[1];
-    iris *kg = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 99);
-    if (kg && n > 0) loaded = iris_load(kg, file, n);
-    if (loaded) centered = kg->in_center;       /* the file chose the scaling */
-    if (ft) {
-      for (int a = 0; a < 21; ++a) {
-        unsigned want[NO];
-        if (fscanf(ft, "%x %x %x", &want[0], &want[1], &want[2]) != NO) break;
-        probes_read++;
-        if (loaded) {
-          float in[NI] = { a / 20.0f, 0.4f }, got[NO];
-          iris_predict(kg, in, got);
-          for (int o = 0; o < NO; ++o) {
-            unsigned bits; memcpy(&bits, &got[o], sizeof bits);
-            if (bits != want[o]) mismatches++;
-          }
-        }
-      }
-      fclose(ft);
-    }
-    ok("golden v3 file loads, predicts bit-identically",
-       fb && ft && loaded && ver == 3 && centered == 1
-         && probes_read == 21 && mismatches == 0,
-       "%zu bytes, format v%d, in_center %d, %d probes x %d outputs, %d bit mismatches",
-       n, ver, centered, probes_read, NO, mismatches);
-  }
-
-  /* --- 30. the migration story, tested rather than asserted ---------------
-     The dangerous half of the input-scaling change is not the new files, it
-     is the old ones. Three things have to be true at once and this check
-     holds all three in the same instrument:
-
-       (a) the v1 file plays as it always did — that is check 11, and it
-           passes on the LEGACY scaling, selected by the file's own version;
-       (b) the same demonstrations, re-trained under the NEW scaling and
-           round-tripped through a v3 save, land on the same mapping to
-           within a float tolerance — so a musician who re-trains is not
-           handed a different instrument, only a better-fitted one;
-       (c) the two instruments are genuinely on DIFFERENT scalings while
-           doing it, so (b) is not passing by accident.
-
-     The tolerance is real and is stated as a number: these are two separate
-     fits of the same twenty points by two differently-conditioned
-     optimisations, so they agree to about the fit error, not to the bit.  */
-  {
-    static unsigned char file[64 * 1024], resaved[64 * 1024];
-    FILE *fb = fopen("tests/golden/v1-instrument.bin", "rb");
-    size_t n = 0;
-    int ok_load = 0, scal_v1 = -1, scal_v3 = -1;
-    float worst = 0.0f;
-    if (fb) { n = fread(file, 1, sizeof file, fb); fclose(fb); }
-
-    iris *kold = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 99);
-    if (kold && n) ok_load = iris_load(kold, file, n);
-    if (ok_load) scal_v1 = kold->in_center;     /* must be 0: it is a v1 file */
-
-    /* the SAME demonstrations, in a fresh v3 instrument, trained to
-       convergence, saved, and loaded back from the v3 bytes */
-    iris *knew = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 1234);
-    if (ok_load) {
-      for (int i = 0; i < iris_count(kold); ++i) {
-        float in[NI], out[NO];
-        iris_get(kold, i, in, out);
-        iris_record(knew, in, out);
-      }
-      iris_train_converge(knew, 0, 0, 0);
-      size_t m = iris_save(knew, resaved, sizeof resaved);
-      iris *kback = iris_init(arena_d, sizeof arena_d, NI, NH, NO, CAP, 7);
-      if (m && iris_load(kback, resaved, m)) {
-        scal_v3 = kback->in_center;             /* must be 1: it is a v3 file */
-        for (int a = 0; a <= 20; ++a) for (int b = 0; b <= 20; ++b) {
-          float in[NI] = { a / 20.0f, b / 20.0f }, o1[NO], o2[NO];
-          iris_predict(kold,  in, o1);
-          iris_predict(kback, in, o2);
-          for (int o = 0; o < NO; ++o) {
-            float d = o1[o] - o2[o];
-            if (d < 0) d = -d;
-            if (d > worst) worst = d;
-          }
-        }
-      }
-    }
-    ok("v1 and a re-saved v3 of the same instrument agree",
-       ok_load && scal_v1 == 0 && scal_v3 == 1 && worst <= 0.06f,
-       "441 probes x %d outputs, worst |v1 - v3| %.4f (want <= 0.06); "
-       "scalings %d then %d", NO, worst, scal_v1, scal_v3);
-  }
-
   /* --- 31. training to convergence, and a progress bar that is not a lie --
      Three claims. (a) The plateau criterion beats the old 600-epoch
      recommendation on the very reference task the audit already uses.
@@ -1643,119 +1410,6 @@ int main(void) {
        "codomain was fixed)", l1, l2, l1 / l2, sc, l2 / sc);
   }
 
-  /* --- 34. THE HOLE CHECK 30 LEFT OPEN: open, re-train, save, re-open -----
-     Check 30 proves that the same demonstrations re-fitted in a FRESH v3
-     instrument land near the v1 original. That is the "start again" route,
-     and it was the only migration route the audit covered. The route the
-     app actually takes is the other one, and it was broken:
-
-         core/store.c   iris_load  (a v1/v2 payload -> legacy scaling)
-         core/surface.c iris_train_begin / iris_train_slice   (the musician
-                        holds BOOT and asks for a better fit)
-         core/store.c   iris_save  (and here the version word lied)
-
-     iris_save stamped IRIS_FORMAT unconditionally, so [0,1] weights went to
-     flash labelled v3. The reload believed the label, switched to [-1,+1],
-     and played a different instrument — out of a file whose every weight
-     round-tripped bit-perfectly. Measured 0.427 of full scale before the
-     fix, which is not drift, it is a different mapping. Nothing was
-     corrupt, nothing failed, nothing was reported.
-
-     The instrument that comes back off disk must be the instrument that was
-     in memory when it was written. Not close: identical. That is the whole
-     of this check, and it is asserted at zero tolerance because a save and
-     a load that disagree by ANY amount are a bug.                          */
-  {
-    static unsigned char file[64 * 1024], resaved[64 * 1024];
-    FILE *fb = fopen("tests/golden/v1-instrument.bin", "rb");
-    size_t n = 0, m = 0;
-    int loaded = 0, scal_in = -1, scal_out = -1, ver = 0, reloaded = 0;
-    float worst = -1.0f;
-    if (fb) { n = fread(file, 1, sizeof file, fb); fclose(fb); }
-
-    iris *ka = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 99);
-    if (ka && n) loaded = iris_load(ka, file, n);
-    if (loaded) {
-      scal_in = iris_input_scaling(ka);           /* 0: it came from a v1 file */
-      iris_train_converge(ka, 8000, 0, 0);        /* the musician re-trains    */
-      scal_out = iris_input_scaling(ka);          /* still 0: weights own it   */
-      m = iris_save(ka, resaved, sizeof resaved);
-      if (m >= 8) ver = (int)((uint32_t *)resaved)[1];
-      iris *kb = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 7);
-      if (m && (reloaded = iris_load(kb, resaved, m))) {
-        worst = 0.0f;
-        for (int a = 0; a <= 20; ++a) for (int b = 0; b <= 20; ++b) {
-          float in[NI] = { a / 20.0f, b / 20.0f }, o1[NO], o2[NO];
-          iris_predict(ka, in, o1);
-          iris_predict(kb, in, o2);
-          for (int o = 0; o < NO; ++o) {
-            float d = o1[o] - o2[o];
-            if (d < 0) d = -d;
-            if (d > worst) worst = d;
-          }
-        }
-      }
-    }
-    ok("re-trained old instrument survives save/reload BIT-EXACTLY",
-       loaded && scal_in == 0 && scal_out == 0 && ver == 2 && reloaded
-         && worst == 0.0f,
-       "v1 in (scaling %d) -> re-trained (scaling %d) -> saved v%d -> reloaded %d; "
-       "worst |memory - disk| over 441 probes %.9f (want exactly 0)",
-       scal_in, scal_out, ver, reloaded, worst);
-  }
-
-  /* --- 35. and the way OUT of the old scaling is a decision, not a default -
-     Check 34 locks an old instrument onto its old scaling for ever, which is
-     correct and is also a trap if there is no door. iris_migrate_scaling is
-     the door: it throws the old weights away and re-fits the same stored
-     demonstrations under [-1,+1]. The musician's demonstrations are raw
-     sensor values in their own units, so they mean the same thing under
-     either scaling — that is why the re-fit is legitimate.
-
-     It has to be LOUD (a function the caller names), IDEMPOTENT (calling it
-     on an already-centred instrument does nothing and says so), and it has
-     to actually move the file format with it. And the instrument it hands
-     back is a NEW FIT: it lands within the same fit tolerance check 30 uses,
-     not on the same bits, and the caller has to be willing to accept that
-     before pressing the button.                                            */
-  {
-    static unsigned char file[64 * 1024], out[64 * 1024];
-    FILE *fb = fopen("tests/golden/v1-instrument.bin", "rb");
-    size_t n = 0, m = 0;
-    int loaded = 0, first = -1, second = -1, before = -1, after = -1, ver = 0;
-    float moved = -1.0f;
-    if (fb) { n = fread(file, 1, sizeof file, fb); fclose(fb); }
-
-    iris *ko = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 99);
-    iris *km = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 99);
-    if (ko && km && n) loaded = (iris_load(ko, file, n) && iris_load(km, file, n));
-    if (loaded) {
-      before = iris_input_scaling(km);
-      first  = iris_migrate_scaling(km);          /* the decision */
-      after  = iris_input_scaling(km);
-      second = iris_migrate_scaling(km);          /* nothing left to do */
-      m = iris_save(km, out, sizeof out);
-      if (m >= 8) ver = (int)((uint32_t *)out)[1];
-      moved = 0.0f;
-      for (int a = 0; a <= 20; ++a) for (int b = 0; b <= 20; ++b) {
-        float in[NI] = { a / 20.0f, b / 20.0f }, o1[NO], o2[NO];
-        iris_predict(ko, in, o1);
-        iris_predict(km, in, o2);
-        for (int o = 0; o < NO; ++o) {
-          float d = o1[o] - o2[o];
-          if (d < 0) d = -d;
-          if (d > moved) moved = d;
-        }
-      }
-    }
-    ok("migrating scaling is opt-in, idempotent, and carries the format",
-       loaded && before == 0 && first == 1 && after == 1 && second == 0
-         && ver == (int)IRIS_FORMAT && moved <= 0.06f,   /* v4 since 2026-08-27 */
-       "scaling %d -> %d, migrate returned %d then %d, saves v%d, "
-       "instrument moved %.4f (want <= 0.06, the check-30 fit tolerance)",
-       before, after, first, second, ver, moved);
-  }
-
   /* --- timing: what will this cost on the S3? ----------------------------- */
   printf("--------------------------------------------------------------------------\n");
   /* --- 35. THE DIVERGENCE TRAP -------------------------------------------
@@ -1805,73 +1459,6 @@ int main(void) {
        diverged, refused, recovered, drift);
   }
 
-
-  /* SAVE FORMAT v4, which iris_load accepts and nothing exercised.
-     README, CHANGELOG and iris.h all promise the loader keeps reading every
-     older format, permanently. Six format words are accepted; v1 and v3 have
-     frozen fixtures, v2 has a synthesised round trip, v5 and v6 round-trip
-     continuously -- and v4 had neither a fixture nor a check. It is also the
-     only pre-v5 format carrying a CRC32, so its load path has a branch that
-     was never taken by any test. A permanent promise should not have an
-     untested leg.
-
-     No new fixture is needed, which is why this can be added without freezing
-     another binary: a v4 file IS a v3 file with the version word changed and a
-     CRC32 appended, so this derives one from the frozen v3 golden and requires
-     it to produce bit-identical predictions. The checksum is written the way
-     iris_load reads it -- little-endian, byte at a time -- rather than by
-     copying a host uint32, so the test does not silently depend on this
-     machine's byte order. */
-  {
-    static unsigned char v3f[64 * 1024], v4f[64 * 1024], bad[64 * 1024];
-    static unsigned char ar_a[IRIS_ARENA(NI, NH, NO, CAP)];
-    static unsigned char ar_b[IRIS_ARENA(NI, NH, NO, CAP)];
-    static unsigned char ar_z[IRIS_ARENA(NI, NH, NO, CAP)];
-    size_t n3 = 0, n4 = 0;
-    int l3 = 0, l4 = 0, mism = 0, probes = 0, tries = 0, refused = 0;
-    FILE *fb = fopen("tests/golden/v3-instrument.bin", "rb");
-    if (fb) { n3 = fread(v3f, 1, sizeof v3f, fb); fclose(fb); }
-
-    if (n3 > 12 && n3 + 4 <= sizeof v4f) {
-      uint32_t c;
-      memcpy(v4f, v3f, n3);
-      ((uint32_t *)v4f)[1] = IRIS_FORMAT_V4;
-      c = iris_crc32(v4f, n3);
-      for (int i = 0; i < 4; ++i) v4f[n3 + i] = (unsigned char)((c >> (8 * i)) & 0xFFu);
-      n4 = n3 + 4;
-
-      iris *a = iris_init(ar_a, sizeof ar_a, NI, NH, NO, CAP, 7);
-      iris *b = iris_init(ar_b, sizeof ar_b, NI, NH, NO, CAP, 7);
-      l3 = a && iris_load(a, v3f, n3);
-      l4 = b && iris_load(b, v4f, n4);
-      if (l3 && l4) {
-        for (int i = 0; i <= 20; ++i)
-          for (int j = 0; j <= 20; ++j) {
-            float in[NI] = { i / 20.0f, j / 20.0f }, o3[NO], o4[NO];
-            iris_predict(a, in, o3); iris_predict(b, in, o4);
-            ++probes;
-            for (int o = 0; o < NO; ++o) if (o3[o] != o4[o]) ++mism;
-          }
-      }
-      /* Every flipped bit must be refused, not merely most of them. Eight
-         positions spread across the body, plus one in the checksum itself. */
-      /* Eight positions across the body, and a ninth in the checksum trailer
-         itself -- corrupting the checksum must be refused just as corrupting
-         what it covers is, and the body-only sweep never touched it. */
-      for (int t = 0; t < 9; ++t) {
-        size_t pos = (t == 8) ? n4 - 2 : 8 + (size_t)t * ((n4 - 12) / 8);
-        iris *z;
-        memcpy(bad, v4f, n4); bad[pos] ^= 0x01u;
-        z = iris_init(ar_z, sizeof ar_z, NI, NH, NO, CAP, 7);
-        ++tries; if (z && !iris_load(z, bad, n4)) ++refused;
-      }
-    }
-    ok("save format v4 loads bit-exactly and refuses a flipped bit",
-       l3 && l4 && probes == 441 && mism == 0 && tries == 9 && refused == 9,
-       "v3 %zu B loaded %d; v4 %zu B loaded %d; %d probes x %d outputs, "
-       "%d bit mismatches; %d of %d corrupted copies refused",
-       n3, l3, n4, l4, probes, NO, mism, refused, tries);
-  }
 
   /* README.md says "Verified: four instruments trained interleaved, 8,000
      interleaved predictions, zero cross-talk." Until now nothing in this suite

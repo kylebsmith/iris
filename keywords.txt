@@ -47,8 +47,6 @@ iris_example_stress	KEYWORD2
 iris_novelty	KEYWORD2
 iris_knn_predict	KEYWORD2
 iris_classify_1nn	KEYWORD2
-iris_input_scaling	KEYWORD2
-iris_migrate_scaling	KEYWORD2
 iris_fit_ranges	KEYWORD2
 
 IRIS_ARENA	LITERAL1

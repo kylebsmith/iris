@@ -128,11 +128,11 @@ IRIS_API float iris_internal_lbfgs_pass(iris *k, float *g) {
   const float cs = 2.0f / (float)(k->n_ex * NO);
   float x[IRIS_MAX_IN], tg[IRIS_MAX_OUT];
   float inv_i[IRIS_MAX_IN], inv_o[IRIS_MAX_OUT];
-  /* same two scalings as iris_norm_in, folded into the reciprocal so the inner
+  /* the same scaling as iris_norm_in, folded into the reciprocal so the inner
      loop stays one multiply. cen == -1 reproduces 2*t-1 with one add. */
-  const float cen = k->in_center ? -1.0f : 0.0f;
+  const float cen = -1.0f;
   for (int i = 0; i < NI; ++i)
-    inv_i[i] = (k->in_center ? 2.0f : 1.0f) / (k->in_hi[i] - k->in_lo[i]);
+    inv_i[i] = 2.0f / (k->in_hi[i] - k->in_lo[i]);
   for (int o = 0; o < NO; ++o)
     inv_o[o] = (IRIS_OUT_HI - IRIS_OUT_LO) / (k->out_hi[o] - k->out_lo[o]);
   /* REPAIR 2 (2026-08-26) — accumulate the loss in DOUBLE. In float32 the

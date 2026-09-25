@@ -53,15 +53,13 @@ int main(void) {
     if (iris_seed(0)           != 0u)   bad++;
     if (iris_get_l2(0)         != 0.0f) bad++;
     if (iris_get_smoothing(0)  != 0.0f) bad++;
-    if (iris_input_scaling(0)  != 0)    bad++;
-    if (iris_migrate_scaling(0) != 0)   bad++;
     if (iris_delete_nearest(0, in) != 0) bad++;
     if (iris_delete_last(0)    != 0)    bad++;
     if (iris_novelty(0, in)    != 0.0f) bad++;
     if (iris_loo_error(0, 100) != -1.0f) bad++;
     if (iris_train_elm(0, 1e-4f, SCR, sizeof SCR) != -1) bad++;
     if (iris_classify_1nn(0, in, out) != -1) bad++;
-    snprintf(d, sizeof d, "%d of 20 calls answered wrongly", bad);
+    snprintf(d, sizeof d, "%d of 18 calls answered wrongly", bad);
     check("a null instrument refuses across the whole surface", bad == 0, d); }
 
   /* ---- iris_predict on a null instrument must not leave stale audio ----- */
@@ -108,17 +106,6 @@ int main(void) {
              hit, left, oob);
     check("delete_nearest works and an out-of-range index refuses",
           hit != 0 && left == 5 && oob == 0, d); }
-
-  /* ---- migrate_scaling: nothing to do, and the real path ---------------- */
-  { iris *k = filled(A, sizeof A, 6);
-    int already = iris_migrate_scaling(k);       /* fresh = already centred */
-    iris *e = iris_init(B, sizeof B, 2, 12, 2, 32, 1u);
-    iris_internal_set_legacy_norm(e, 1);
-    int nothing = iris_migrate_scaling(e);       /* legacy but no examples */
-    snprintf(d, sizeof d, "already-centred %d, legacy-but-empty %d",
-             already, nothing);
-    check("migrate refuses when there is nothing to migrate",
-          already == 0 && nothing == 0, d); }
 
   /* ---- example_stress: before training, and out of range ---------------- */
   { iris *k = filled(A, sizeof A, 6);
@@ -208,13 +195,13 @@ int main(void) {
     iris_set_smoothing(k, 0.5f);
     iris_train(k);
     int ok = iris_capacity(k) == 32 && iris_count(k) == 6
-             && iris_seed(k) == 1234u && iris_input_scaling(k) == 1
+             && iris_seed(k) == 1234u
              && iris_get_l2(k) > 0.0f && iris_get_smoothing(k) > 0.49f
              && iris_id_at(k, 0) == 1 && iris_index_of(k, 1) == 0
              && iris_is_trained(k) && iris_last_error(k) >= 0.0f;
-    snprintf(d, sizeof d, "capacity %d, seed %u, scaling %d, smoothing %.2f",
+    snprintf(d, sizeof d, "capacity %d, seed %u, smoothing %.2f",
              iris_capacity(k), (unsigned)iris_seed(k),
-             iris_input_scaling(k), (double)iris_get_smoothing(k));
+             (double)iris_get_smoothing(k));
     check("every accessor answers correctly on a live instrument", ok, d); }
 
   /* ---- the NaN-through-a-clamp class ------------------------------------
@@ -251,7 +238,7 @@ int main(void) {
      iris_load set fitted = 1 unconditionally, so record-save-load-play on a
      never-trained instrument ran the forward pass over the random weights
      iris_reseed left and reported IRIS_STATUS_OK. Format v6 marks "not fitted
-     when saved" without changing a byte -- the same trick v3 used. */
+     when saved" without changing a byte. */
   { iris *k = iris_init(A, sizeof A, 2, 12, 2, 32, 1234u);
     for (int i = 0; i < 6; ++i) {
       float a2[2] = { (float)i/5.0f, 0.5f }, b2[2] = { (float)i/5.0f, 0.25f };

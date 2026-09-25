@@ -38,11 +38,9 @@ static void demos(iris *k,int n){ for(int i=0;i<n;i++){
 int main(void){
   char d[160];
 
-  /* A — iris_save must not write past what iris_save_size asked for, on a
-         legacy-scaled instrument (the kind restored from an old file). */
+  /* A — iris_save must not write past what iris_save_size asked for. */
   { iris *k=iris_init(A,sizeof A,2,12,3,64,7); demos(k,8);
     iris_train_converge(k,0,0,0);
-    iris_internal_set_legacy_norm(k,1);
     size_t need=iris_save_size(k);
     unsigned char *buf=malloc(need+8);
     memset(buf,0xA5,need+8);
@@ -263,12 +261,10 @@ int main(void){
     snprintf(d,sizeof d,"iris_train on an emptied instrument returned %d", r);
     check("O training nothing reports failure", r==0, d); }
 
-  /* P — the D1 residual, found by exhaustive two-bit search after the
-     single-bit hole was closed. On a 1-in/1-out instrument a v5 file with E
-     examples is the same LENGTH as a v1 file with E+1, so two flipped bits
-     (format 5->1, n_ex 6->7) opted a file out of its own checksum and played a
-     different instrument with the status reading healthy. Exactly 1 accepted
-     pair out of 2,507,680 before the fix; this asserts 0. */
+  /* P — no pair of flipped bits may get a file past the loader. Exhaustive
+     over every two-bit corruption of a 1-in/1-out file, the smallest legal
+     shape, where a changed version word or example count is cheapest to make
+     add up; this asserts 0 accepted. */
   { iris *k=iris_init(B,sizeof B,1,12,1,32,1234u);
     for(int i=0;i<6;i++){ float in=i*0.15f,o=(float)((i*3)%5)/5.0f; iris_record(k,&in,&o); }
     iris_train(k);

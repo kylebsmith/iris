@@ -100,23 +100,6 @@
    fixed-epoch backprop that Wekinator's Weka MultilayerPerceptron does, and
    the audit pins its output to the bit.
 
-   ON OLD FILES. iris_save / iris_load carry the INPUT SCALING in the version
-   word: v1 and v2 files were written when inputs were scaled to [0,1], v3
-   onwards to [-1,+1]. An instrument loaded from an old file keeps the old
-   scaling for as long as it exists — including across re-training, and it
-   saves itself back as v2 — because its weights mean nothing else. That is
-   automatic and you do not have to think about it.
-
-   What you may want to offer the musician is the way out:
-
-     if (!iris_input_scaling(k))          // 0 = this came from an old file
-       if (asked_nicely()) iris_migrate_scaling(k);
-
-   iris_migrate_scaling re-fits the same demonstrations under the new scaling.
-   It is a NEW FIT, not a conversion: the instrument moves by about the fit
-   error (0.045 measured), so it is the musician's decision, never a default.
-   See PART 9.
-
    ============================================================================ */
 
 #ifndef IRIS_H
@@ -256,11 +239,9 @@
 
 /* THE ONLY VERSION NUMBER FOR THIS LIBRARY. Nothing else may state one.
 
-   SEPARATE AXIS: the SAVE FILE format version (v1/v2/v3) is NOT this number.
-   It carries the input-scaling semantics and has its own permanent-compat
-   promise — see docs/adr/0006 and docs/adr/0018. A library version bump never
-   invalidates a saved instrument; only a format bump can, and the loader keeps
-   reading every older format. */
+   SEPARATE AXIS: the SAVE FILE format version is NOT this number. It is
+   written into every saved file and changes only when the file's layout or
+   meaning changes; see PART 9. */
 #define IRIS_VERSION_MAJOR 0
 #define IRIS_VERSION_MINOR 1
 #define IRIS_VERSION_PATCH 0
@@ -596,21 +577,6 @@ struct iris {
      rescale it before it ever touches a weight. */
   float *in_lo, *in_hi, *out_lo, *out_hi;
 
-  /* WHICH INPUT SCALING THIS INSTRUMENT USES, and why it is per-instrument
-     state rather than a build option. 0 = [0,1], the v0.1/v0.2 scaling, kept
-     for every file ever written by those versions. 1 = [-1,+1], which is what
-     Weka's MultilayerPerceptron does with normalizeAttributes on — the
-     setting Wekinator ships — and what LeCun et al. 1998 ("Efficient
-     BackProp", 4.3) prescribes: uncentered inputs give every first-layer
-     weight a gradient of the same sign, so the descent has to zig-zag.
-     Measured on the 8-output reference task at 600 epochs: train MSE
-     5.94e-4 -> 6.38e-5 (9.3x), grid RMSE 0.0129 -> 0.0084 (1.54x).
-
-     iris_load SETS THIS FROM THE FILE VERSION. A stored weight only means
-     something against the scaling it was trained in, so the two travel
-     together or the instrument silently becomes a different instrument. */
-  int32_t in_center;
-
   /* --- the examples ------------------------------------------------------
      This is the part Wekinator got right and the embedded systems that came
      after it got wrong. The training examples are not scratch data thrown
@@ -751,11 +717,11 @@ struct iris {
    RULE 1, for a call that either works or does not:
        0 means the call did nothing. Non-zero means it worked.
    That covers iris_record, iris_train, the delete functions, iris_load,
-   iris_save, iris_size, iris_train_begin and iris_migrate_scaling. Nothing to
-   look up: zero is bad. iris_record returns the new demonstration's
-   identifier on success, which is naturally non-zero because identifiers start
-   at 1 -- so it obeys the rule AND hands you the number you need later to
-   delete or re-map that specific take.
+   iris_save, iris_size and iris_train_begin. Nothing to look up: zero is bad.
+   iris_record returns the new demonstration's identifier on success, which is
+   naturally non-zero because identifiers start at 1 -- so it obeys the rule
+   AND hands you the number you need later to delete or re-map that specific
+   take.
 
    RULE 2, for a call that returns a MEASUREMENT you asked for:
        the measurement on success, -1 on refusal.
@@ -946,9 +912,6 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
 
   k->n_ex = 0; k->next_id = 1;
   k->lr = 0.10f; k->momentum = 0.85f; k->l2 = 0.0f;
-  /* A FRESH instrument is a v3 instrument: inputs in [-1,+1]. Only iris_load
-     of a v1/v2 file moves it back, and only for that instrument. */
-  k->in_center = 1;
   for (int i = 0; i < cap; ++i) k->ex_res[i] = 0.0f;
   k->res_epochs = 0;
   k->tr_done = 0; k->tr_ceiling = 0; k->tr_running = 0; k->tr_ref = 0.0f;
@@ -1289,32 +1252,22 @@ IRIS_API void iris_fit_ranges(iris *k) { if (!k) return;
   }
 }
 
-/* THE INPUT SCALING. Two of them, chosen per instrument by k->in_center,
-   which iris_load sets from the file version. See the field's comment in
-   struct iris for the measurement and the citation; see PART 9 for what
-   happens to a saved instrument if the [0,1] branch is ever deleted. */
+/* THE INPUT SCALING: each input maps to [-1,+1] across the range the
+   demonstrations covered.
+
+   Centred, not [0,1], because inputs that are all positive give every
+   first-layer weight of a hidden unit a gradient of the same sign, so the
+   descent has to zig-zag toward the answer (LeCun et al. 1998, "Efficient
+   BackProp", section 4.3). [-1,+1] is also what Weka's MultilayerPerceptron
+   does with normalizeAttributes on, the setting Wekinator ships. Measured on
+   the 8-output reference task at 600 epochs, against the same network fed
+   [0,1] inputs: training mean squared error 5.94e-4 -> 6.38e-5 (9.3x), grid
+   root-mean-square error 0.0129 -> 0.0084 (1.54x). */
 IRIS_API float iris_norm_in (const iris *k, int i, float v) { if (!k || i < 0 || i >= k->n_in) return 0.0f;
   const float t = (v - k->in_lo[i]) / (k->in_hi[i] - k->in_lo[i]);
-  return k->in_center ? (2.0f * t - 1.0f) : t;
+  return 2.0f * t - 1.0f;
 }
 
-/* Put this instrument back on the v0.1/v0.2 input scaling.
-
-   WHO ACTUALLY CALLS THIS: tests/audit.c only, to hold the pre-v3 training
-   path against its frozen hash. iris_load does NOT call it — iris_load sets
-   k->in_center directly from the file's version word (see PART 9). An earlier
-   version of this comment said otherwise and was wrong; adr/0018 repeats the
-   same error and is also wrong. PART 9's comment is the correct account.
-
-   Nothing else should call it: changing the scaling under trained weights
-   changes what those weights mean. */
-IRIS_API void iris_internal_set_legacy_norm(iris *k, int legacy) { if (!k) return; k->in_center = legacy ? 0 : 1; }
-
-/* WHICH SCALING IS THIS INSTRUMENT ON. 0 = the legacy [0,1] of v1/v2 files,
-   1 = the centred [-1,+1] of v3. A UI needs this to tell the musician why an
-   instrument restored from an old file did not get the better fit, and to
-   offer iris_migrate_scaling. */
-IRIS_API int iris_input_scaling(const iris *k) { if (!k) return 0; return k->in_center ? 1 : 0; }
 IRIS_API float iris_norm_out(const iris *k, int i, float v) { if (!k || i < 0 || i >= k->n_out) return 0.0f;
   float t = (v - k->out_lo[i]) / (k->out_hi[i] - k->out_lo[i]);
   return IRIS_OUT_LO + t * (IRIS_OUT_HI - IRIS_OUT_LO);
@@ -2420,7 +2373,7 @@ IRIS_API int iris_worst_example_id(const iris *k, float *margin) { if (!k) retur
    history (records / corrections / deletes, in order) reproduces the
    instrument bit-exactly, because the corrections draw from the same rng
    stream. The seed ALONE now reproduces only a from-scratch retrain — a
-   saved file carries the live rng state (format v2, below) so a reloaded
+   saved file carries the live rng state (PART 9) so a reloaded
    instrument continues exactly where it left off.
 
    Zeroing the velocity at entry is what makes that cheap: it turns the
@@ -2468,10 +2421,10 @@ IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->see
    Two findings make it work in float32 on this network:
 
    GAIN. The backprop init (1/sqrt(n_in)) relies on training to grow the
-   weights. Frozen, at that scale, tanh of a [0,1] input barely bends -- the
-   random features are nearly collinear and the normal matrix is numerically
-   rank-deficient. The frozen layer is drawn at 2/sqrt(n_in) instead, wide
-   enough that the features have real capacity.
+   weights. Frozen, at that scale, tanh of a normalised input barely bends --
+   the random features are nearly collinear and the normal matrix is
+   numerically rank-deficient. The frozen layer is drawn at 2/sqrt(n_in)
+   instead, wide enough that the features have real capacity.
 
    PROVENANCE OF THE 2/sqrt(n_in), settled 2026-08-30. This comment used to
    cite a measured optimum from a sweep that was not in the tree, and then said
@@ -2800,53 +2753,27 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
    Magic number and version go first so that a file from 2026 can still be
    recognised — or politely refused — in 2036.
 
-   FORMAT v2 is format v1 plus ONE uint32 — the live rng state — inserted
-   right after the 8-word header, so that save/load is transparent to the
-   correction chain rather than quietly forking it.
-   (docs/adr/0006-format-v2-one-word-v1-loader-permanent.md)
+   THE LAYOUT. Formats 5 and 6 are byte-for-byte the same; the version word
+   alone says whether the instrument had been fitted when it was saved.
 
-   FORMAT v3 changes NO BYTES AT ALL. Same header, same nine words, same
-   payload, same length. What it changes is the MEANING of the weights: a v3
-   file was trained with inputs scaled to [-1,+1], a v1 or v2 file with
-   inputs scaled to [0,1]. The version number is the only thing that can tell
-   them apart, so the version number is what selects the scaling — not a
-   build flag, not a global, not the caller. iris_load sets k->in_center from
-   h[1] and nothing else ever writes it except iris_init (which starts every
-   fresh instrument at v3) and iris_internal_set_legacy_norm (which the audit uses to
-   hold the pre-v3 training path against its frozen hash).
+     9 words   magic, version, n_in, n_hid, n_out, n_ex, seed, next_id, and
+               the live random-number state -- so that a reloaded
+               instrument's next correction is the one the saved instrument
+               would have made, rather than a fork of it
+     floats    w1, b1, w2, b2, in_lo, in_hi, out_lo, out_hi, then every
+               demonstration (n_in inputs followed by n_out outputs)
+     int32s    one identifier per demonstration
+     1 float   the weight decay behind the smoothing setting (PART 3)
+     1 word    a checksum over every byte before it (see iris_crc32)
 
-   WHAT BREAKS IF SOMEONE DELETES THE v1/v2 PATH, and it is not a load
-   failure — that would be survivable, because it is loud. It is SILENT: the
-   file still loads, every field arrives intact, the instrument reports itself
-   trained and plays, and every prediction is wrong, because weights fitted
-   against inputs in [0,1] are being fed inputs in [-1,+1]. The mapping is not
-   degraded, it is a DIFFERENT mapping. The musician loads the instrument they
-   practised for a year, hears something else, and has nothing to point at —
-   the exact failure Fiebrink & Sonami (NIME 2020) describe. Audit check 11
-   loads a frozen v1 file and compares the prediction BITS, so deleting the
-   branch fails in one run.
-
-   THE v1 LOADER IS PERMANENT. Old files load byte-identically to the old
-   behaviour, forever. Fiebrink & Sonami's users lost technique to
-   retraining; a frozen old model is sacred and this loader is the vow.
+   Inputs are always scaled to [-1,+1] (PART 5), so a stored weight means one
+   thing only and the file does not need to say which scaling it was fitted
+   under.
    ========================================================================== */
 
 #define IRIS_MAGIC 0x4B455745u  /* "EWEK" */
-/* WHICH OF YOUR FILES ARE PROTECTED, AND WHICH ARE NOT.
-
-   Formats 4 and 5 carry a checksum: every single-bit change anywhere in the
-   file is detected and the load is refused. Formats 1, 2 and 3 predate it and
-   never will, because adding one would break the promise that an old
-   instrument keeps loading for ever.
-
-   That has a consequence worth stating plainly rather than leaving for someone
-   to discover. An instrument restored from a v1 or v2 file keeps the legacy
-   [0,1] input scaling for life -- its weights mean nothing else -- and so it
-   saves itself as v2, which has no checksum. From then on THAT instrument's
-   files have no corruption detection, permanently, and nothing announces it.
-
-   iris_input_scaling(k) reports the same bit: 0 means legacy [0,1], which
-   means its files are unchecksummed. A caller that cares should ask.
+/* EVERY FILE THIS LOADER READS CARRIES A CHECKSUM: every single-bit change
+   anywhere in the file is detected and the load is refused.
 
    AND ONE THING THE CHECKSUM CANNOT DO, WHICH IS WORTH SAYING HERE RATHER THAN
    LEAVING TO BE DISCOVERED. iris_save copies every field into your buffer and
@@ -2865,9 +2792,9 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
    checksum that passes is exactly the evidence that would persuade you the
    file is fine. Do not save an instrument that something else may be touching.
    There is no allocation and no lock in this library to do it for you. */
-/* FORMAT v6 CHANGES NO BYTES AT ALL -- the same trick v3 used. Same header,
-   same payload, same length, same checksum. What it changes is one fact ABOUT
-   the instrument: v6 means "this was saved before it was ever fitted".
+/* FORMAT v6 CHANGES NO BYTES AT ALL. Same header, same payload, same length,
+   same checksum as v5. What it changes is one fact ABOUT the instrument: v6
+   means "this was saved before it was ever fitted".
 
    Why it has to exist. iris_load used to set trained = 1 unconditionally, so
    record-save-load-play on a never-trained instrument ran the forward pass over
@@ -2877,14 +2804,9 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
    walked around it. Nothing in the bytes could tell the two apart, because
    untrained weights are just weights.
 
-   v1-v5 keep meaning exactly what they always meant -- fitted -- so no file
-   ever written changes meaning, which is the promise adr/0006 makes. */
+   v5 means fitted. */
 #define IRIS_FORMAT_V6 6u       /* v5 layout, and it was NOT fitted when saved */
-#define IRIS_FORMAT 5u          /* what iris_save writes: v4 + the smoothing word */
-#define IRIS_FORMAT_V4 4u       /* v3 layout + a CRC32, no smoothing. Forever.  */
-#define IRIS_FORMAT_V3 3u       /* v3 without the CRC. Readable forever.        */
-#define IRIS_FORMAT_V2 2u       /* v1 + the rng word; inputs in [0,1]. Forever. */
-#define IRIS_FORMAT_V1 1u       /* the original; inputs in [0,1]. Forever.      */
+#define IRIS_FORMAT 5u          /* what iris_save writes when trained */
 
 /* CRC32 (IEEE 802.3), computed a bit at a time so there is no 1 KB table to
    carry onto a microcontroller. A few KB takes microseconds and it only runs on
@@ -2896,7 +2818,7 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
    match, and the instrument loads and plays something subtly wrong with nothing
    reporting anything. That is the worst failure this library can have, because
    the musician will assume they mis-trained it. A checksum turns it into a
-   refusal. Added in format v4, 2026-08-27. */
+   refusal. */
 IRIS_API uint32_t iris_crc32(const void *buf, size_t n) {
   const unsigned char *p = (const unsigned char *)buf;
   uint32_t c = 0xFFFFFFFFu;
@@ -2909,58 +2831,33 @@ IRIS_API uint32_t iris_crc32(const void *buf, size_t n) {
 }
 
 IRIS_API size_t iris_save_size(const iris *k) { if (!k) return 0;
-  return sizeof(uint32_t) * 9                      /* v2/v3: 8 header + rng.s */
+  return sizeof(uint32_t) * 9                      /* 8 header words + rng.s */
        + sizeof(float) * (size_t)( k->n_hid*k->n_in + k->n_hid
                                  + k->n_out*k->n_hid + k->n_out
                                  + 2*(k->n_in + k->n_out)
                                  + (size_t)k->n_ex * (k->n_in + k->n_out) )
        + sizeof(int32_t) * (size_t)k->n_ex
-       /* v5 adds one float: the smoothing setting. docs/FREEZE.md called this
-          "cheap today and impossible tomorrow" -- the weights round-trip
-          perfectly without it, so nothing sounds wrong until the musician
-          retrains a loaded instrument and gets a different one for a reason
-          the file never recorded. Legacy [0,1] instruments still save as v2
-          and carry neither this nor the checksum. */
-       + (k->in_center ? sizeof(float) : 0u)
-       /* The trailing CRC32, on v4 only. A legacy [0,1] instrument saves as v2,
-          byte-for-byte as it always did — that promise is the reason the old
-          formats exist at all, and a checksum is not worth breaking it for. */
-       + (size_t)(k->in_center ? sizeof(uint32_t) : 0);
+       /* The smoothing setting. docs/FREEZE.md called this "cheap today and
+          impossible tomorrow" -- the weights round-trip perfectly without it,
+          so nothing sounds wrong until the musician retrains a loaded
+          instrument and gets a different one for a reason the file never
+          recorded. */
+       + sizeof(float)
+       + sizeof(uint32_t);                         /* the trailing checksum */
 }
 
 IRIS_API size_t iris_save(const iris *k, void *buf, size_t cap) { if (!k) return 0;
   size_t need = iris_save_size(k);
   if (!buf || cap < need) return 0;
   uint32_t *h = (uint32_t *)buf;
-  /* THE VERSION WORD DESCRIBES THE SCALING THE WEIGHTS WERE FITTED UNDER.
-     It is not a build stamp and it is not "the newest format we know" — it
-     is the only thing in the file that can tell a reader whether these
-     weights expect inputs in [0,1] or in [-1,+1], and iris_load believes it
-     absolutely. So it is written from k->in_center, never from a constant.
-
-     Stamping IRIS_FORMAT unconditionally is the bug this comment exists to
-     prevent, and it was a real one: an instrument restored from a v1 file
-     keeps the legacy scaling (it must — its weights mean nothing else), and
-     if the musician then re-trains and saves, a constant here would label
-     [0,1] weights as v3. The next load would read that label, switch to
-     [-1,+1], and play a DIFFERENT INSTRUMENT out of a file that round-trips
-     every weight bit perfectly. Measured before the fix: 0.427 of full scale
-     on a 441-probe grid, from the ordinary open / train / save the app does
-     in core/store.c. Loud failures are survivable; this one was silent.
-
-     v2 and v3 have identical layouts, so this costs nothing but the truth. */
   h[0] = IRIS_MAGIC;
-  /* v6 when this instrument has never been fitted -- same bytes, and the
-     loader will not claim it is trained. The legacy [0,1] branch has no such
-     marker and cannot gain one without breaking v2's meaning, so an unfitted
-     legacy save still loads as trained; that combination needs an instrument
-     restored from a pre-release v1/v2 file and then never trained. */
-  h[1] = k->in_center ? (k->trained ? IRIS_FORMAT : IRIS_FORMAT_V6)
-                      : IRIS_FORMAT_V2;
+  /* v6 when `trained` is clear -- same bytes, and the loader will not claim
+     the instrument is trained. */
+  h[1] = k->trained ? IRIS_FORMAT : IRIS_FORMAT_V6;
   h[2] = (uint32_t)k->n_in; h[3] = (uint32_t)k->n_hid;
   h[4] = (uint32_t)k->n_out; h[5] = (uint32_t)k->n_ex;
   h[6] = k->seed; h[7] = (uint32_t)k->next_id;
-  h[8] = k->rng.s;                                  /* the one v2 word */
+  h[8] = k->rng.s;                                  /* the live rng state */
   float *f = (float *)(h + 9);
   #define IRIS_PUT(src, n) do { for (int _i = 0; _i < (n); ++_i) *f++ = (src)[_i]; } while (0)
   IRIS_PUT(k->w1, k->n_hid*k->n_in);  IRIS_PUT(k->b1, k->n_hid);
@@ -2972,23 +2869,12 @@ IRIS_API size_t iris_save(const iris *k, void *buf, size_t cap) { if (!k) return
   int32_t *ids = (int32_t *)f;
   for (int i = 0; i < k->n_ex; ++i) ids[i] = k->ex_id[i];
   {
-    /* CRC over everything written so far. v2 files (legacy [0,1] instruments)
-       carry no CRC and never will — they are preserved exactly as they were. */
-    /* Write a tail ONLY when iris_save_size budgeted for one. It used to write
-       four bytes unconditionally while iris_save_size added them only for the
-       new input scaling -- so a legacy instrument, the kind restored from a v1
-       or v2 file and which the format promise says keeps that scaling for
-       life, overran the caller's buffer by four bytes. A heap overflow through
-       the public interface, silent on a chip with no memory protection, and
-       made likelier by iris_suggest_smoothing asking the caller for exactly
-       this size. v2 carries neither the smoothing word nor the checksum. */
-    if (h[1] == IRIS_FORMAT || h[1] == IRIS_FORMAT_V6) {
-      uint32_t *tail = (uint32_t *)(ids + k->n_ex);
-      float *sm = (float *)tail;
-      *sm = k->l2;
-      tail = (uint32_t *)(sm + 1);
-      *tail = iris_crc32(buf, need - sizeof(uint32_t));
-    }
+    /* The smoothing word, then the checksum over everything written so far. */
+    uint32_t *tail = (uint32_t *)(ids + k->n_ex);
+    float *sm = (float *)tail;
+    *sm = k->l2;
+    tail = (uint32_t *)(sm + 1);
+    *tail = iris_crc32(buf, need - sizeof(uint32_t));
   }
   return need;
 }
@@ -2997,61 +2883,23 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
   if (!buf || bytes < sizeof(uint32_t) * 8) return 0;
   const uint32_t *h = (const uint32_t *)buf;
   if (h[0] != IRIS_MAGIC) return 0;
-  if (h[1] != IRIS_FORMAT_V1 && h[1] != IRIS_FORMAT_V2 &&
-      h[1] != IRIS_FORMAT_V3 && h[1] != IRIS_FORMAT_V4 &&
-      h[1] != IRIS_FORMAT && h[1] != IRIS_FORMAT_V6) {
+  if (h[1] != IRIS_FORMAT && h[1] != IRIS_FORMAT_V6) {
     k->status = IRIS_NAN_TRAPPED; return 0; }
 
-  /* VERIFY THE CHECKSUM before trusting a single weight. Only v4 carries one;
-     v1/v2/v3 predate it and load unchecked, which is the price of the promise
-     that an old instrument keeps working forever. A mismatch means the file is
-     damaged — refuse it rather than play weights that will be subtly wrong with
-     nothing reporting anything. */
-  if (h[1] == IRIS_FORMAT || h[1] == IRIS_FORMAT_V6 || h[1] == IRIS_FORMAT_V4) {
-    /* No bounds test here: the function refuses anything under 8 words at
-       entry, so bytes >= 32 and the 4-byte trailer is always present. cppcheck
-       and an independent audit both flagged the removed test as dead. */
-    {
-      const unsigned char *b8 = (const unsigned char *)buf;
-      uint32_t stored;
-      const unsigned char *tp = b8 + bytes - sizeof(uint32_t);
-      int i; stored = 0u;
-      for (i = 0; i < 4; ++i) stored |= (uint32_t)tp[i] << (8 * i);
-      if (iris_crc32(buf, bytes - sizeof(uint32_t)) != stored) return 0;
-    }
-  }
-  /* THE ONE HOLE THE LENGTH CHECK BELOW CANNOT CLOSE ON ITS OWN.
-     A v5 file has 8 bytes of trailing overhead a v1 file does not (the
-     smoothing word and the checksum), and each extra example costs
-     (n_in + n_out + 1) floats. So a v5 file with E examples is the same LENGTH
-     as a v1 file with E+d examples exactly when 4*d*(n_in+n_out+1) == 8, i.e.
-     d == 1 and n_in + n_out == 2. On a 1-input/1-output instrument -- the
-     smallest legal shape, and a plausible first one -- flipping the format word
-     from 5 to 1 and incrementing n_ex is TWO bits, and it opts the file out of
-     its own checksum with a length that still adds up. Found by exhaustive
-     search: exactly 1 accepted pair out of 2,507,680.
-
-     Since a v1/v2/v3 file can never be verified, the only way to close this is
-     to refuse the ambiguity itself. Any shape with n_in + n_out > 2 is
-     unaffected, which is every shape anyone has actually saved. */
-  /* v1 ONLY. The first version of this refused v2 and v3 as well, and that was
-     over-broad in a way that broke the format promise: a v5 file is 208+12E
-     bytes at this shape and a v1 file is 196+12E', which collide at E'=E+1 --
-     but v2 and v3 are 200+12E', needing 12(E'-E)==8, which has no integer
-     solution at any shape or count. They could never be confused with a v5
-     file, so refusing them closed nothing and cost something real: a 1x1
-     instrument on the legacy scaling saves as v2, and THE SAME BUILD COULD NOT
-     LOAD WHAT IT HAD JUST WRITTEN (measured: 260 bytes out, iris_load 0).
-     That is the population adr/0006's promise exists for. */
-  if (h[1] == IRIS_FORMAT_V1 && (k->n_in + k->n_out) == 2) {
-    k->status = IRIS_NAN_TRAPPED;
-    return 0;
-  }
-
+  /* VERIFY THE CHECKSUM before trusting a single weight. A mismatch means the
+     file is damaged -- refuse it rather than play weights that will be subtly
+     wrong with nothing reporting anything.
+     No bounds test here: the function refuses anything under 8 words at
+     entry, so bytes >= 32 and the 4-byte trailer is always present. */
   {
-    const int has_rng = (h[1] != IRIS_FORMAT_V1);
-    if (has_rng && bytes < sizeof(uint32_t) * 9) return 0;
+    const unsigned char *b8 = (const unsigned char *)buf;
+    uint32_t stored;
+    const unsigned char *tp = b8 + bytes - sizeof(uint32_t);
+    int i; stored = 0u;
+    for (i = 0; i < 4; ++i) stored |= (uint32_t)tp[i] << (8 * i);
+    if (iris_crc32(buf, bytes - sizeof(uint32_t)) != stored) return 0;
   }
+  if (bytes < sizeof(uint32_t) * 9) return 0;
   if ((int)h[2] != k->n_in || (int)h[3] != k->n_hid || (int)h[4] != k->n_out) return 0;
   /* n_ex is validated UNSIGNED: a corrupted high byte makes (int)h[5]
      negative, which sails under a signed "> cap" check and loads an
@@ -3062,43 +2910,24 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
      header read kilobytes past the caller's buffer and loaded garbage —
      silently. Compute what this header promises and refuse anything short. */
   {
-    const size_t hdr  = sizeof(uint32_t) * (h[1] == IRIS_FORMAT_V1 ? 8 : 9);
+    const size_t hdr  = sizeof(uint32_t) * 9;
     const size_t nex  = (size_t)h[5];
     const size_t body = sizeof(float) * ( (size_t)k->n_hid*k->n_in + k->n_hid
                                         + (size_t)k->n_out*k->n_hid + k->n_out
                                         + 2u*((size_t)k->n_in + k->n_out)
                                         + nex * ((size_t)k->n_in + k->n_out) )
                       + sizeof(int32_t) * nex
-                      + ((h[1] == IRIS_FORMAT || h[1] == IRIS_FORMAT_V6)
-                           ? sizeof(float) : 0u)                        /* smoothing */
-                      + ((h[1] == IRIS_FORMAT || h[1] == IRIS_FORMAT_V6
-                          || h[1] == IRIS_FORMAT_V4)
-                           ? sizeof(uint32_t) : 0u);                 /* checksum */
+                      + sizeof(float)                         /* smoothing */
+                      + sizeof(uint32_t);                     /* checksum */
 
-    /* EXACTLY, not at least. The checksum is what makes a corrupted file
-       refusable -- but the checksum is only consulted for v4 and v5, and which
-       one you get is decided by the version word, which is itself four
-       unprotected bytes. Flip one bit there and a v5 file claims to be a v1,
-       skips its own verification, and loads: measured, exactly one accepted
-       corruption in 4,608 single-bit flips, playing 1.000 where it should have
-       played 0.376, with a healthy status.
-
-       Length closes it without touching the format. Each version has a
-       different total for the same shape -- v1 is a word shorter than v2, v4
-       adds the checksum, v5 adds the smoothing word too -- so a file whose
-       label and length disagree is corrupt whatever else is true of it. */
+    /* EXACTLY, not at least. The checksum covers whatever length the caller
+       passes, so it cannot notice a file that is longer or shorter than its
+       own header describes; the length can. */
     if (bytes != hdr + body) return 0;
   }
   k->n_ex = (int32_t)h[5]; k->seed = h[6]; k->next_id = (int32_t)h[7];
-  if (h[1] != IRIS_FORMAT_V1) k->rng.s = h[8] ? h[8] : (k->seed ? k->seed : 1u);
-  else                      k->rng.s = k->seed ? k->seed : 1u;  /* v1: old behaviour, untouched */
-  /* THE INPUT SCALING TRAVELS WITH THE FILE. v1 and v2 were written by builds
-     that scaled inputs to [0,1]; their weights only mean anything against
-     that scaling, so that is the scaling they get, for ever. v3 onwards is
-     [-1,+1]. Both branches are live in every build — see the header comment
-     for what silently breaks if one is removed. */
-  k->in_center = (h[1] == IRIS_FORMAT_V1 || h[1] == IRIS_FORMAT_V2) ? 0 : 1;
-  const float *f = (const float *)(h + (h[1] == IRIS_FORMAT_V1 ? 8 : 9));
+  k->rng.s = h[8] ? h[8] : (k->seed ? k->seed : 1u);
+  const float *f = (const float *)(h + 9);
   #define IRIS_GET(dst, n) do { for (int _i = 0; _i < (n); ++_i) (dst)[_i] = *f++; } while (0)
   IRIS_GET(k->w1, k->n_hid*k->n_in);  IRIS_GET(k->b1, k->n_hid);
   IRIS_GET(k->w2, k->n_out*k->n_hid); IRIS_GET(k->b2, k->n_out);
@@ -3126,23 +2955,15 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
     if (k->out_hi[i] - k->out_lo[i] < w) k->out_hi[i] = k->out_lo[i] + w;
   }
 
-  /* THE SMOOTHING SETTING TRAVELS WITH THE FILE, from v5 onward. Older formats
-     never recorded it, so an instrument restored from one gets the default of
-     0 -- which is what it always got, and is the honest answer: the file does
-     not know. Its weights are unaffected either way; the setting only matters
-     the moment somebody retrains. */
-  if (h[1] == IRIS_FORMAT || h[1] == IRIS_FORMAT_V6) {
-    const float *sm = (const float *)(ids + k->n_ex);
-    k->l2 = iris_clampf(*sm, 0.0f, 0.3f);
-  } else {
-    k->l2 = 0.0f;
-  }
+  /* THE SMOOTHING SETTING TRAVELS WITH THE FILE. The weights do not depend
+     on it; it matters the moment somebody retrains. */
+  { const float *sm = (const float *)(ids + k->n_ex);
+    k->l2 = iris_clampf(*sm, 0.0f, 0.3f); }
 
   /* v6 says this instrument was saved before it was ever fitted, so do not
-     claim it is. Every other format means fitted, which is what they have
-     always meant. Without this the loader walked around iris_predict's
-     unfitted guard: record, save, load, play, and the forward pass ran over
-     random weights while the status read healthy. */
+     claim it is; v5 means fitted. Without this the loader walked around
+     iris_predict's unfitted guard: record, save, load, play, and the forward
+     pass ran over random weights while the status read healthy. */
   { const int was_fit = (h[1] != IRIS_FORMAT_V6);
     k->trained = was_fit;
     /* AND `fitted` TOO, which is the one iris_predict actually guards on.
@@ -3180,50 +3001,6 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
   for (int i = 0; i < k->cap; ++i) k->ex_res[i] = 0.0f;
   k->res_epochs = 0;
   k->tr_done = 0; k->tr_ceiling = 0; k->tr_running = 0; k->tr_ref = 0.0f;
-  return 1;
-}
-
-/* THE ONLY WAY AN OLD INSTRUMENT EVER CHANGES SCALING, AND THE CALLER HAS TO
-   ASK FOR IT BY NAME.
-
-   A v1/v2 instrument keeps the legacy [0,1] scaling for as long as it exists,
-   including across re-training and re-saving, because its weights mean
-   nothing else and iris_save now labels it honestly as v2. That is the safe
-   default and it is the right one. But it leaves an old instrument stuck on
-   the worse-conditioned fit for ever, and silently declining to improve is
-   its own kind of dishonesty.
-
-   So: this. It throws the old weights away and re-fits the SAME stored
-   demonstrations under the centred scaling — the musician's recorded
-   gestures are raw sensor values in their own units and mean exactly the
-   same thing under either scaling, which is why the re-fit is legitimate.
-   What comes out is a v3 instrument that saves as v3.
-
-   ⚠️ NO PRODUCTION CALLER. This comment used to claim an application already
-   depended on it. Nothing does: the only callers are tests/audit.c. Keep the
-   function -- a v1 or v2 file in the wild will need it -- but do not cite a
-   dependency that does not exist.
-
-   It is a NEW FIT, not a conversion: predictions move by about the fit error
-   (measured 0.0447 worst-case on the audit's reference instrument, check 30).
-   The musician must be told that and must choose it — hence a function they
-   call, not something iris_load does behind their back. Fiebrink & Sonami's
-   users lost technique to retraining they did not ask for.
-
-   Returns 1 if the instrument was migrated, 0 if there was nothing to do
-   (already centred, or no demonstrations to re-fit from). */
-IRIS_API int iris_migrate_scaling(iris *k) { if (!k) return 0;
-  if (k->in_center) return 0;          /* already on the new scaling */
-  if (k->n_ex <= 0) return 0;          /* nothing to re-fit from */
-  k->in_center = 1;
-  iris_reseed(k, k->seed);               /* a fit from a defined start */
-  /* The re-fit can fail -- a stuck divergence, or a not-a-number that came in
-     through iris_load from an old file. Returning 1 anyway told the caller
-     their instrument had been migrated when what they actually had was an
-     instrument on the new scaling with weights that never converged to it,
-     which is worse than not migrating. Report the truth; iris_get_status says
-     which failure it was. */
-  if (iris_train_converge(k, 0, 0, 0) < 0.0f) return 0;
   return 1;
 }
 
@@ -3271,8 +3048,8 @@ IRIS_API int iris_migrate_scaling(iris *k) { if (!k) return 0;
    Java binary itself has not been run against this code, and the label
    stays this honest until it has).
 
-   Every v1 file ever saved gains this mode with zero migration: the
-   examples and ranges are already in the file. That was the point of the
+   Every saved instrument can play this way with nothing added to its file:
+   the examples and ranges are already in it. That was the point of the
    format. Algorithm choice is a runtime call in v0.2; a persisted
    algorithm-selector tag waits for the next format bump.
    ========================================================================== */
