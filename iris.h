@@ -589,8 +589,12 @@
 
    With the same compiler and flags iris_internal_train_run, the deepest
    frame on the record/train/predict path, falls from 284 bytes to 124, a
-   saving of 160, and iris_predict from 158 to 46; a caller into which the
-   compiler inlines that whole path measures 280 and 120. These are
+   saving of 160, and iris_predict from 158 to 46. Inlined into its caller
+   the path measures a little differently: in a sketch-like file that
+   records, trains and predicts, built with -ffunction-sections, iris_train
+   (which takes the training run inline) measures 280 bytes and 120 as GNU C
+   (-std=gnu11), and as C99 main takes the whole path and measures 290 and
+   130. These are
    single frames as the compiler reports them, not a measured run-time
    stack depth. The only rule is that the maxima must be at least the n_in,
    n_out and n_hid you pass to iris_init, which iris_init checks.
