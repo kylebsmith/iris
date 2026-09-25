@@ -22,8 +22,8 @@
 static unsigned char arena[IRIS_ARENA(NI, 64, NO, CAP)];
 
 static void truth(float x, float y, float *o) {
-  o[0] = 0.5f + 0.45f * iris_tanh(3.0f * (x - 0.5f));
-  o[1] = 0.5f + 0.40f * iris_tanh(2.5f * (y - 0.5f) * (x + 0.3f));
+  o[0] = 0.5f + 0.45f * iris_internal_tanh(3.0f * (x - 0.5f));
+  o[1] = 0.5f + 0.40f * iris_internal_tanh(2.5f * (y - 0.5f) * (x + 0.3f));
   o[2] = 0.2f + 0.6f  * (x * y);
 }
 
@@ -73,7 +73,7 @@ static void reroll_spread(iris *k, int n_ex, int epochs,
     float worst = 0.0f;
     for (int i = 0; i < SEEDS; ++i) for (int j = i + 1; j < SEEDS; ++j)
       for (int o = 0; o < NO; ++o) {
-        float d = iris_absf(pred[i][p][o] - pred[j][p][o]);
+        float d = iris_internal_absf(pred[i][p][o] - pred[j][p][o]);
         if (d > worst) worst = d;
       }
     if (nov[p] < 0.15f) { sn += worst; cn++; }

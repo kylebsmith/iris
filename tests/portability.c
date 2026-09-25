@@ -6,9 +6,9 @@
          tests/portability.c -lm && ./build/portability
    The exit status is non-zero if any check fails.
 
-   iris_sqrt is integer arithmetic (PART 1 of iris.h explains the method) so
-   that no build needs the C library's sqrtf. It must still be the square
-   root every processor computes, bit for bit, or an instrument would
+   iris_internal_sqrt is integer arithmetic (PART 1 of iris.h explains the
+   method) so that no build needs the C library's sqrtf. It must still be the
+   square root every processor computes, bit for bit, or an instrument would
    change when its square roots moved into the header. The reference is the
    host's sqrtf, which IEEE 754 requires to be correctly rounded.
    tools/sqrt_exhaustive.c compares all 2^32 inputs and takes about a minute;
@@ -38,13 +38,13 @@ static uint32_t bits_of(float f) { uint32_t u; memcpy(&u, &f, sizeof u); return 
 static float float_of(uint32_t u) { float f; memcpy(&f, &u, sizeof f); return f; }
 static int is_nan_bits(uint32_t u) { return (u & 0x7FFFFFFFu) > 0x7F800000u; }
 
-/* iris_sqrt against the host for one input; counts and remembers the first
-   disagreement so the report can name it */
+/* iris_internal_sqrt against the host for one input; counts and remembers
+   the first disagreement so the report can name it */
 static unsigned long long compared, wrong;
 static uint32_t first_wrong;
 static void against_host(uint32_t u) {
   volatile float x = float_of(u);   /* computed at run time, on this input */
-  const uint32_t hw = bits_of(sqrtf(x)), got = bits_of(iris_sqrt(x));
+  const uint32_t hw = bits_of(sqrtf(x)), got = bits_of(iris_internal_sqrt(x));
   if (hw != got && wrong++ == 0) first_wrong = u;
   compared++;
 }
@@ -60,7 +60,7 @@ static void report(const char *name) {
 }
 
 int main(void) {
-  printf("iris_sqrt is the host's correctly rounded square root\n");
+  printf("iris_internal_sqrt is the host's correctly rounded square root\n");
 
   { /* ten million seeded bit patterns, sign bit clear: every exponent, every
        subnormal range and the positive NaNs, in proportion to their count */
@@ -96,7 +96,7 @@ int main(void) {
   { /* perfect squares: the remainder comes out zero, the root must be exact */
     int exact = 1;
     for (int n = 1; n <= 4096; ++n) {
-      const float r = iris_sqrt((float)(n * n));
+      const float r = iris_internal_sqrt((float)(n * n));
       if (r != (float)n) exact = 0;
       against_host(bits_of((float)(n * n)));
     }
@@ -108,8 +108,8 @@ int main(void) {
     int same = 1;
     for (int n = 1; n <= 4096; ++n) {
       volatile float x = (float)n;
-      if (bits_of(1.0f / iris_sqrt(x)) != bits_of(1.0f / sqrtf(x))) same = 0;
-      if (bits_of(2.0f / iris_sqrt(x)) != bits_of(2.0f / sqrtf(x))) same = 0;
+      if (bits_of(1.0f / iris_internal_sqrt(x)) != bits_of(1.0f / sqrtf(x))) same = 0;
+      if (bits_of(2.0f / iris_internal_sqrt(x)) != bits_of(2.0f / sqrtf(x))) same = 0;
       against_host(bits_of(x));
     }
     check("1/sqrt(n) and 2/sqrt(n), n = 1..4096, as the host", same, "");
@@ -121,19 +121,19 @@ int main(void) {
     char detail[96];
     uint32_t r;
 
-    r = bits_of(iris_sqrt(0.0f));
+    r = bits_of(iris_internal_sqrt(0.0f));
     snprintf(detail, sizeof detail, "0x%08X", (unsigned)r);
     check("sqrt(+0) = +0", r == 0x00000000u, detail);
 
-    r = bits_of(iris_sqrt(-0.0f));
+    r = bits_of(iris_internal_sqrt(-0.0f));
     snprintf(detail, sizeof detail, "0x%08X", (unsigned)r);
     check("sqrt(-0) = -0", r == 0x80000000u, detail);
 
-    r = bits_of(iris_sqrt(inf));
+    r = bits_of(iris_internal_sqrt(inf));
     snprintf(detail, sizeof detail, "0x%08X", (unsigned)r);
     check("sqrt(+infinity) = +infinity", r == 0x7F800000u, detail);
 
-    r = bits_of(iris_sqrt(-inf));
+    r = bits_of(iris_internal_sqrt(-inf));
     snprintf(detail, sizeof detail, "0x%08X", (unsigned)r);
     check("sqrt(-infinity) is NaN", is_nan_bits(r), detail);
 
@@ -141,11 +141,11 @@ int main(void) {
       static const float neg[] = { -1.0f, -4.0f, -1e-45f, -3.4028235e38f, -0.5f };
       int all = 1;
       for (size_t i = 0; i < sizeof neg / sizeof neg[0]; ++i)
-        if (!is_nan_bits(bits_of(iris_sqrt(neg[i])))) all = 0;
+        if (!is_nan_bits(bits_of(iris_internal_sqrt(neg[i])))) all = 0;
       check("sqrt(negative number) is NaN", all, "-1, -4, -1e-45, -largest, -0.5");
     }
 
-    r = bits_of(iris_sqrt(qnan));
+    r = bits_of(iris_internal_sqrt(qnan));
     snprintf(detail, sizeof detail, "0x%08X from 0x%08X", (unsigned)r, (unsigned)bits_of(qnan));
     check("sqrt(quiet NaN) is that NaN", r == bits_of(qnan), detail);
 
@@ -154,7 +154,7 @@ int main(void) {
       static const uint32_t in[] = { 0x7F800001u, 0x7FA00000u, 0xFF800001u, 0xFFC00123u };
       int all = 1;
       for (size_t i = 0; i < sizeof in / sizeof in[0]; ++i) {
-        if (bits_of(iris_sqrt(float_of(in[i]))) != (in[i] | 0x00400000u)) all = 0;
+        if (bits_of(iris_internal_sqrt(float_of(in[i]))) != (in[i] | 0x00400000u)) all = 0;
         against_host(in[i]);
       }
       check("sqrt(NaN) returns it quieted, payload kept", all,

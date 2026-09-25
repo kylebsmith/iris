@@ -75,7 +75,7 @@ static uint32_t rd32(const uint8_t *b, size_t off) {
 static void wr32(uint8_t *b, size_t off, uint32_t v) {
   for (int i = 0; i < 4; ++i) b[off + (size_t)i] = (uint8_t)(v >> (8 * i));
 }
-static void fix_crc(uint8_t *file, size_t n) { if (n >= 4) wr32(file, n - 4, iris_crc32(file, n - 4)); }
+static void fix_crc(uint8_t *file, size_t n) { if (n >= 4) wr32(file, n - 4, iris_internal_crc32(file, n - 4)); }
 static size_t nweights(shape s) { return (size_t)s.nh * s.ni + s.nh + (size_t)s.no * s.nh + s.no; }
 static size_t file_bytes(shape s, uint32_t n_ex) {
   return 48 + 4 * (nweights(s) + 2 * (size_t)(s.ni + s.no) + (size_t)n_ex * (size_t)(s.ni + s.no + 1)) + 4;
@@ -140,7 +140,7 @@ int LLVMFuzzerInitialize(int *argc, char ***argv) {
 /* ------------------------------------------------ this file's copy of the rules
    Checked against the LOADED instrument, so a rule dropped from the library's
    validator (which iris_save shares) is still caught here. */
-static int bad(float x) { return iris_isbad(x); }
+static int bad(float x) { return iris_internal_isbad(x); }
 static const char *rules_broken(const iris *k) {
   if (k->trained && !k->fitted) return "trained without fitted";
   if (k->seed == 0u) return "seed 0";
@@ -214,7 +214,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   /* Two rules the loaded instrument cannot show: the checksum is not kept,
      and iris_set_smoothing clamps whatever the smoothing field held, or
      ignores it if it is not a number. So these two are read from the file. */
-  if (iris_crc32(file, n - 4) != rd32(file, n - 4)) fail("accepted a file with a wrong checksum");
+  if (iris_internal_crc32(file, n - 4) != rd32(file, n - 4)) fail("accepted a file with a wrong checksum");
   { union { uint32_t u; float f; } sm; sm.u = rd32(file, 44);
     if (bad(sm.f) || sm.f < 0.0f || sm.f > 1.0f) fail("accepted a file that breaks a rule: smoothing field"); }
   if (!at_rest(k)) fail("velocities, ledger or training progress survived the load");

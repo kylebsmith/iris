@@ -84,7 +84,7 @@ int main(void){
                         100.0f,1.0f};                    /* in_hi: channel 0 zero-width */
       for(int j=0;j<4;j++){ union{float f; uint32_t u;} w; w.f=v[j];
         for(int b=0;b<4;b++) f[off+4*(size_t)j+(size_t)b]=(unsigned char)(w.u>>(8*b)); }
-      uint32_t c=iris_crc32(f,n-sizeof(uint32_t));
+      uint32_t c=iris_internal_crc32(f,n-sizeof(uint32_t));
       for(int b=0;b<4;b++) f[n-4+(size_t)b]=(unsigned char)(c>>(8*b)); }
     static unsigned char C2[IRIS_ARENA(2,12,3,64)];
     iris *k2=iris_init(C2,sizeof C2,2,12,3,64,7);
@@ -204,10 +204,10 @@ int main(void){
   /* K — a public function must not read past its own dimensions. */
   { iris *k=iris_init(A,sizeof A,2,12,3,64,1);
     float in[2]={0.1f,0.2f}, o[3]={0.4f,0.5f,0.6f};
-    iris_record(k,in,o); iris_fit_ranges(k);
-    float bad_in  = iris_norm_in (k, 200, 0.5f);
-    float bad_out = iris_norm_out(k, 200, 0.5f);
-    float bad_den = iris_denorm_out(k, 200, 0.5f);
+    iris_record(k,in,o); iris_internal_fit_ranges(k);
+    float bad_in  = iris_internal_norm_in (k, 200, 0.5f);
+    float bad_out = iris_internal_norm_out(k, 200, 0.5f);
+    float bad_den = iris_internal_denorm_out(k, 200, 0.5f);
     snprintf(d,sizeof d,"norm_in %.1f  norm_out %.1f  denorm_out %.1f (index 200 of 2)",
              bad_in, bad_out, bad_den);
     check("K out-of-range channel index is refused, not computed",

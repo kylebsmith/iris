@@ -87,11 +87,11 @@ EXPORT float iris_js_similarity(int idx) {
   iris_get(g_k, idx, gin, gout);
   float d = 0.0f;
   for (int i = 0; i < g_ni; ++i) {
-    float t = iris_norm_in(g_k, i, gin[i]) - iris_norm_in(g_k, i, s_in[i]);
+    float t = iris_internal_norm_in(g_k, i, gin[i]) - iris_internal_norm_in(g_k, i, s_in[i]);
     d += t * t;
   }
-  d = iris_sqrt(d) / (iris_sqrt((float)g_ni) * 0.5f);
-  return iris_clampf(1.0f - d, 0.0f, 1.0f);
+  d = iris_internal_sqrt(d) / (iris_internal_sqrt((float)g_ni) * 0.5f);
+  return iris_internal_clampf(1.0f - d, 0.0f, 1.0f);
 }
 
 EXPORT int   iris_js_record(void)        { return g_k ? iris_record(g_k, s_in, s_out) : -1; }
@@ -140,10 +140,10 @@ EXPORT int iris_js_status(void) { return g_k ? (int)iris_get_status(g_k) : -1; }
 static float s_cand[NO];
 EXPORT float *iris_js_cand_ptr(void) { return s_cand; }
 EXPORT void iris_js_cand(unsigned int cand_n) {
-  iris_rng r;
+  iris_internal_rng r;
   r.s = (g_k ? iris_seed(g_k) : 1u) ^ (0x9E3779B9u * cand_n);
   for (int d = 0; d < NO; ++d)
-    s_cand[d] = 0.1f + 0.8f * (float)iris_rand_u32(&r) / 4294967296.0f;
+    s_cand[d] = 0.1f + 0.8f * (float)iris_internal_rand_u32(&r) / 4294967296.0f;
 }
 
 EXPORT void  iris_js_predict(void)       { if (g_k) iris_predict(g_k, s_in, s_out); }

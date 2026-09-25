@@ -138,14 +138,14 @@ static void chain_correction(int i, float *nin, float *nout) {
   float y = 0.05f + 0.73f * (float)(i + 1);  y -= (float)(int)y;
   nin[0] = x; nin[1] = y;
   truth(x, y, nout);
-  nout[i % NO] = iris_clampf(nout[i % NO] + 0.15f, 0.0f, 1.0f);
+  nout[i % NO] = iris_internal_clampf(nout[i % NO] + 0.15f, 0.0f, 1.0f);
 }
 
 /* A made-up but musically-shaped target: three sound parameters that vary
    smoothly and differently across a 2-D gesture space. */
 static void truth(float x, float y, float *o) {
-  o[0] = 0.5f + 0.45f * iris_tanh(3.0f * (x - 0.5f));
-  o[1] = 0.5f + 0.40f * iris_tanh(2.5f * (y - 0.5f) * (x + 0.3f));
+  o[0] = 0.5f + 0.45f * iris_internal_tanh(3.0f * (x - 0.5f));
+  o[1] = 0.5f + 0.40f * iris_internal_tanh(2.5f * (y - 0.5f) * (x + 0.3f));
   o[2] = 0.2f + 0.6f  * (x * y);
 }
 
@@ -172,7 +172,7 @@ static float recall_rmse_of(iris *k) {
     iris_predict(k, in, got);
     for (int o = 0; o < NO; ++o) { float e = got[o] - want[o]; se += e * e; c++; }
   }
-  return iris_sqrt(se / (float)c);
+  return iris_internal_sqrt(se / (float)c);
 }
 static float grid_rmse_of(iris *k) {
   float se = 0.0f; int c = 0;
@@ -182,7 +182,7 @@ static float grid_rmse_of(iris *k) {
     iris_predict(k, in, got);
     for (int o = 0; o < NO; ++o) { float e = got[o] - want[o]; se += e * e; c++; }
   }
-  return iris_sqrt(se / (float)c);
+  return iris_internal_sqrt(se / (float)c);
 }
 
 /* the six hostile scenarios from the E1 campaign, for check 21 -------------- */
@@ -238,7 +238,7 @@ static int nan_scan_of(iris *k) {
     float in[NI] = { a / 20.0f, a / 20.0f }, got[NO];
     iris_predict(k, in, got);
     for (int o = 0; o < NO; ++o)
-      if (iris_isbad(got[o]) || got[o] > 1e30f || got[o] < -1e30f) bad++;
+      if (iris_internal_isbad(got[o]) || got[o] > 1e30f || got[o] < -1e30f) bad++;
   }
   return bad;
 }
@@ -278,7 +278,7 @@ static void reroll_spread(iris *k, float *near_spread, int *near_n,
     float worst = 0.0f;
     for (int i = 0; i < RR_SEEDS; ++i) for (int j = i + 1; j < RR_SEEDS; ++j)
       for (int o = 0; o < NO; ++o) {
-        float d = iris_absf(rr_pred[i][p][o] - rr_pred[j][p][o]);
+        float d = iris_internal_absf(rr_pred[i][p][o] - rr_pred[j][p][o]);
         if (d > worst) worst = d;
       }
     if      (nov < RR_NEAR_BAND) { sn += worst; cn++; }
@@ -342,7 +342,7 @@ int main(void) {
       iris_get(k, i, in, want);
       iris_predict(k, in, got);
       for (int o = 0; o < NO; ++o) {
-        float e = iris_absf(got[o] - want[o]);
+        float e = iris_internal_absf(got[o] - want[o]);
         if (e > worst) worst = e;
         sum += e;
       }
@@ -360,7 +360,7 @@ int main(void) {
       truth(in[0], in[1], want);
       iris_predict(k, in, got);
       for (int o = 0; o < NO; ++o) {
-        float e = iris_absf(got[o] - want[o]);
+        float e = iris_internal_absf(got[o] - want[o]);
         if (e > worst) worst = e;
         sum += e; n++;
       }
@@ -387,7 +387,7 @@ int main(void) {
       float in[NI] = { a / 20.0f, b / 20.0f }, o1[NO], o2[NO];
       iris_predict(k, in, o1); iris_predict(k2, in, o2);
       for (int o = 0; o < NO; ++o) {
-        float d = iris_absf(o1[o] - o2[o]);
+        float d = iris_internal_absf(o1[o] - o2[o]);
         if (d > biggest) biggest = d;
         if (o1[o] != o2[o]) identical = 0;
       }
@@ -566,7 +566,7 @@ int main(void) {
     float nan_in[NI] = { 0.0f / 0.0f, 0.4f }, got[NO];
     iris_predict(k, nan_in, got);
     int finite = 1;
-    for (int o = 0; o < NO; ++o) if (iris_isbad(got[o])) finite = 0;
+    for (int o = 0; o < NO; ++o) if (iris_internal_isbad(got[o])) finite = 0;
     int reported = (iris_get_status(k) == IRIS_NAN_TRAPPED);
 
     /* (c) hostile lr/momentum sweep on check-9 data + a 1e6 INPUT outlier */
@@ -594,7 +594,7 @@ int main(void) {
       for (int a = -5; a <= 25; ++a) for (int b = -5; b <= 25; ++b) {
         float in[NI] = { a / 20.0f, b / 20.0f }, o2[NO];
         iris_predict(k, in, o2);
-        for (int o = 0; o < NO; ++o) if (iris_isbad(o2[o])) sweep_nan++;
+        for (int o = 0; o < NO; ++o) if (iris_internal_isbad(o2[o])) sweep_nan++;
       }
       /* at the wild settings, if anything went wrong it must have been
          reported on the train call where it happened — never later */
@@ -687,7 +687,7 @@ int main(void) {
     }
     float cin[NI] = { 0.62f, 0.31f }, cout[NO];
     truth(cin[0], cin[1], cout);
-    cout[0] = iris_clampf(cout[0] + 0.15f, 0.0f, 1.0f);
+    cout[0] = iris_internal_clampf(cout[0] + 0.15f, 0.0f, 1.0f);
     iris_record(a, cin, cout);
     iris_correct(a, 20);
     /* fit across all 21 examples */
@@ -698,7 +698,7 @@ int main(void) {
       iris_predict(a, in, got);
       for (int o = 0; o < NO; ++o) { float d = got[o] - want[o]; acc += d * d; }
     }
-    float tr = iris_sqrt(acc / (float)(iris_count(a) * NO));
+    float tr = iris_internal_sqrt(acc / (float)(iris_count(a) * NO));
     /* drift far from the correction: mean |delta| over probes > 0.25 away */
     p = 0;
     float sf = 0.0f; int cf = 0;
@@ -706,9 +706,9 @@ int main(void) {
       float in[NI] = { x / 20.0f, y / 20.0f };
       iris_predict(a, in, snapB[p]);
       float dx = in[0] - cin[0], dy = in[1] - cin[1];
-      if (iris_sqrt(dx * dx + dy * dy) < 0.25f) continue;
+      if (iris_internal_sqrt(dx * dx + dy * dy) < 0.25f) continue;
       float m = 0.0f;
-      for (int o = 0; o < NO; ++o) m += iris_absf(snapA[p][o] - snapB[p][o]);
+      for (int o = 0; o < NO; ++o) m += iris_internal_absf(snapA[p][o] - snapB[p][o]);
       sf += m / NO; cf++;
     }
     float drift = cf ? sf / (float)cf : -1.0f;
@@ -760,7 +760,7 @@ int main(void) {
         float worst = 0.0f;
         for (int i = 0; i < RR_SEEDS; ++i) for (int j = i + 1; j < RR_SEEDS; ++j)
           for (int o = 0; o < NO; ++o) {
-            float d = iris_absf(rr_pred[i][p][o] - rr_pred[j][p][o]);
+            float d = iris_internal_absf(rr_pred[i][p][o] - rr_pred[j][p][o]);
             if (d > worst) worst = d;
           }
         if      (nov < RR_NEAR_BAND) { sn += worst; cn++; }
@@ -839,18 +839,18 @@ int main(void) {
     iris *a = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 1);
     for (int c = 0; c < 4; ++c) {
       load_examples(a, counts[c]);
-      iris_fit_ranges(a);
+      iris_internal_fit_ranges(a);
       for (int n = 0; n < iris_count(a); ++n) {
         float in[NI], want[NO], got[NO];
         iris_get(a, n, in, want);
         iris_knn_predict(a, in, got, 1);
         for (int o = 0; o < NO; ++o) {
-          float e = iris_absf(got[o] - want[o]);
+          float e = iris_internal_absf(got[o] - want[o]);
           if (e > worst) worst = e;
         }
         iris_knn_predict(a, in, got, 3);
         for (int o = 0; o < NO; ++o) {
-          float e = iris_absf(got[o] - want[o]);
+          float e = iris_internal_absf(got[o] - want[o]);
           if (e > worst) worst = e;
         }
         if (iris_classify_1nn(a, in, got) < 0
@@ -878,7 +878,7 @@ int main(void) {
       if (i % 5 == 0) { out[0] = 1e6f; out[1] = -1e6f; }
       iris_record(a, in, out);
     }
-    iris_fit_ranges(a);
+    iris_internal_fit_ranges(a);
     float lo[NO], hi[NO];
     for (int o = 0; o < NO; ++o) { lo[o] = 1e30f; hi[o] = -1e30f; }
     for (int n = 0; n < iris_count(a); ++n) {
@@ -895,7 +895,7 @@ int main(void) {
       iris_knn_predict(a, in, g3, 3);
       iris_classify_1nn(a, in, g1);
       for (int o = 0; o < NO; ++o) {
-        if (iris_isbad(g3[o]) || iris_isbad(g1[o])) bad++;
+        if (iris_internal_isbad(g3[o]) || iris_internal_isbad(g1[o])) bad++;
         if (g3[o] < lo[o] || g3[o] > hi[o]) escaped++;
         if (g1[o] < lo[o] || g1[o] > hi[o]) escaped++;
       }
@@ -905,14 +905,14 @@ int main(void) {
     float din[NI] = { 0.3f, 0.6f };
     float o0[NO] = { 0.0f, 0.2f, 0.2f }, o1[NO] = { 1.0f, 0.8f, 0.8f };
     iris_record(a, din, o0); iris_record(a, din, o1);
-    iris_fit_ranges(a);
+    iris_internal_fit_ranges(a);
     float avg[NO];
     iris_knn_predict(a, din, avg, 3);
-    int avg_ok = !iris_isbad(avg[0]) && avg[0] >= 0.0f && avg[0] <= 1.0f;
+    int avg_ok = !iris_internal_isbad(avg[0]) && avg[0] >= 0.0f && avg[0] <= 1.0f;
     /* seed independence: two instruments, different seeds, same examples */
     iris *b2 = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 987654);
-    load_examples(a, 20); iris_fit_ranges(a);
-    load_examples(b2, 20); iris_fit_ranges(b2);
+    load_examples(a, 20); iris_internal_fit_ranges(a);
+    load_examples(b2, 20); iris_internal_fit_ranges(b2);
     int seedfree = 1;
     for (int x = 0; x <= 20 && seedfree; ++x) for (int y = 0; y <= 20; ++y) {
       float in[NI] = { x / 20.0f, y / 20.0f }, p[NO], q[NO];
@@ -941,10 +941,10 @@ int main(void) {
     iris_clear(a);
     const double cx[3] = { 0.2, 0.8, 0.5 }, cy[3] = { 0.25, 0.3, 0.85 };
     int rn = 0;
-    iris_rng rr = { 20260821u };
+    iris_internal_rng rr = { 20260821u };
     for (int cls = 0; cls < 3; ++cls) {
       for (int j = 0; j < 4; ++j) {
-        float dx = iris_rand_sym(&rr) * 0.12f, dy = iris_rand_sym(&rr) * 0.12f;
+        float dx = iris_internal_rand_sym(&rr) * 0.12f, dy = iris_internal_rand_sym(&rr) * 0.12f;
         float in[NI] = { (float)cx[cls] + dx, (float)cy[cls] + dy };
         float out[NO] = { (float)cls, 0.0f, 0.0f };
         iris_record(a, in, out);
@@ -952,7 +952,7 @@ int main(void) {
         ref_cls[rn] = cls; rn++;
       }
     }
-    iris_fit_ranges(a);
+    iris_internal_fit_ranges(a);
     for (int i = 0; i < NI; ++i) { ref_lo[i] = 1e300; ref_hi[i] = -1e300; }
     for (int r = 0; r < rn; ++r)
       for (int i = 0; i < NI; ++i) {
@@ -988,7 +988,7 @@ int main(void) {
     float tb[NI] = { 0.75f, 0.5f }, ob[NO] = { 1.0f, 0.0f, 0.0f };
     int id_first = iris_record(t, ta, oa);
     iris_record(t, tb, ob);
-    iris_fit_ranges(t);
+    iris_internal_fit_ranges(t);
     float probe[NI] = { 0.5f, 0.5f }, pout[NO];
     int winner = iris_classify_1nn(t, probe, pout);
     ok("1-NN: agrees with the Weka-IBk reference", disagree == 0
@@ -1011,26 +1011,26 @@ int main(void) {
       float in[NI] = { u, 1.0f - u }, out[NO] = { u, 0.5f, 1.0f - u };
       iris_record(a, in, out);
     }
-    iris_fit_ranges(a);
+    iris_internal_fit_ranges(a);
     float nanq[NI] = { 0.0f/0.0f, 0.5f }, out[NO];
     int bad = 0;
     iris_knn_predict(a, nanq, out, 3);
-    for (int o = 0; o < NO; ++o) if (iris_isbad(out[o])) bad++;
+    for (int o = 0; o < NO; ++o) if (iris_internal_isbad(out[o])) bad++;
     int st_nanq = (a->status == 2);            /* IRIS_NAN_TRAPPED */
     float farq[NI] = { 1e38f, 1e38f };
     iris_knn_predict(a, farq, out, 3);
-    for (int o = 0; o < NO; ++o) if (iris_isbad(out[o])) bad++;
+    for (int o = 0; o < NO; ++o) if (iris_internal_isbad(out[o])) bad++;
     /* poison one example's OUTPUT, then query sanely through both paths */
     a->status = 0;
     a->ex[2 * (NI + NO) + NI + 1] = 0.0f/0.0f;
     float sane[NI] = { 0.3f, 0.7f };
     iris_knn_predict(a, sane, out, 8);           /* k=8: poisoned row included */
-    for (int o = 0; o < NO; ++o) if (iris_isbad(out[o])) bad++;
+    for (int o = 0; o < NO; ++o) if (iris_internal_isbad(out[o])) bad++;
     int st_pois = (a->status == 2);
     float nearpois[NI] = { 0.3f, 0.7f };       /* 1nn onto the poisoned row */
     a->status = 0;
     iris_classify_1nn(a, nearpois, out);
-    for (int o = 0; o < NO; ++o) if (iris_isbad(out[o])) bad++;
+    for (int o = 0; o < NO; ++o) if (iris_internal_isbad(out[o])) bad++;
     ok("samplers survive hostile queries and poisoned outputs",
        bad == 0 && st_nanq && st_pois,
        "NaN query, 1e38 query, NaN-output row via k-NN and 1-NN: "
@@ -1062,12 +1062,12 @@ int main(void) {
        decide, not the checksum. */
     /* (a) n_ex high byte -> huge/negative count */
     memcpy(evil, blob, n); evil[31] = 0xFF;
-    { uint32_t c = iris_crc32(evil, n - 4);
+    { uint32_t c = iris_internal_crc32(evil, n - 4);
       for (int i = 0; i < 4; ++i) evil[n - 4 + i] = (unsigned char)(c >> (8 * i)); }
     total++; if (!iris_load(a, evil, n)) refuse++;
     /* (b) plausible n_ex, truncated body */
     memcpy(evil, blob, n); evil[28] = (unsigned char)200;
-    { uint32_t c = iris_crc32(evil, n - 4);
+    { uint32_t c = iris_internal_crc32(evil, n - 4);
       for (int i = 0; i < 4; ++i) evil[n - 4 + i] = (unsigned char)(c >> (8 * i)); }
     total++; if (!iris_load(a, evil, n)) refuse++;
     /* (c) body physically cut short */
@@ -1173,7 +1173,7 @@ int main(void) {
         float u = (float)((i * 7919) % 97) / 97.0f, v = (float)((i * 6131) % 89) / 89.0f;
         float in[NI] = { u, v }, out[NO];
         truth(u, v, out);
-        if (i == bad) out[i % NO] = iris_clampf(out[i % NO] + 0.20f, 0.0f, 1.0f);
+        if (i == bad) out[i % NO] = iris_internal_clampf(out[i % NO] + 0.20f, 0.0f, 1.0f);
         iris_record(kd, in, out);
       }
       iris_train_converge(kd, 0, 0, 0);
@@ -1423,7 +1423,7 @@ int main(void) {
     const int kex[2] = { 64, 256 };
     for (int e = 0; e < 2; ++e) {
       load_examples(k, kex[e]);
-      iris_fit_ranges(k);
+      iris_internal_fit_ranges(k);
       double t1 = now_ms();
       for (int i = 0; i < 200000; ++i) {
         in[0] = (float)(i & 1023) / 1023.0f;

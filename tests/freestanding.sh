@@ -33,9 +33,9 @@
 #   -fno-tree-loop-distribute-patterns  GCC only: GCC replaces the same
 #                   loops with memset, memcpy and memmove even under
 #                   -ffreestanding (-O2, -O3 and -Os).
-# -fno-math-errno is NOT needed. iris_sqrt computes square roots in integer
-# arithmetic, so there is no square root instruction for the compiler to back
-# up with a call to sqrtf when it must set errno.
+# -fno-math-errno is NOT needed. iris_internal_sqrt computes square roots in
+# integer arithmetic, so there is no square root instruction for the compiler
+# to back up with a call to sqrtf when it must set errno.
 # Section 3 below rebuilds without each flag and prints what comes back, so
 # a flag that stops being needed shows up (as a NOTE, not a failure).
 #
@@ -89,18 +89,18 @@ extern "C"
 #endif
 int iris_probe(void);
 int iris_probe(void) {
-  iris_rng r;
+  iris_internal_rng r;
   float margin = 0.0f, lo = 0.0f, hi = 0.0f, inv[NI];
   int i;
   size_t n;
   iris *k, *k2;
   r.s = 12345u;
-  SINKI += iris_isbad(SINKF);
-  SINKF += iris_tanh(SINKF) + iris_sigmoid(SINKF) + iris_sqrt(SINKF)
-         + iris_absf(SINKF) + iris_clampf(SINKF, -1.0f, 1.0f)
-         + iris_artanh(SINKF) + iris_logit(SINKF);
-  SINKU += iris_rand_u32(&r);
-  SINKF += iris_rand_sym(&r);
+  SINKI += iris_internal_isbad(SINKF);
+  SINKF += iris_internal_tanh(SINKF) + iris_internal_sigmoid(SINKF) + iris_internal_sqrt(SINKF)
+         + iris_internal_absf(SINKF) + iris_internal_clampf(SINKF, -1.0f, 1.0f)
+         + iris_internal_artanh(SINKF) + iris_internal_logit(SINKF);
+  SINKU += iris_internal_rand_u32(&r);
+  SINKF += iris_internal_rand_sym(&r);
   SINKU += (unsigned long)iris_size(NI, NH, NO, CAP);
   k = iris_init(mem, sizeof mem, NI, NH, NO, CAP, 1234u);
   if (!k) return 1;
@@ -109,7 +109,7 @@ int iris_probe(void) {
   iris_internal_set_learning(k, 0.1f, 0.85f);
   iris_internal_default_learning(k);
   iris_internal_set_l2(k, 0.0f);
-  SINKF += iris_get_l2(k);
+  SINKF += iris_internal_get_l2(k);
   iris_set_smoothing(k, 0.0f);
   SINKF += iris_get_smoothing(k);
   for (i = 0; i < CAP; ++i) {
@@ -120,12 +120,12 @@ int iris_probe(void) {
   }
   SINKI += iris_count(k) + iris_capacity(k);
   SINKI += iris_index_of(k, 3) + iris_id_at(k, 2) + iris_get(k, 1, in, out);
-  iris_fit_ranges(k);
-  SINKF += iris_norm_in(k, 0, SINKF) + iris_norm_out(k, 0, SINKF)
-         + iris_denorm_out(k, 0, SINKF);
+  iris_internal_fit_ranges(k);
+  SINKF += iris_internal_norm_in(k, 0, SINKF) + iris_internal_norm_out(k, 0, SINKF)
+         + iris_internal_denorm_out(k, 0, SINKF);
   xn[0] = SINKF; xn[1] = SINKF;
-  iris_forward_norm(k, xn);
-  SINKI += iris_shape_fits(k);
+  iris_internal_forward_norm(k, xn);
+  SINKI += iris_internal_shape_fits(k);
   SINKF += iris_train_epochs(k, 50);
   SINKF += iris_train_converge(k, 4000, progress, 0);
   SINKI += iris_train(k);
@@ -137,7 +137,7 @@ int iris_probe(void) {
   iris_predict(k, in, out);
   SINKF += out[0] + iris_novelty(k, in) + iris_example_stress(k, 0);
   SINKI += iris_worst_example(k, &margin) + iris_worst_example_id(k, &margin);
-  iris_zero_velocity(k);
+  iris_internal_zero_velocity(k);
   SINKF += iris_correct(k, 0);
   SINKI += iris_is_trained(k);
   SINKF += iris_last_error(k);
@@ -149,7 +149,7 @@ int iris_probe(void) {
   iris_internal_begin_session(k, 2000);
   SINKF += iris_suggest_smoothing(k, scratch, sizeof scratch);
   SINKI += iris_train_elm(k, 1e-4f, scratch, sizeof scratch);
-  SINKI += iris_train_elm_ex(k, 1e-4f, 2.0f, 2.0f, scratch, sizeof scratch);
+  SINKI += iris_internal_train_elm_ex(k, 1e-4f, 2.0f, 2.0f, scratch, sizeof scratch);
   SINKI += iris_retrain_elm_new(k, 7u, 1e-4f, scratch, sizeof scratch);
   iris_knn_predict(k, in, out, 3);
   SINKF += out[1];
@@ -161,7 +161,7 @@ int iris_probe(void) {
   SINKI += iris_internal_nearest(k, in);
   SINKU += (unsigned long)iris_save_size(k);
   n = iris_save(k, file, sizeof file);
-  SINKU += iris_crc32(file, n);
+  SINKU += iris_internal_crc32(file, n);
   SINKU += (unsigned long)iris_internal_file_bytes(k, 3u)
          + iris_internal_get_u32(file + 4);
   SINKI += iris_internal_file_ok(k, file, n) + iris_internal_range_ok(xn[0], xn[1], 1);

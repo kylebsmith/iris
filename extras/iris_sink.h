@@ -23,9 +23,10 @@
    example store, the network, normalisation, the save format — is already
    scale-free and stays that way.
 
-   This does NOT weaken iris_fit_ranges(). That function derives its ranges from
-   the examples actually recorded and is affine-invariant, so normalising
-   inside a port is a change of variable that leaves the trained model alone.
+   This does NOT weaken iris_internal_fit_ranges(). That function derives its
+   ranges from the examples actually recorded and is affine-invariant, so
+   normalising inside a port is a change of variable that leaves the trained
+   model alone.
 
    NaN and both infinities fail the same check. !(v >= 0 && v <= 1) is false
    for NaN and for +inf, and true-to-false for -inf, which is how they are

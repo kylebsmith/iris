@@ -90,8 +90,8 @@ run_mutation "drop the arena bound in iris_init"            's/if \(bytes < need
 # property this machine cannot exercise. Left annotated rather than removed so
 # the survivor count stays honest.
 run_mutation "ignore an unsizeable shape in iris_init"     's/if \(need == 0\) return 0;/;/'
-run_mutation "drop the not-a-number door check"             's/if \(iris_isbad\(in\[i\]\)\)/if (0)/'
-run_mutation "iris_isbad always says healthy"               's/return \(c\.u & 0x7F800000u\) == 0x7F800000u;/return 0;/'
+run_mutation "drop the not-a-number door check"             's/if \(iris_internal_isbad\(in\[i\]\)\)/if (0)/'
+run_mutation "iris_internal_isbad always says healthy"      's/return \(c\.u & 0x7F800000u\) == 0x7F800000u;/return 0;/'
 # EXPECTED SURVIVOR, kept deliberately. The trainer refills order[] at the start
 # of every run, so the init-time fill is unobservable -- verified over 300
 # randomised trials on dirty arenas under both sanitizers, identical result hash
@@ -103,8 +103,8 @@ run_mutation "remove the degenerate-range floor"            's/if \(k->in_hi\[i\
 
 echo
 echo "-- the file format --"
-run_mutation "skip the checksum on save"                    's/iris_internal_put_u32\(p, iris_crc32\(b, need - 4u\)\);/iris_internal_put_u32(p, 0u);/'
-run_mutation "skip checksum verification on load"           's/if \(iris_crc32\(b, bytes - 4u\) != iris_internal_get_u32\(b \+ bytes - 4u\)\) return 0;/;/'
+run_mutation "skip the checksum on save"                    's/iris_internal_put_u32\(p, iris_internal_crc32\(b, need - 4u\)\);/iris_internal_put_u32(p, 0u);/'
+run_mutation "skip checksum verification on load"           's/if \(iris_internal_crc32\(b, bytes - 4u\) != iris_internal_get_u32\(b \+ bytes - 4u\)\) return 0;/;/'
 run_mutation "stop writing the smoothing word"              's/iris_internal_put_f32\(b \+ 44, iris_get_smoothing\(k\)\);/iris_internal_put_f32(b + 44, 0.0f);/'
 
 echo

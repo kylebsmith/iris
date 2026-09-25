@@ -232,7 +232,7 @@ int main(void) {
     for (int q = 0; q <= 20; ++q) {
       float in[2] = { q / 20.0f, q / 20.0f }, o[2];
       iris_knn_predict(k, in, o, 2);
-      if (iris_isbad(o[0]) || o[0] > 3e38f || o[0] < -3e38f) bad++;
+      if (iris_internal_isbad(o[0]) || o[0] > 3e38f || o[0] < -3e38f) bad++;
     }
     const int status_far = (int)iris_get_status(k);
     k = iris_init(A, sizeof A, 2, 12, 2, 64, 1);
@@ -242,7 +242,7 @@ int main(void) {
     float m[2];
     iris_knn_predict(k, spot, m, 2);
     const float mean = 0.5f * y1[0] + 0.5f * y2[0];
-    const int mean_ok = iris_absf(m[0] - mean) <= 1e-6f * mean
+    const int mean_ok = iris_internal_absf(m[0] - mean) <= 1e-6f * mean
                      && iris_get_status(k) == IRIS_STATUS_OK;
     snprintf(d, sizeof d, "%d of 21 answers not finite or outside, status %d; "
              "1e30 and 2e30 blend to %g, status %d", bad, status_far,
@@ -292,9 +292,9 @@ int main(void) {
     iris_train(k);
     int nonzero = 0, touched = 0, large = 0;
     const float probe[4] = { 500.0f, 501.0f, 499.999f, -1e30f };
-    for (int j = 0; j < 4; ++j) if (iris_norm_in(k, 1, probe[j]) != 0.0f) nonzero++;
+    for (int j = 0; j < 4; ++j) if (iris_internal_norm_in(k, 1, probe[j]) != 0.0f) nonzero++;
     for (int h = 0; h < 12; ++h) if (k->w1[h * 2 + 1] != w0[h]) touched++;
-    for (int i = 0; i < 24; ++i) if (!(iris_absf(k->w1[i]) < 4.0f)) large++;
+    for (int i = 0; i < 24; ++i) if (!(iris_internal_absf(k->w1[i]) < 4.0f)) large++;
     snprintf(d, sizeof d, "normalised non-zero %d of 4, still weights moved %d of 12, "
              "|w1| >= 4: %d, width %g, status %d", nonzero, touched, large,
              (double)(k->in_hi[1] - k->in_lo[1]), (int)iris_get_status(k));
@@ -311,7 +311,7 @@ int main(void) {
     float a[2] = { 2e30f, -3.4028235e38f }, b[2] = { 3e30f, -1e38f };
     float oa[2] = { -3e30f, 1e38f }, ob[2] = { -2e30f, 3.4028235e38f };
     iris_record(k, a, oa); iris_record(k, b, ob);
-    iris_fit_ranges(k);
+    iris_internal_fit_ranges(k);
     const int in_ok = k->in_lo[0] == 2e30f && k->in_hi[0] == 3e30f
                    && k->in_lo[1] == -3.4028235e38f && k->in_hi[1] == -1e38f;
     const int out_ok = k->out_lo[0] == -3e30f && k->out_hi[0] == -2e30f
@@ -336,7 +336,7 @@ int main(void) {
       iris *k = iris_init(A, sizeof A, 2, 12, 2, 64, 1u);
       float a[2] = { 0.0f, c[j].lo }, b[2] = { 1.0f, c[j].hi }, o[2] = { 0.0f, 1.0f };
       iris_record(k, a, o); iris_record(k, b, o);
-      iris_fit_ranges(k);
+      iris_internal_fit_ranges(k);
       const int is_still = (k->in_hi[1] == k->in_lo[1]);
       if (is_still != c[j].still) wrong++;
     }
@@ -372,15 +372,15 @@ int main(void) {
       k->status = IRIS_STATUS_OK;
       iris_predict(k, in, o);
       if (iris_get_status(k) == IRIS_NAN_TRAPPED) reported++;
-      if (iris_isbad(o[0]) || iris_isbad(o[1])) finite = 0;
+      if (iris_internal_isbad(o[0]) || iris_internal_isbad(o[1])) finite = 0;
       k->status = IRIS_STATUS_OK;
       iris_knn_predict(k, in, o, 3);
       if (iris_get_status(k) == IRIS_NAN_TRAPPED) reported++;
-      if (iris_isbad(o[0]) || iris_isbad(o[1])) finite = 0;
+      if (iris_internal_isbad(o[0]) || iris_internal_isbad(o[1])) finite = 0;
       k->status = IRIS_STATUS_OK;
       iris_classify_1nn(k, in, o);
       if (iris_get_status(k) == IRIS_NAN_TRAPPED) reported++;
-      if (iris_isbad(o[0]) || iris_isbad(o[1])) finite = 0;
+      if (iris_internal_isbad(o[0]) || iris_internal_isbad(o[1])) finite = 0;
     }
     k->status = IRIS_STATUS_OK;
     snprintf(d, sizeof d, "%d of 6 reported, outputs finite %d", reported, finite);
@@ -408,7 +408,7 @@ int main(void) {
       float o[2];
       iris_predict(k, in, o);
       got[trainer] = o[0];
-      if (iris_absf(o[0] - 2.5f) < 0.25f && iris_absf(o[1] + 0.25f) < 0.125f) near_mean++;
+      if (iris_internal_absf(o[0] - 2.5f) < 0.25f && iris_internal_absf(o[1] + 0.25f) < 0.125f) near_mean++;
     }
     snprintf(d, sizeof d, "healthy %d of 2, trained %d of 2, near the mean %d of 2 "
              "(%.3f and %.3f, mean 2.5)", healthy, fitted, near_mean,
@@ -561,7 +561,7 @@ int main(void) {
     const int nn_ok = id > 0 && iris_get_status(k) == IRIS_STATUS_OK;
     k->status = IRIS_STATUS_OK;
     iris_knn_predict(k, far, o, 2);
-    const int knn_ok = iris_get_status(k) == IRIS_STATUS_OK && !iris_isbad(o[0]);
+    const int knn_ok = iris_get_status(k) == IRIS_STATUS_OK && !iris_internal_isbad(o[0]);
     const int del = iris_delete_nearest(k, far);
     float nanq[2] = { __builtin_nanf(""), 0.0f };
     const int del_nan = iris_delete_nearest(k, nanq);

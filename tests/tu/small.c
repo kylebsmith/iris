@@ -2,7 +2,7 @@
    small boards. Its copy of iris_predict declares float x[4]. It is handed an
    8-input instrument built by the other unit.
 
-   Before iris_shape_fits, this wrote 8 floats into that 4-float array:
+   Before iris_internal_shape_fits, this wrote 8 floats into that 4-float array:
    AddressSanitizer "stack-buffer-overflow, WRITE of size 4, [32,48) 'x.i'".
    The check iris.h names runs in the unit that CALLS iris_init -- the one with
    the large maxima -- so it passed and this unit corrupted its own stack. */

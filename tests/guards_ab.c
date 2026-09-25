@@ -24,8 +24,8 @@ static unsigned char arena[IRIS_ARENA(NI, NH, NO, CAP)];
 static unsigned char file[64 * 1024];
 
 static void truth(float x, float y, float *o) {
-  o[0] = 0.5f + 0.45f * iris_tanh(3.0f * (x - 0.5f));
-  o[1] = 0.5f + 0.40f * iris_tanh(2.5f * (y - 0.5f) * (x + 0.3f));
+  o[0] = 0.5f + 0.45f * iris_internal_tanh(3.0f * (x - 0.5f));
+  o[1] = 0.5f + 0.40f * iris_internal_tanh(2.5f * (y - 0.5f) * (x + 0.3f));
   o[2] = 0.2f + 0.6f  * (x * y);
 }
 

@@ -51,7 +51,7 @@ int main(void) {
     if (iris_save(0, B, sizeof B) != 0) bad++;
     if (iris_load(0, B, 8)     != 0)    bad++;
     if (iris_seed(0)           != 0u)   bad++;
-    if (iris_get_l2(0)         != 0.0f) bad++;
+    if (iris_internal_get_l2(0)         != 0.0f) bad++;
     if (iris_get_smoothing(0)  != 0.0f) bad++;
     if (iris_delete_nearest(0, in) != 0) bad++;
     if (iris_delete_last(0)    != 0)    bad++;
@@ -196,7 +196,7 @@ int main(void) {
     iris_train(k);
     int ok = iris_capacity(k) == 32 && iris_count(k) == 6
              && iris_seed(k) == 1234u
-             && iris_get_l2(k) > 0.0f && iris_get_smoothing(k) > 0.49f
+             && iris_internal_get_l2(k) > 0.0f && iris_get_smoothing(k) > 0.49f
              && iris_id_at(k, 0) == 1 && iris_index_of(k, 1) == 0
              && iris_is_trained(k) && iris_last_error(k) >= 0.0f;
     snprintf(d, sizeof d, "capacity %d, seed %u, smoothing %.2f",
@@ -205,19 +205,20 @@ int main(void) {
     check("every accessor answers correctly on a live instrument", ok, d); }
 
   /* ---- the NaN-through-a-clamp class ------------------------------------
-     iris_clampf is a ternary on two comparisons and every comparison with NaN
-     is false, so a NaN passes straight through a clamp. docs/FREEZE.md named
-     this mechanism and prescribed one iris_isbad at the top of the setters;
-     three instances were fixed and the setters were not. Before the fix:
+     iris_internal_clampf is a ternary on two comparisons and every
+     comparison with NaN is false, so a NaN passes straight through a clamp.
+     docs/FREEZE.md named this mechanism and prescribed one
+     iris_internal_isbad at the top of the setters; three instances were
+     fixed and the setters were not. Before the fix:
      iris_set_smoothing(NaN) left l2 = NaN with status 0, and iris_train then
      returned 1 -- "it worked" -- with iris_is_trained 0. */
   { float nan_v = 0.0f/0.0f, inf_v = 1.0f/0.0f;
     iris *k = filled(A, sizeof A, 6);
     iris_set_smoothing(k, nan_v);
-    int poisoned_nan = iris_isbad(iris_get_smoothing(k)) || iris_isbad(iris_get_l2(k));
+    int poisoned_nan = iris_internal_isbad(iris_get_smoothing(k)) || iris_internal_isbad(iris_internal_get_l2(k));
     iris *k2 = filled(B, sizeof B, 6);
     iris_set_smoothing(k2, inf_v);
-    int poisoned_inf = iris_isbad(iris_get_smoothing(k2)) || iris_isbad(iris_get_l2(k2));
+    int poisoned_inf = iris_internal_isbad(iris_get_smoothing(k2)) || iris_internal_isbad(iris_internal_get_l2(k2));
     /* and a good value must still get through */
     iris_set_smoothing(k, 0.5f);
     int good = iris_get_smoothing(k) > 0.49f && iris_get_smoothing(k) < 0.51f;

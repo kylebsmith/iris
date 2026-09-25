@@ -80,7 +80,7 @@ static void wr32(unsigned char *b, size_t off, uint32_t v) {
 static uint32_t fbits(float f) { union { float f; uint32_t u; } c; c.f = f; return c.u; }
 static float bitsf(uint32_t u) { union { float f; uint32_t u; } c; c.u = u; return c.f; }
 static void wrf(unsigned char *b, size_t off, float f) { wr32(b, off, fbits(f)); }
-static void fixcrc(unsigned char *b, size_t n) { wr32(b, n - 4, iris_crc32(b, n - 4)); }
+static void fixcrc(unsigned char *b, size_t n) { wr32(b, n - 4, iris_internal_crc32(b, n - 4)); }
 static void *xmalloc(size_t n) {
   void *p = malloc(n ? n : 1);
   if (!p) { printf("out of memory\n"); exit(2); }
@@ -555,7 +555,7 @@ static void after_load_at_rest(void) {
            (double)e, nw);
   check("after a load: velocities 0, ledger clear, progress reset, OK",
         dirty_v && dirty_l && dirty_t && ok && vel && led && prog && learn
-        && iris_get_status(b.k) == IRIS_STATUS_OK && !iris_isbad(e) && e >= 0.0f && e < 1.0f, d);
+        && iris_get_status(b.k) == IRIS_STATUS_OK && !iris_internal_isbad(e) && e >= 0.0f && e < 1.0f, d);
   free(f); drop(&a); drop(&b);
 }
 
@@ -731,9 +731,9 @@ static void alignment(void) {
 
 static void standard_checksum(void) {
   char d[120];
-  const uint32_t c = iris_crc32("123456789", 9);
+  const uint32_t c = iris_internal_crc32("123456789", 9);
   snprintf(d, sizeof d, "CRC-32 of \"123456789\" = 0x%08lX (want 0xCBF43926)", (unsigned long)c);
-  check("iris_crc32 is the standard CRC-32", c == 0xCBF43926u, d);
+  check("iris_internal_crc32 is the standard CRC-32", c == 0xCBF43926u, d);
 }
 
 static void small_unit(void) {

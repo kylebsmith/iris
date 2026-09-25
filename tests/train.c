@@ -50,7 +50,8 @@ static unsigned char SNAP[sizeof A], RA[sizeof A], RB[sizeof A];
 
 /* A repeatable demonstration generator: inputs from a small linear
    congruential sequence, outputs a smooth function of the inputs built from
-   iris_tanh, so every value is finite and every instrument is learnable. */
+   iris_internal_tanh, so every value is finite and every instrument is
+   learnable. */
 static unsigned long lcg = 1;
 static float lcg01(void) {
   lcg = lcg * 1103515245ul + 12345ul;
@@ -63,7 +64,7 @@ static void record_n(iris *k, int n, unsigned long seed) {
     float s = 0.0f;
     for (int i = 0; i < k->n_in; ++i) { in[i] = lcg01() * 10.0f - 3.0f; s += in[i] * (float)(i + 1); }
     for (int o = 0; o < k->n_out; ++o)
-      out[o] = 100.0f * (float)(o + 1) + 40.0f * iris_tanh(0.15f * s - 0.4f * (float)o);
+      out[o] = 100.0f * (float)(o + 1) + 40.0f * iris_internal_tanh(0.15f * s - 0.4f * (float)o);
     iris_record(k, in, out);
   }
 }
@@ -80,9 +81,9 @@ static void record_mixed(iris *k, int n, unsigned long seed, float amp, float sc
   for (int r = 0; r < n; ++r) {
     float in[2], out[3];
     in[0] = lcg01(); in[1] = lcg01();
-    out[0] = 0.5f + 0.3f * iris_tanh(2.0f * (in[0] - 0.5f)) + amp * noise();
+    out[0] = 0.5f + 0.3f * iris_internal_tanh(2.0f * (in[0] - 0.5f)) + amp * noise();
     out[1] = 0.4f + 0.3f * in[1] + amp * noise();
-    out[2] = (in[0] + in[1] > 1.0f ? 0.8f : 0.2f) + 0.2f * iris_tanh(6.0f * (in[0] - in[1]));
+    out[2] = (in[0] + in[1] > 1.0f ? 0.8f : 0.2f) + 0.2f * iris_internal_tanh(6.0f * (in[0] - in[1]));
     out[2] *= scale2;
     iris_record(k, in, out);
   }

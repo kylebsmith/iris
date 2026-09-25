@@ -115,7 +115,7 @@ static void record_recipe(iris *k, const struct recipe *r) {
       float s = 0.0f;
       for (int c = 0; c < r->ni; ++c)
         s += (float)(o + c + 1) * (r->kind == 1 && c == 0 ? in[c] / 4095.0f : in[c]);
-      out[o] = 0.5f + 0.4f * iris_tanh(s - 0.5f * (float)(r->ni));
+      out[o] = 0.5f + 0.4f * iris_internal_tanh(s - 0.5f * (float)(r->ni));
     }
     if (r->kind == 1) { out[0] = 20.0f + 19980.0f * out[0]; if (r->no > 1) out[1] *= 127.0f; }
     iris_record(k, in, out);
@@ -123,7 +123,7 @@ static void record_recipe(iris *k, const struct recipe *r) {
 }
 
 static int solve_recipe(iris *k, const struct recipe *r) {
-  return (r->gw > 0.0f) ? iris_train_elm_ex(k, r->lam0, r->gw, r->gb, scratch, sizeof scratch)
+  return (r->gw > 0.0f) ? iris_internal_train_elm_ex(k, r->lam0, r->gw, r->gb, scratch, sizeof scratch)
                         : iris_train_elm(k, r->lam0, scratch, sizeof scratch);
 }
 
@@ -137,10 +137,10 @@ static float gauss(void) { float s = 0.0f; for (int i = 0; i < 12; ++i) s += rnd
 static void shape_target(const float *in, float *out, int shape) {
   float a = in[0], b = in[1];
   switch (shape) {
-    case 0:  out[0] = 0.5f + 0.4f * iris_tanh(3.0f * (a - 0.5f));  out[1] = 0.5f + 0.3f * (a - b); break;
+    case 0:  out[0] = 0.5f + 0.4f * iris_internal_tanh(3.0f * (a - 0.5f));  out[1] = 0.5f + 0.3f * (a - b); break;
     case 1:  out[0] = (a > 0.5f) ? 0.85f : 0.15f;                   out[1] = 0.5f + 0.4f * b;       break;
     case 2:  out[0] = 0.1f + 0.8f * a * a;                          out[1] = 0.9f - 0.8f * b * b;   break;
-    default: out[0] = 0.5f + 0.2f * (iris_tanh(8.0f * (a - 0.3f)) - iris_tanh(8.0f * (a - 0.7f)));
+    default: out[0] = 0.5f + 0.2f * (iris_internal_tanh(8.0f * (a - 0.3f)) - iris_internal_tanh(8.0f * (a - 0.7f)));
              out[1] = 0.2f + 0.6f * a * b;                                                          break;
   }
 }
@@ -186,7 +186,7 @@ static int smooth_trial(int nex, float sigma, float smooth, int shape, uint32_t 
 static void ledger_truth(float x, float y, float *o) {
   for (int j = 0; j < 8; ++j) {
     float a = 0.7f + 0.3f * (float)j, b = 0.2f * (float)j;
-    o[j] = 0.5f + 0.4f * iris_tanh(a * (x - 0.5f) + (1.0f - 0.1f * (float)j) * (y - 0.5f) * (x + b));
+    o[j] = 0.5f + 0.4f * iris_internal_tanh(a * (x - 0.5f) + (1.0f - 0.1f * (float)j) * (y - 0.5f) * (x + b));
   }
 }
 static uint32_t xs = 1u;
@@ -233,7 +233,7 @@ static int measure(void) {
             double r, h;
             if (smooth_trial(exs[e], sig[g], sm[s], shape, sd * 7919u, &r, &h) >= 0) { rc += r; ho += h; n++; }
           }
-        printf("  %.4f | %.4f", (double)iris_sqrt((float)(rc / n)), (double)iris_sqrt((float)(ho / n)));
+        printf("  %.4f | %.4f", (double)iris_internal_sqrt((float)(rc / n)), (double)iris_internal_sqrt((float)(ho / n)));
       }
       printf("\n");
     }
@@ -343,7 +343,7 @@ int main(int argc, char **argv) {
     char which[64] = "";
     for (size_t a = 0; a < sizeof arg / sizeof arg[0]; ++a) {
       snap(k, IRIS_RIDGE_ESCALATED);
-      int r = iris_train_elm_ex(k, arg[a].lam0, arg[a].gw, arg[a].gb,
+      int r = iris_internal_train_elm_ex(k, arg[a].lam0, arg[a].gw, arg[a].gb,
                                 arg[a].use_null ? 0 : scratch, arg[a].bytes);
       cases++;
       if (!refused_cleanly(r)) { bad++; snprintf(which, sizeof which, "%s", arg[a].what); }
@@ -498,7 +498,7 @@ int main(int argc, char **argv) {
         smooth_trial(20, 0.10f, 0.3f, shape, sd * 7919u, &r, &h); h3 += h;
       }
     snprintf(d, sizeof d, "held-out root-mean-square error %.4f at smoothing 0, %.4f at 0.3",
-             (double)iris_sqrt((float)(h0 / 64.0)), (double)iris_sqrt((float)(h3 / 64.0)));
+             (double)iris_internal_sqrt((float)(h0 / 64.0)), (double)iris_internal_sqrt((float)(h3 / 64.0)));
     check("moderate smoothing helps noisy demonstrations", h3 < 0.81 * h0, d);   /* -10% root-mean-square */
 
     const struct recipe *r = &R[0];
@@ -520,7 +520,7 @@ int main(int argc, char **argv) {
     iris *b = iris_init(arena, sizeof arena, 2, 12, 2, 128, 31u);
     for (int i = 0; i < 20; ++i) {
       float a = (float)((i * 7) % 20) / 19.0f, c = (float)((i * 3) % 20) / 19.0f;
-      float in[2] = { a, c }, o[2] = { 0.5f + 0.4f * iris_tanh(3.0f * (a - 0.2f)), 0.3f + 0.2f * a * c };
+      float in[2] = { a, c }, o[2] = { 0.5f + 0.4f * iris_internal_tanh(3.0f * (a - 0.2f)), 0.3f + 0.2f * a * c };
       iris_record(b, in, o);
     }
     iris_set_smoothing(b, 1.0f);
@@ -529,12 +529,12 @@ int main(int argc, char **argv) {
     for (int n = 0; n < b->n_ex; ++n) {
       float ti[2], to[2], x[2];
       iris_get(b, n, ti, to);
-      for (int i = 0; i < 2; ++i) x[i] = iris_norm_in(b, i, ti[i]);
-      iris_forward_norm(b, x);
+      for (int i = 0; i < 2; ++i) x[i] = iris_internal_norm_in(b, i, ti[i]);
+      iris_internal_forward_norm(b, x);
       for (int o = 0; o < 2; ++o) {
         float z = b->b2[o];
         for (int j = 0; j < 12; ++j) z += b->w2[o * 12 + j] * b->hid[j];
-        gap[o] += ((double)z - (double)iris_logit(iris_norm_out(b, o, to[o]))) / (double)b->n_ex;
+        gap[o] += ((double)z - (double)iris_internal_logit(iris_internal_norm_out(b, o, to[o]))) / (double)b->n_ex;
       }
     }
     snprintf(d, sizeof d, "smoothing 1: ret %d, fitted minus demonstrated mean logit %.2e %.2e",
@@ -580,9 +580,9 @@ int main(int argc, char **argv) {
       if (n < k->n_ex) {
         float x[2], ti[2], to[8];
         iris_get(k, n, ti, to);
-        for (int i = 0; i < 2; ++i) x[i] = iris_norm_in(k, i, ti[i]);
-        iris_forward_norm(k, x);
-        for (int j = 0; j < 8; ++j) { float e = k->out[j] - iris_norm_out(k, j, to[j]); want += e * e; }
+        for (int i = 0; i < 2; ++i) x[i] = iris_internal_norm_in(k, i, ti[i]);
+        iris_internal_forward_norm(k, x);
+        for (int j = 0; j < 8; ++j) { float e = k->out[j] - iris_internal_norm_out(k, j, to[j]); want += e * e; }
       }
       if (bits(k->ex_res[n]) != bits(want)) exact = 0;
     }
@@ -627,7 +627,7 @@ int main(int argc, char **argv) {
     int s1 = iris_get_status(c1);
     float warm1 = iris_train_epochs(c1, 1);
     iris_clear(c1); record_recipe(c1, r);
-    int r2 = iris_train_elm_ex(c1, 1e-4f, 0.0f, 1.0f, scratch, sizeof scratch);
+    int r2 = iris_internal_train_elm_ex(c1, 1e-4f, 0.0f, 1.0f, scratch, sizeof scratch);
     int s2 = iris_get_status(c1);
     float warm2 = iris_train_epochs(c1, 1);
     int s2w = iris_get_status(c1);
