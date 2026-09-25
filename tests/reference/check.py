@@ -44,6 +44,15 @@ reports the epoch at which it would stop; that is reported, not asserted,
 because a decision made on a threshold can differ by one window when the two
 errors straddle it.
 
+What the tolerances cannot see. Every tolerance is as wide as binary32
+rounding, so a change to iris about as small as one rounding passes every
+layer. Measured by moving iris's momentum up from 0.85f by whole units in
+the last place (ulp, the gap between one float and the next): 1, 5, 10 and
+16 ulp pass; 33 ulp fails L2 (L1 reads 31 u at epoch 2); 50 ulp also fails
+L1 (49 u against 40 u). Moving the learning rate by 1 ulp passes too. The
+bit-exact checks see what this cannot: the golden hash in tests/audit.c,
+the starter recipes and docs/tiny.c each fail on the 1-ulp momentum change.
+
 Run it through build.sh (sh build.sh reference); by hand:
   cc -std=c99 -O2 -I. -o build/reference_export tests/reference/export.c
   python3 tests/reference/check.py build/reference_export
@@ -381,13 +390,13 @@ def neighbours(exe):
 
 def main():
     if len(sys.argv) < 2:
-        print(__doc__.split("\n\n")[-2])
+        print(__doc__.strip().split("\n\n")[-1])     # the paragraph on how to run it
         return 2
     exe = os.path.abspath(sys.argv[1])
     work = os.path.join(os.path.dirname(exe), "reference")
     os.makedirs(work, exist_ok=True)
     print(f"iris against a binary64 reference (NumPy {np.__version__})")
-    trajectory(exe, work, 0.0, 2000)      # stops at the plateau, 18,000 epochs; replayed freely for 2,000
+    trajectory(exe, work, 0.0, 2000)      # stops at the plateau, 22,000 epochs; replayed freely for 2,000
     trajectory(exe, work, 0.5, 60000)     # smoothing on: the weight decay path, replayed whole
     saved_file(exe, work)
     neighbours(exe)
