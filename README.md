@@ -227,7 +227,7 @@ It stops at the first failure and says which check failed. One check at a time:
 | `sh build.sh tu` | two translation units with different maxima sharing one instrument |
 | `sh build.sh fuzz` | random shapes and call sequences under AddressSanitizer |
 | `sh build.sh examples` | every example, built with `-Werror` and run |
-| `sh build.sh sanitize` | every C test under AddressSanitizer and UndefinedBehaviorSanitizer |
+| `sh build.sh sanitize` | every test program and example under AddressSanitizer and UndefinedBehaviorSanitizer |
 | `sh build.sh threads` | ThreadSanitizer, with a positive control |
 | `sh build.sh noheap` | zero allocator calls, with a positive control |
 | `sh build.sh freestanding` | the zero-dependency claim, flag by flag, and the ESP32-S3 symbol list |

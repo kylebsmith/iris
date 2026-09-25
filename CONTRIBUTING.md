@@ -70,7 +70,7 @@ sh build.sh recipes        # the starter kit's two recipes
 sh build.sh tu             # two translation units with different maxima
 sh build.sh fuzz           # random call sequences under AddressSanitizer
 sh build.sh examples       # every example, with -Werror, run
-sh build.sh sanitize       # every C test under AddressSanitizer and UndefinedBehaviorSanitizer
+sh build.sh sanitize       # every test program and example under AddressSanitizer and UndefinedBehaviorSanitizer
 sh build.sh threads        # ThreadSanitizer, with a positive control
 sh build.sh noheap         # zero allocator calls, with a positive control
 sh build.sh freestanding   # zero undefined symbols, and the ESP32-S3 list
