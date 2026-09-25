@@ -12,27 +12,44 @@
    no operating system, and no library calls. It is pure arithmetic on
    memory you hand it.
 
-   THE ZERO-DEPENDENCY CLAIM, STATED EXACTLY. A translation unit exercising
-   the whole public API compiles under -std=c99 -ffreestanding -nostdlib at
-   -O0/-O2/-Os and links with ZERO undefined symbols — but only with
-   -fno-stack-protector, ON A HOST. Verified 2026-08-27, Apple clang 17, arm64.
+   THE ZERO-DEPENDENCY CLAIM, STATED EXACTLY. A translation unit that calls
+   every public function, compiled with -std=c99 -ffreestanding
+   -fno-stack-protector (GCC also -fno-tree-loop-distribute-patterns) at -O0
+   to -Os, as C or as C++, has ZERO undefined symbols and links with
+   -nostdlib -static and no C library at all: Apple clang, Homebrew clang 22
+   and gcc-15 on a 64-bit ARM Mac, and Debian's gcc 14 and clang 19 on 64-bit
+   ARM Linux. None of the flags changes an output bit. Each stops the
+   COMPILER reaching for the C library on its own account:
 
-   AND ON THE CHIP IT IS ACTUALLY FOR, IT IS NOT ZERO. Measured 2026-08-30 with
-   the ESP32-S3's own compiler (xtensa-esp32s3-elf-gcc, -Os -ffreestanding
-   -fno-stack-protector), which this line previously marked UNVERIFIED:
+     -ffreestanding        clang otherwise turns the loops that zero or copy
+                           an array into C library calls: memset, memcpy,
+                           bzero.
+     -fno-stack-protector  where stack protection is on by default (clang on
+                           macOS), every function with an array otherwise
+                           calls __stack_chk_fail.
+     -fno-tree-loop-distribute-patterns   GCC turns the same loops into
+                           memset, memcpy and memmove calls even under
+                           -ffreestanding.
 
-     the playing path        __divsf3, memset, sqrtf
+   -fno-math-errno is not on the list: the square root is integer arithmetic
+   (PART 1), so there is no sqrtf call for errno to need. tests/freestanding.sh
+   checks all of this, including that each flag is still needed.
+
+   ON THE CHIP IT IS ACTUALLY FOR, THE LIST IS NOT EMPTY. With the ESP32-S3's
+   own compiler (xtensa-esp32s3-elf-gcc, the flags above, -O0, -O2 or -Os):
+
+     the playing path        __divsf3
      + iris_loo_error        + __adddf3 __divdf3 __extendsfdf2 __floatsidf
                                __muldf3 __subdf3 __truncdfsf2
-     + iris_suggest_smoothing  the same, plus memcpy
+     + iris_suggest_smoothing  + memcpy, to copy its five-entry constant table
      + iris_train_elm        adds nothing
 
-   __divsf3 is single-precision DIVISION: the S3's floating-point unit has no
-   divide instruction, so every float division is a libgcc call. memset and
-   sqrtf are the compiler's and libm's. None of this is a call this source
-   writes, and all of it is present on every Arduino build anyway -- but the
-   sentence "zero undefined symbols" is FALSE on the target, and it is now
-   stated with the compiler, the flags and the list rather than as a claim.
+   __divsf3 is single-precision DIVISION: the S3's floating-point unit has
+   divide-step instructions but no single divide instruction, so every float
+   division is a routine in libgcc, the compiler's own support library, as
+   are the double-precision routines. memcpy is the one C library function.
+   None of this is a call this source writes, and all of it is present on
+   every Arduino build anyway; tests/freestanding.sh checks this list too.
 
    THE DOUBLES ARE REAL AND THEY ARE ONE FUNCTION. The __*df3 routines above
    are 64-bit soft float, which rule 3 below says this library does not use.
