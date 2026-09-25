@@ -1,309 +1,234 @@
 # Changelog
 
-Versioning: the library version is declared once, in `iris.h`
-(`IRIS_VERSION_STRING`). Nothing else states one.
+The library version is `IRIS_VERSION_STRING` in `iris.h`; `library.properties`,
+`CITATION.cff` and the release tag state the same number. The save-file format
+has a number of its own, which changes only when the bytes of a file or their
+meaning change. What each part of a version number permits, and what is
+promised about saved instruments, is in
+[README.md](README.md#what-is-promised-and-what-is-not).
 
-**The save-file format version (v1/v2/v3) is a separate axis.** It carries the
-input-scaling semantics. A library bump never invalidates a saved instrument;
-the loader keeps reading every older format, permanently. Only a format bump
-changes what a file means, and `docs/adr/0006` and `0018` govern that.
+| Library | Writes format | Reads formats |
+|---|---|---|
+| 0.2.0 | 7 | 7 |
+| 0.1.0 | 5 (6 for an instrument never fitted) | 1 to 6 |
+
+## 0.2.0 — unreleased
+
+The first release whose saved files are promised to keep playing: format 7 is
+read by every later release, and what a saved instrument plays is frozen within
+a major version. Training may still improve in a minor release, measured and
+announced here, with the training hashes re-pinned.
+
+The golden training hash `0x6805FB0D` is unchanged, and so are the starter kit's
+two recipes (`0xB7FC47A0` and `0x203834ED`, now pinned in
+`tests/starter_recipes.c`): the recipes those hashes pin train bit for bit the
+same in 0.1.0 and 0.2.0.
+
+### Breaking changes
+
+Interface:
+
+- `iris_train_epochs` is renamed `iris_continue`, and `iris_train_converge`
+  is renamed `iris_continue_to_plateau`. Both carry on from the current
+  weights; after deleting a take, call `iris_train`.
+- `iris_retrain_new` is removed. A reroll is `iris_reseed(k, seed)` then
+  `iris_train(k)`, or then `iris_train_elm` for the closed-form trainer.
+  `iris_retrain_new(k, seed, n)` on a store it accepts is exactly
+  `iris_reseed(k, seed)` then `iris_continue(k, n)`.
+- `iris_correct` and `iris_retrain_elm_new` are removed.
+- `iris_input_scaling` and `iris_migrate_scaling` are removed with the [0,1]
+  input scaling (below).
+- `iris_train_elm_ex`, `iris_fit_ranges` and `iris_get_l2`, and seventeen
+  helpers that were public by accident (`iris_isbad`, `iris_tanh`,
+  `iris_sigmoid`, `iris_sqrt`, `iris_absf`, `iris_clampf`, `iris_rand_u32`,
+  `iris_rand_sym`, `iris_norm_in`, `iris_norm_out`, `iris_denorm_out`,
+  `iris_forward_norm`, `iris_shape_fits`, `iris_zero_velocity`, `iris_artanh`,
+  `iris_logit`, `iris_crc32`), are renamed `iris_internal_*`. Anything with
+  that prefix is outside the interface and may change in any release. The
+  interface is the 41 functions listed at the top of `iris.h`.
+- `iris_predict`, `iris_knn_predict` and `iris_classify_1nn` take `iris *`,
+  not `const iris *`: they write the status, and the neighbour functions fit
+  the ranges of an instrument never fitted.
+- `iris_train_begin` now reseeds from the instrument's seed, as `iris_train`
+  does, so a sliced run is bit-identical to `iris_train`.
+- `iris_suggest_smoothing` needs `IRIS_ARENA(n_in, n_hid, n_out, cap)` bytes of
+  scratch, the size of the instrument's arena, instead of `iris_save_size`
+  bytes, and ranks settings by each output's miss divided by its demonstrated
+  range.
+- `IRIS_ELM_SCRATCH` is larger (1,295 bytes at 12 hidden units and 3 outputs
+  with the default maxima, from 884): it holds the ranges kept in case the
+  solve fails, one frozen hidden unit, and padding so the buffer may start at
+  any address.
+- A collapsed closed-form solve reports the new status `IRIS_SOLVE_COLLAPSED`
+  (7) instead of `IRIS_DIVERGED_STUCK`, which now means only a diverged
+  gradient run.
+- The header refuses to compile when float arithmetic is carried in a wider
+  format (`__FLT_EVAL_METHOD__` other than 0, 16 or 32), as on 32-bit x86 using
+  the x87 unit, its old 80-bit floating-point unit: there every instrument came
+  out different with no diagnostic.
+  Build with `-msse2 -mfpmath=sse`.
+- The contraction pragmas now end with the header, so your own code after the
+  `#include` contracts `a*b + c` as your compiler's default says. A program
+  that computes its demonstrations itself and needs the same bits from two
+  compilers must switch contraction off in its own code, as `tests/audit.c`
+  does.
+
+Save format:
+
+- `iris_save` writes format 7 and `iris_load` reads format 7 only. Every field
+  is little-endian and moved one byte at a time, so the buffer needs no
+  alignment and a file means the same on every machine. The magic is `IRIS`.
+  A flags word records `fitted` and `trained` separately. Every rule is checked
+  before anything is written, and a refused load leaves the instrument and its
+  status exactly as they were. The same instrument is 8 bytes larger than in
+  format 5. Formats 1 to 6 are not read; to keep a 0.1.0 file, convert it once
+  with a program built against the 0.1.0 tag. The `IRIS_FORMAT*` and
+  `IRIS_MAGIC` macros are replaced by `IRIS_FILE_MAGIC`, `IRIS_FILE_VERSION`
+  and `IRIS_FILE_HEADER`.
+
+Removed:
+
+- The [0,1] input scaling that instruments restored from format 1 and 2 files
+  kept for life, with `in_center`, its golden hash `0xFEFAEDF6` and its
+  fixtures. Every instrument scales its inputs to [-1, +1].
+- `experimental/iris_lbfgs.h`, the limited-memory quasi-Newton trainer (L-BFGS,
+  the Broyden–Fletcher–Goldfarb–Shanno method with a bounded history), with its
+  checks and hashes. It had no caller outside the tests.
+
+Behaviour changes on the playing path:
+
+- An input that did not move across the demonstrations (width at most 1e-5 of
+  its magnitude, or 1e-6) is ignored in training and playing. It used to become
+  a gain of 1e5 to 1e6, so one count of movement at play time turned the
+  instrument into a constant.
+- An instrument never fitted plays the centre of the demonstrated output range,
+  or 0 with no demonstrations, instead of the centre of whatever ranges it held.
+- `iris_knn_predict` returns the stored value exactly when every neighbour
+  agrees (a label of 3 used to come back as 2.9999998 on 29% of queries), and
+  never leaves the demonstrated range.
+- `iris_delete_nearest` measures distance in fractions of each input's range,
+  as the neighbour functions do, so it deletes the take `iris_classify_1nn`
+  names.
+- The neighbour searches accept a finite query however far outside the
+  demonstrations it is.
+
+### Fixes
+
+- `iris_load` wrote past a working array when a translation unit compiled
+  with a smaller `IRIS_MAX_IN` loaded a larger instrument.
+- Saving an instrument that had recorded a take since its last training
+  marked it never fitted, so it came back silent after a load.
+- `iris_load` accepted any content with a valid checksum: not-a-number weights,
+  inverted or overflowing ranges, non-finite demonstrations, repeated or
+  non-positive identifiers, a `next_id` at the top of the integer range, a
+  not-a-number smoothing value.
+- Saved files depended on the host's byte order and read the caller's buffer
+  through pointer casts that need 4-byte alignment.
+- Two refused loads wrote the status.
+- A load kept the receiving arena's momentum velocities, learning rate and
+  momentum; it now zeroes the velocities and restores the defaults.
+- `iris_train`, `iris_loo_error` and the reroll calls reseeded before finding a
+  non-finite demonstration, so a refusal destroyed the instrument;
+  `iris_loo_error` returned a not-a-number where it promised -1.
+- The stuck-divergence refusal fired only on every second warm call, and any
+  call that overwrote the status let a warm run through; it now keys on the
+  pinned weights and holds on every call.
+- The closed-form trainer overwrote the hidden layer before its solve could
+  fail, so a bad `lam0`, a bad gain or a failed factorisation destroyed a
+  fitted instrument; it now validates first and solves in scratch.
+- The closed-form trainer ignored smoothing; it now adds 1.2 times the
+  smoothing to the ridge on the output weights, and at smoothing 0 the solve
+  is bit-identical to before.
+- The closed-form trainer left the previous run's worst-demonstration ledger,
+  its training-progress fields and any sliced run in place, reported
+  `IRIS_DIVERGED_STUCK` for constant outputs and for takes all made at one
+  gesture, and needed a float-aligned scratch buffer.
+- `iris_suggest_smoothing` restored the instrument through a save and a load,
+  which lost the momentum velocities and silenced a stale instrument; it now
+  restores every byte of the arena.
+- A refused query on an instrument never fitted still fitted its ranges in
+  the neighbour paths.
+- `iris_record` could overflow a signed integer handing out the last
+  identifier, reachable through a loaded file; it now refuses once
+  identifiers run out.
+- The square root called the C library's `sqrtf` on the ESP32-S3 and, for
+  negative inputs, on GCC and Linux clang, so freestanding builds had an
+  undefined symbol. It is now computed in integers and correctly rounded,
+  checked against the hardware for all 2^32 inputs.
+- On the ESP32-S3, `iris_suggest_smoothing` copied its table of settings
+  with `memcpy`; the table is now `static const`.
+- gcc-15 warned that `bi` may be used uninitialized in `iris_knn_predict`
+  at `-O2` and `-O3`.
+- The range searches and the neighbour searches started from sentinel values
+  that very large demonstrations or queries could exceed.
+- `examples/00_minimal.c` read the status and recorded its bad frame inside one
+  `printf`, whose argument order C leaves open, so it printed status 0 on some
+  compilers.
+- `docs/gain-sweep.c` did not compile, and `docs/tiny.c` used an activation
+  that differs from the header's.
+
+### Additions
+
+- Tests: `tests/load.c` (every rule of the save format, round trips, a
+  committed format 7 instrument in `tests/golden/` played back bit for bit),
+  `tests/fuzz_load.c` (a harness for libFuzzer, clang's coverage-guided
+  fuzzer, that feeds `iris_load` mutated files and repairs their checksums so
+  the mutations reach the content rules), `tests/train.c`, `tests/elm.c`, `tests/playing.c`,
+  `tests/portability.c`, `tests/starter_recipes.c`, and the scripts
+  `tests/freestanding.sh`, `tests/targets.sh` and `tests/pragma_leak.sh`.
+- `tools/sqrt_exhaustive.c` compares the header's square root with the host's
+  for every 32-bit pattern.
+- `sh build.sh` runs every host check and stops at the first failure; the
+  README lists each check. The `claims`, `bloat`, `sketches`, `golden` and
+  `experiment` arms are gone, with `tools/check-claims.sh` and
+  `tools/bloat.sh`.
+
+### Documentation
+
+- The comments in `iris.h` describe 0.2.0: the whole interface in eight groups,
+  a glossary of every term the file uses, the failure rules regenerated from
+  the functions' behaviour, and every figure with its source. Figures that did
+  not replicate are replaced or removed.
+- The README, CONTRIBUTING.md, `docs/SYSTEM-technical.md` and
+  `docs/SYSTEM-plain-english.md` are rewritten for 0.2.0, and
+  `docs/README.md` says what each document in `docs/` is.
+- The README states the compatibility promise and the versioning policy.
 
 ## 0.1.0 — 2026-09-01
 
-- **A note on the mutation-testing figures in this repository's git history.**
-  Any mutation score quoted in a commit message before the commit "tools: the mutation harness has been reporting a fake score" was produced by
-  a harness that was not measuring anything. It decided kill-or-survive by
-  searching its own output for the word "failing", and the regression suite
-  printed "0 of 16 failing" on every run, so every mutation was recorded as
-  killed. Proved by mutating a word inside a comment: reported "killed".
-  Fixed to decide by exit code, at which point the honest score was 70%.
-  A second false-scoring mechanism was found later the same day and fixed in "tools: the mutation harness was scoring 100% by detecting
-  nothing, again": the kill test included the documentation-consistency check, which
-  compares the header's line count against a number in the README, so any edit
-  to the source failed it and killed every mutation for a reason that had
-  nothing to do with behaviour. The kill test now runs only the suites that
-  test behaviour. The figures from that commit onward are real; the earlier ones
-  are not, and the commits are left in place rather than rewritten because a
-  record that corrects itself is worth more than one that looks clean.
+The first release.
 
-- Internal helpers renamed from `iris__x` to `iris_internal_x`. C99 reserves
-  every identifier containing a double underscore for the implementation, so
-  the old names were formally undefined behaviour in a library that claims to
-  build anywhere. Six names, thirteen files. Renamed in the dated audit records
-  and decision records too, so the repository has one name for one function
-  rather than a split you have to know about. No behaviour changed: the golden
-  hashes are bit-identical and the mutation score is unmoved at 18 killed of 20, 90%.
-
-**This is the first release. Nothing before it was ever published.**
-
-The version numbers that appear in this project's git history — 0.2.0, 0.3.0,
-0.4.0 — were development bookkeeping on a tree with no remote and no users.
-They are archaeology, kept in the archive, and renumbering them to a single
-0.1.0 is the honest description: one release, containing everything below.
-
-The SAVE FILE format version is a separate axis and is NOT renumbered. It is at
-5, it has been at 1, 2, 3 and 4 during development, and every one of those still
-loads — that promise is real even though no file was ever in anyone's hands.
-
----
-
-### What this release contains
-
-### An independent blind audit, and the two bundles of fixes it produced
-
-An auditor was given the code and the public promises and nothing else — no
-sight of the test suite, no decision records, no changelog — and wrote its
-torture tests before reading a line of the source. It found twenty-three
-defects. Every one was re-verified here before anything was changed.
-
-**Memory safety (no behaviour change, both golden hashes unmoved):**
-
-- `k->order`, the trainer's shuffle buffer, was a pointer into memory nobody
-  had written. Recording a demonstration during a sliced training run made the
-  shuffle read *and write* one slot past what `iris_train_begin` had filled: a
-  segmentation fault on a dirty arena, and on a zeroed one — which is what a
-  global array on a microcontroller is — the new demonstration was silently
-  ignored while the instrument reported seven demonstrations, a healthy status
-  and a small error. Reachable from the exact user-interface loop the library
-  documents. `iris_init` now fills it, and the trainer rebuilds it whenever the
-  demonstration count changes under a running slice. The plateau reference is
-  reset with it, because new data makes the error jump and a stale reference
-  reads that rise as convergence. The epoch counter is deliberately *not*
-  reset, so a caller who records between every slice still reaches the ceiling.
-- The arena was aligned *after* the structure was placed, not before, so the
-  structure itself was left wherever the caller's buffer began. A sanitizer
-  reports it; a chip that faults on unaligned loads would crash.
-- Fifty-six public functions dereferenced a null instrument. Every one now
-  refuses, using that function's own failure convention rather than a blanket
-  zero.
-- Removed a store that was never read.
-
-**Build and compiler promises (no behaviour change):**
-
-- **Determinism did not hold on the library's own target.** GNU compilers
-  ignore the standard contraction pragma, and in GNU mode — which is what the
-  Arduino development environment builds with — they contract by default. The
-  same seed and the same demonstrations produced a *different instrument*. A
-  file-scope `#pragma GCC optimize ("fp-contract=off")` fixes it: every build in
-  that sweep now agrees exactly. (This note used to say "twelve builds across
-  three compilers and three optimisation levels", which multiplies to nine.)
-- `-ffinite-math-only` is not `-ffast-math` and did not trip the tripwire, but
-  it deleted every guard in the library: `iris_isbad` folded to false, poisoned
-  demonstrations were accepted, and a broken sensor produced a plausible number
-  and a healthy status. The tripwire now catches it, and `iris_isbad` reads the
-  bits through a `volatile` the optimiser may not reason across.
-- "Zero external symbols" was false on GNU compilers: `sqrtf` for a negative
-  branch that never occurs, and `memset` from `iris_reseed`'s zeroing loop. Two
-  flags fix both and neither changes an output bit. `check-claims.sh` now tests
-  **every** compiler it can find, and a compiler it cannot build for is a
-  failure rather than a silent skip — which is how this passed while being false.
-- **The guards A/B check could not fail.** It asserts two builds are equal,
-  which is also what you get when the flag does nothing: renaming
-  `IRIS_NO_GUARDS` in the header left it passing. It now carries a positive
-  control — a poisoned demonstration, which the two builds must handle
-  *differently* — and that control correctly fails on the sabotaged header.
-
-**Behaviour and format (one deliberate change, and one constant RESTORED):**
-
-- **A sensor channel that never moved killed the instrument, above 32.** The
-  guard against a zero-width range widened it by an absolute `1e-6`, and in
-  32-bit floating point adding `1e-6` to anything above 32 changes nothing at
-  all — so the range stayed zero, the normalisation divided zero by zero, and
-  every prediction became not-a-number. A light sensor reads 0..4095 and a
-  distance sensor reads millimetres, and `TASKS.md` (in the starter kit)
-  sends students at exactly
-  those. Measured: worked to 31.77, dead from 32.72. The floor is relative now.
-  The golden hashes did not move: the frozen data has no constant channel.
-- `iris_init` accepted hidden widths below 8 while `iris_size` returned its
-  "impossible shape" answer for them, so `malloc(iris_size(2,4,3,64))`
-  allocated nothing. `docs/FREEZE.md` had said "raise the floor to 8 in
-  iris_init. **NOW.**" since before this release; done. The audit's reroll
-  corner moved from width 4 to width 8, the lowest legal one, and both of its
-  thresholds still hold with headroom.
-- `iris_suggest_smoothing` restored the smoothing SETTING but not the weights,
-  so a performer who called it to ask a question silently got a different
-  instrument — a 600-epoch refit in place of one trained to a plateau, drifting
-  one output by 0.14 of full scale. It now saves and restores, and takes
-  scratch space to do it. It refuses without that space rather than proceeding:
-  refusing an answer is recoverable, replacing someone's instrument is not.
-- **Format 5**: format 4 plus one float, the smoothing setting — what `iris_save`
-  writes for a fitted instrument. A sixth format word exists and is written for an
-  unfitted save, so the loader accepts six, not five. Format 5 was the last
-  unfinished item on `FREEZE.md`'s "cheap today and impossible tomorrow" list.
-  Formats 1 through 4 still load; a v4 file was hand-built and verified to load
-  and predict bit-identically, reporting smoothing 0, which is honest — v4 never
-  recorded it.
-- Documented which files are checksummed and which are not. An instrument
-  restored from a v1 or v2 file keeps the legacy scaling for life and therefore
-  saves itself as v2, which has no checksum — permanently, for that instrument.
-  `iris_input_scaling` reports the same bit.
-
-**The `[-1,+1]` golden constant is RESTORED to `0x6805FB0D`, its original
-v0.3.0 value.** It had been re-pinned to `0x123FD0C8` when format 4 added a
-trailing checksum — but that re-pin was never necessary. The test reduces a
-saved file to a "v1-layout view" precisely so format bumps cannot move the
-hash, and that helper only stripped the v2/v3 word; every later format dragged
-its new trailing bytes into the hash. It now strips all of them, and the
-original constant came straight back. Verified alongside: predictions over a
-441-point grid are bit-identical across the whole format change.
-
-That is the more useful lesson of this release. A hash that moves for
-bookkeeping reasons teaches you to re-pin without asking why, which is exactly
-what a frozen contract must never teach.
-
-**Silent failures now report (additive, both golden hashes unmoved):**
-
-- `iris_clear` did not end a training run in flight, so the documented
-  slice loop `while (iris_train_slice(k, 500))` never terminated: the trainer
-  returns at once with no demonstrations, so the epoch counter never advanced
-  and the run never finished. Both Arduino sketches wire clear to a button and
-  the library recommends slicing, so those two were one press apart.
-- `iris_retrain_new(k, seed, 0)` reseeded first and refused second, so a caller
-  got a refusal AND lost their instrument. It now checks what the trainer will
-  refuse before destroying anything.
-- The closed-form trainer reported success while collapsing every gesture to
-  one sound under a large enough ridge or a zero gain. It now measures whether
-  the model still separates the corners of the demonstrated input range and
-  sets `IRIS_DIVERGED_STUCK` if it does not. Measured in NORMALISED output
-  space, because comparing against the raw demonstrated range let a single
-  outlier report an honest solve as collapsed; and skipped entirely when every
-  demonstration carried the same sound, because a constant is then correct.
-  It reports rather than refusing: this trainer's stated property is that it
-  always produces something on hostile data, and the audit asserts that.
-- `iris_classify_1nn` started its search at demonstration 0, so a query
-  containing a not-a-number made every comparison false and it returned the
-  FIRST demonstration and its identifier as a confident answer, with a healthy
-  status. For a classifier that is a wrong class every time a sensor is
-  unplugged. It now refuses, exactly as `iris_knn_predict` always has.
-- A loaded instrument reported `iris_last_error` of 1.0 -- the worst possible
-  value -- however well it had been trained, because the error is not in the
-  file. The demonstrations are, so it is now measured at load: one forward pass
-  each, once.
-- Documented what `iris_get_status` covers. It reports numerical health, not
-  argument mistakes; those come back through the return value. Making them
-  sticky here would leave a polled interface showing a fault for ever after one
-  out-of-range query.
-
-### Memory safety: the arena bound could be absent entirely
-
-`iris_init` accepted any `n_hid` from 1 upward; `iris_size` floors it at 8 and
-returns `0` below that. The arena check was `bytes < iris_size(...)`, and on
-unsigned types `bytes < 0` is false always — so for `n_hid` in 1..7 there was no
-arena bound at all. `iris_init` with a one-byte arena and `n_hid = 4` returned a
-live instrument, and training wrote **611 bytes past the end**.
-
-Fixed by separating the two jobs that were conflated in one function:
-`iris_internal_bytes()` is arithmetic with no opinion, and `iris_size()` is that plus
-the quality floor. `iris_init` bounds the arena with the former, so the bound
-applies to every shape it accepts. The quality floor is unchanged and still
-belongs to callers choosing a shape.
-
-Behaviour for valid shapes is unaffected: golden hash `0xFEFAEDF6` before and
-after, full audit green. A right-sized arena is accepted, one byte short is
-refused, and the `n_hid = 4` overrun is refused.
-
-### The golden fixtures could destroy themselves
-
-`build.sh golden` regenerated **both** frozen baselines. `v1` came back
-faithfully, because a legacy writer still exists. `v3` did not: `iris_save`
-writes whatever the current format is, which is now v4, so every run overwrote
-the v3 backward-compatibility fixture with a v4 file — deleting the only
-artifact proving a v3 instrument still loads, and turning the audit's v3 check
-into a failure that reads like a code defect. It happened on 2026-08-27 and was
-recovered from git.
-
-A fixture whose purpose is to be *old* cannot be rebuilt by the new code. It is
-a historical artifact: preserved, never regenerated. `make_golden` now writes
-only the v1 pair, and `build.sh golden` refuses to run at all unless
-`IRIS_REGENERATE_GOLDEN=yes-i-mean-it` is set, because a command that redefines
-what "correct" means should not be one keystroke from a command that checks it.
-
-### Also
-
-- Include guards were still spelled `EMBWEK_*` after the rename. Now `IRIS_*`,
-  verified inert by the same hash. `check-claims.sh` fails if they come back.
-- The masthead comment said `v0.3.0` while `IRIS_VERSION_STRING` said `0.4.0`.
-  The version check only ever counted the macro, so nothing noticed.
-  `check-claims.sh` now compares them, and I confirmed the check fails when the
-  two disagree rather than assuming it would.
-- Removed a dead `#ifdef EMBWEK_IO_H` guard against a header that exists
-  nowhere in the tree.
-- `build.sh` usage omitted `claims`, the target CI depends on. Added, along with
-  a `tiny` target — `docs/tiny.c` was reachable from no build target, no CI job
-  and no document, which is why its self-reported line count had been wrong by
-  43 lines without anything catching it.
-- Added `library.properties` so the repo installs as an Arduino library and its
-  examples appear under File → Examples, with `examples/iris_smallest/`.
-
-
-Renamed from `embwek` to `iris`. Verified semantically inert: every golden
-output hash is byte-identical across the rename (`0xFEFAEDF6`, `0x6805FB0D`,
-guards blob `0x0FEC913D`).
-
-### Fixed — behaviour
-
-- **The divergence trap.** A contradictory demonstration could diverge the
-  weights; the guard clamped them and stopped. On the next fresh run one pinned
-  weight tripped the guard again on epoch 1, so training silently did nothing —
-  forever — while reporting a healthy status. Deleting the bad example did not
-  help. Training now refuses with `IRIS_DIVERGED_STUCK`; `iris_retrain_new`
-  recovers the instrument. Pinned by audit check 35.
-- **Playing an instrument that was never fitted** ran the forward pass over
-  random weights and returned plausible numbers with no symptom. Now returns the
-  centre of the demonstrated range with `IRIS_NOT_FITTED`. Guards on a new
-  `fitted` flag rather than `trained`, so a stale-but-real instrument keeps
-  playing — the property audit check 13 protects.
-- **NaN/Inf is refused at `iris_record`** instead of being accepted silently and
-  blocking every later training run. The trainer's pre-scan remains as defence
-  in depth for examples arriving via `iris_load`.
-- **`iris_train_epochs(k, 0)`** reported a freshly randomised network as trained
-  with a perfect fit. Now refuses.
-- **One refusal convention.** A train call that did no training returns `-1.0`.
-  Previously the SGD path returned the *previous* run's error, so a caller could
-  not distinguish refusal from repetition.
-- **Capacity overflow.** `iris_size` multiplied capacity by dimensions with no
-  overflow test; on a 32-bit target a large enough capacity wrapped, the arena
-  check passed, and the store ran off the end of the caller's buffer. Bounded by
-  `IRIS_MAX_EX`.
-
-### Fixed — L-BFGS (experimental)
-
-- **Relative curvature test.** The safeguard was an absolutely-scaled
-  `sTy > 1e-12`; at this problem's gradient scale it discarded a median of ~680
-  of 1000 curvature pairs, leaving the limited-memory history mostly empty.
-- **Double-precision loss accumulation.** In float32 the Armijo test was
-  resolving rounding noise, halving the step ~10 times per iteration.
-- Effect: the training-error gap against SGD fell from 3.8× to 1.61×. The golden
-  L-BFGS hash was deliberately re-pinned; the core SGD hash is unchanged.
-
-### Added
-
-- `iris_train_epochs_done()` — how many epochs actually ran. There was no way to
-  distinguish a completed run from an early stop.
-- `IRIS_DIVERGED_STUCK`, `IRIS_NOT_FITTED` status codes.
-- CI: audit on {ubuntu, macos} × {gcc, clang}, a zero-external-symbols check,
-  and golden hashes across five optimisation levels.
-- `LICENSE` (BSD 3-Clause). The project previously shipped none.
-
-### Changed — documentation honesty
-
-Audit check 33 no longer asserts that SGD beats L-BFGS; it asserts the plateau
-property and *reports* the ratio, because the original gap was mostly our own
-defects and the assertion did not survive repairing them.
-
-The host→ESP32-S3 scaling in the cost tables was ×32; the one on-device
-measurement puts it near ×270. At 20 examples the table implied ~29 ms where the
-board measures 321 ms. Corrected, columns relabelled, footnoted.
-
-Corrected claims that were false where they stood: a comment saying `iris_load`
-calls the legacy-scaling function (it does not); the warm-start banner claiming
-the firmware uses it (removed from the device 2026-08-22); `iris_migrate_scaling`
-claiming an app dependency that does not exist; a prescribed idiom with no
-caller; an ELM gain figure citing a sweep no longer in the tree; the Padé tanh
-accuracy claim (0.001 → 0.0283, wrong by 28×); and the algorithm count, settled
-from `LearningAlgorithmRegistry.java` at nine, of which we implement two.
-
-## Earlier
-
-Developed as `embwek` from August 2026. Prior history, the literature corpus,
-the audits and the decision log live in the private research repository.
+- `iris.h`, one header in C99 (the 1999 C standard) with no dependencies and no
+  heap: a one-hidden-layer
+  network trained by backpropagation with momentum, a rational approximation to
+  tanh, outputs scaled to [0.1, 0.9], and inputs scaled to [-1, +1] (to [0, 1]
+  for instruments restored from format 1 and 2 files).
+- Trainers: `iris_train` (reseed, then train to a plateau), the sliced
+  `iris_train_begin` / `iris_train_slice` / `iris_train_progress` /
+  `iris_train_busy`, `iris_train_epochs`, `iris_train_converge`, `iris_correct`,
+  `iris_retrain_new`, the closed-form `iris_train_elm`, `iris_train_elm_ex` and
+  `iris_retrain_elm_new`, and an experimental L-BFGS trainer in
+  `experimental/iris_lbfgs.h`.
+- Playing: `iris_predict`, `iris_novelty`, and the nearest-neighbour
+  `iris_knn_predict` and `iris_classify_1nn`.
+- A store of demonstrations with stable identifiers, deleted by identifier,
+  position, newest or nearest.
+- Smoothing (`iris_set_smoothing`), `iris_loo_error` and
+  `iris_suggest_smoothing`; the worst-demonstration ledger
+  (`iris_example_stress`, `iris_worst_example`, `iris_worst_example_id`).
+- Status codes for numerical health, including `IRIS_TRAINING_DIVERGED`,
+  `IRIS_DIVERGED_STUCK`, `IRIS_NOT_FITTED` and `IRIS_STORE_FULL`, and
+  `iris_train_epochs_done`.
+- Save format 5 with a CRC-32 checksum, a cyclic redundancy check (format 6
+  for an instrument never fitted); formats 1 to 6 read.
+- Build guards against `-ffast-math` and `-ffinite-math-only`, and
+  file-scope contraction pragmas.
+- Tests: `tests/audit.c` with the golden hashes `0x6805FB0D` and `0xFEFAEDF6`,
+  `tests/regressions.c`, `tests/coverage.c`, `tests/fuzz.c`, the two-unit test
+  in `tests/tu/`, the guards comparison, and golden fixtures for formats 1 and
+  3; continuous integration on Ubuntu and macOS with gcc and clang.
+- `extras/`: output ports (control change, polyphonic expression, Open Sound
+  Control, a null port, a template, a WebAssembly shim), the sink and source
+  interfaces, and a browser benchmark.
+- Arduino packaging (`library.properties`, `keywords.txt`,
+  `examples/iris_smallest/`), four C examples, and the BSD 3-Clause licence.
