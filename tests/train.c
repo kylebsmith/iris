@@ -45,6 +45,9 @@
         a plateau that ends the run at the next window test.
     12. iris_reseed ends a sliced run in flight: no later slice trains the
         new seed's weights inside the old run.
+    13. The divergence guard reaches every weight and bias, the last of each
+        array included: one past the limit is clamped to exactly the limit
+        and the run reports IRIS_TRAINING_DIVERGED.
 
    Not-a-number and infinity are built with __builtin_nanf and __builtin_inff,
    never by dividing by zero, so -fsanitize=float-divide-by-zero can run over
@@ -809,6 +812,34 @@ int main(void) {
     snprintf(d, sizeof d, "busy after the reseed %d, a slice then returned %d and changed "
              "nothing %d; iris_train gives the seed-42 instrument %d", busy, more, still, fresh);
     check("iris_reseed ends a sliced run in flight", !busy && !more && still && fresh, d);
+  }
+
+  /* ---- 13. the divergence guard reaches every weight ----------------------
+     A weight of +-1e30 planted in the last element of w1, b1, w2 and b2 in
+     turn -- the loader accepts any finite weight, so a file can bring one --
+     then one warm epoch. The guard walks the four arrays as one block, so a
+     walk cut short misses the end of it: the planted value must come back
+     as exactly +-IRIS_W_LIMIT, with IRIS_TRAINING_DIVERGED. */
+  {
+    int right = 0; char first[160] = "";
+    const char *names[4] = { "w1", "b1", "w2", "b2" };
+    for (int t = 0; t < 8; ++t) {
+      iris *k = lived_in(2, 12, 3, 32, 14, 77u);
+      float *arr[4] = { k->w1, k->b1, k->w2, k->b2 };
+      const int len[4] = { 12 * 2, 12, 3 * 12, 3 };
+      const float plant = t < 4 ? 1e30f : -1e30f;
+      float *w = arr[t % 4] + len[t % 4] - 1;
+      *w = plant;
+      iris_continue(k, 1);
+      const int ok = *w == (t < 4 ? IRIS_W_LIMIT : -IRIS_W_LIMIT)
+                  && iris_get_status(k) == IRIS_TRAINING_DIVERGED;
+      right += ok;
+      if (!ok && !first[0])
+        snprintf(first, sizeof first, " -- %s[last] = %g came back %g, status %d",
+                 names[t % 4], (double)plant, (double)*w, (int)iris_get_status(k));
+    }
+    snprintf(d, sizeof d, "%d of 8 planted weights clamped to the limit and reported%s", right, first);
+    check("the divergence guard reaches the last of every array", right == 8, d);
   }
 
   if (fails) printf("\n  %d FAILING\n", fails);
