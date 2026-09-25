@@ -33,6 +33,10 @@
      8. Smoothing's weight decay never leaves a weight below IRIS_TINY and
         not zero, so no weight goes subnormal, where a board that flushes
         subnormal numbers and a laptop that does not would part ways.
+     9. What the comments say the set-up does: starting weights are each
+        draw times the rounded reciprocal of the root of the fan-in; every
+        blocking call starts its shuffle from the identity order; the
+        learning-rate and momentum clamps pass Weka's pair.
 
    Not-a-number and infinity are built with __builtin_nanf and __builtin_inff,
    never by dividing by zero, so -fsanitize=float-divide-by-zero can run over
@@ -606,6 +610,60 @@ int main(void) {
              iris_train_epochs_done(k), slices, tiny, exact_zero);
     check("smoothing never leaves a weight subnormal", tiny == 0 && exact_zero == 12
           && iris_train_epochs_done(k) >= 4000, d);
+  }
+
+  /* ---- 9. what the comments say the trainers' set-up does ---------------
+     (a) The starting weights are each draw times the reciprocal of the
+     square root of the unit's fan-in, rounded once, not the draw divided by
+     the root, which rounds differently (and the check requires that it
+     would, somewhere, so it can tell the two apart). (b) Every blocking
+     call starts its shuffle from the identity order: scrambling order[]
+     before a warm call changes no byte of what it produces. (c) The
+     learning-rate and momentum clamps let Weka's pair, 0.3 and 0.2, through
+     exactly and hold 5 and 1.5 at 2 and 0.99. */
+  {
+    const int shapes[3][3] = { { 2, 12, 3 }, { 5, 20, 5 }, { 1, 8, 1 } };
+    int wrong = 0, quotient_differs = 0;
+    for (int sh = 0; sh < 3; ++sh)
+      for (uint32_t seed = 1; seed <= 50; ++seed) {
+        const int ni = shapes[sh][0], nh = shapes[sh][1], no = shapes[sh][2];
+        iris *k = iris_init(A, sizeof A, ni, nh, no, 16, seed);
+        iris_internal_rng r = { seed };
+        const float r1 = iris_internal_sqrt((float)ni), r2 = iris_internal_sqrt((float)nh);
+        const float s1 = 1.0f / r1, s2 = 1.0f / r2;
+        for (int i = 0; i < nh * ni; ++i) {
+          const float u = iris_internal_rand_sym(&r);
+          wrong += k->w1[i] != u * s1;
+          quotient_differs += u * s1 != u / r1;
+        }
+        for (int i = 0; i < no * nh; ++i) {
+          const float u = iris_internal_rand_sym(&r);
+          wrong += k->w2[i] != u * s2;
+          quotient_differs += u * s2 != u / r2;
+        }
+      }
+
+    iris *k = lived_in(2, 12, 3, 32, 14, 21u);
+    memcpy(SNAP, A, sizeof A);
+    iris_continue(k, 5);
+    memcpy(RA, A, sizeof A);
+    memcpy(A, SNAP, sizeof A);
+    for (int i = 0; i < k->n_ex; ++i) k->order[i] = k->n_ex - 1 - i;   /* reversed */
+    iris_continue(k, 5);
+    const int restarts = memcmp(RA, A, sizeof A) == 0;
+
+    iris_internal_set_learning(k, 0.3f, 0.2f);
+    const int weka = k->lr == 0.3f && k->momentum == 0.2f;
+    iris_internal_set_learning(k, 5.0f, 1.5f);
+    const int clamped = k->lr == 2.0f && k->momentum == 0.99f;
+    iris_internal_set_learning(k, 0.10f, 0.85f);
+
+    snprintf(d, sizeof d, "starting weights: %d of every weight in 150 instruments not draw times "
+             "rounded reciprocal (division would round %d differently); warm call ignores the "
+             "order left behind %d; Weka's pair kept %d, clamps %d",
+             wrong, quotient_differs, restarts, weka, clamped);
+    check("reciprocal starting weights, fresh shuffle, clamps", wrong == 0 && quotient_differs > 0
+          && restarts && weka && clamped, d);
   }
 
   if (fails) printf("\n  %d FAILING\n", fails);

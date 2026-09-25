@@ -651,6 +651,30 @@ int main(void) {
           before == after && before > 0.039f && before < 0.041f && ranges
           && n_bad == 1.0f && untouched, d); }
 
+  /* ---- the output floor: max(1e-5 * |lo|, 1e-6) -------------------------
+     An output shown one value keeps a width, relative to that value with an
+     absolute floor near zero, exactly as PART 5 states it. The ranges are
+     fitted by the first neighbour call on a never-fitted instrument. */
+  { const float los[5] = { 500.0f, 0.0f, -2e7f, 3e-3f, 1e30f };
+    int wrong = 0; char first[120] = "";
+    for (int c = 0; c < 5; ++c) {
+      static unsigned char M[IRIS_ARENA(1, 8, 1, 8)];
+      iris *k = iris_init(M, sizeof M, 1, 8, 1, 8, 3u);
+      for (int i = 0; i < 3; ++i) { const float in = (float)i, out = los[c]; iris_record(k, &in, &out); }
+      float o, q = 1.0f;
+      iris_knn_predict(k, &q, &o, 2);
+      float w = (los[c] < 0.0f ? -los[c] : los[c]) * 1e-5f;
+      if (w < 1e-6f) w = 1e-6f;
+      if (k->out_lo[0] != los[c] || k->out_hi[0] != los[c] + w) {
+        wrong++;
+        if (!first[0]) snprintf(first, sizeof first, " -- at %g: hi %.9g, want %.9g",
+                                (double)los[c], (double)k->out_hi[0], (double)(los[c] + w));
+      }
+    }
+    snprintf(d, sizeof d, "%d of 5 constant outputs (500, 0, -2e7, 3e-3, 1e30) off the floor%s",
+             wrong, first);
+    check("an output that never moved gets max(1e-5*|lo|, 1e-6)", wrong == 0, d); }
+
   /* ---- the playing functions take a non-const instrument -----------------
      The pointers above only compile against the non-const signatures; this
      plays once through each so the check is also exercised at run time. */

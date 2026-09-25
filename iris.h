@@ -1336,10 +1336,16 @@ IRIS_API void iris_internal_zero_velocity(iris *k) { if (!k) return;
    The scale matters. Each hidden unit adds up n_in incoming signals, so if
    the weights are too large the sum lands far out where tanh is flat, the
    error signal underneath it goes to nearly zero, and the network stops
-   learning before it starts. Dividing by the square root of the number of
-   inputs keeps the sums in the responsive part of the curve. This is a
-   standard trick and it is the difference between "trains in 50 ms" and
-   "never trains at all".
+   learning before it starts. Scaling each weight by one over the square root
+   of the number of inputs to its unit keeps the sums in the responsive part
+   of the curve. This is a standard trick and it is the difference between
+   "trains in 50 ms" and "never trains at all".
+
+   The code multiplies each draw by that reciprocal, rounded once to a float
+   (s1 and s2 below), rather than dividing each draw by the square root. The
+   two round differently: over seeds 1 to 1,000 at 2 inputs, 12 hidden units
+   and 3 outputs, dividing would give a different float for 12 to 37 of the
+   60 weights. The multiplication is the one the golden hash pins.
 
    A seed of 0 is taken as 1, because the random number generator cannot
    start from 0, so seeds 0 and 1 give the same instrument.
@@ -1488,7 +1494,7 @@ IRIS_API void iris_internal_set_learning(iris *k, float lr, float momentum) { if
     k->status = IRIS_NAN_TRAPPED;
     return;
   }
-  k->lr = iris_internal_clampf(lr, 0.0001f, 2.0f);   /* range kept for Weka parity */
+  k->lr = iris_internal_clampf(lr, 0.0001f, 2.0f);   /* allows Weka's 0.3; see above */
   k->momentum = iris_internal_clampf(momentum, 0.0f, 0.99f);
 }
 
@@ -1803,12 +1809,16 @@ IRIS_API void iris_internal_span(const iris *k, int c, float *lo, float *hi) {
    becomes a constant.
 
    AN OUTPUT THAT NEVER MOVED keeps a small nonzero width, because the network
-   is trained toward it and the output scaling divides by the width. That floor
-   is relative for the reason above: an absolute 1e-6 added to a value above 32
-   changes nothing in 32-bit floating point, because the gap between
-   representable numbers there is already wider, so the width would stay zero
-   and every prediction would be not-a-number. An absolute floor works up to
-   31.77 and fails from 32.72.
+   is trained toward it and the output scaling divides by the width. The rule:
+
+       an output's width is at least max(1e-5 * |lo|, 1e-6), where lo is the
+       smallest value it was shown; a narrower output gets hi = lo + that.
+
+   That floor is relative for the reason above: an absolute 1e-6 added to a
+   value above 32 changes nothing in 32-bit floating point, because the gap
+   between representable numbers there is already wider, so the width would
+   stay zero and every prediction would be not-a-number. An absolute floor
+   works up to 31.77 and fails from 32.72.
 
    A LIMIT, STATED RATHER THAN GUARDED. A width is a float, so demonstrations
    that span more than the largest float, about 3.4e38 end to end (values
@@ -2684,6 +2694,14 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
    and the random state where the last run left them. iris_train, below, is
    the second of them run from a fresh start: it reseeds from the
    instrument's own seed and then calls iris_continue_to_plateau.
+
+   EVERY CALL IS A SESSION OF ITS OWN. A blocking call starts its shuffle
+   from the identity order (iris_internal_begin_session), whatever order the
+   last run left; only a sliced run carries its order from one slice to the
+   next. So n calls of iris_continue(k, 1) are not iris_continue(k, n): the
+   same random draws permute a different starting order. On the golden
+   recipe of tests/audit.c, 800 one-epoch calls end with weights up to 0.0182
+   away from one 800-epoch call.
 
    WHY THEY EXIST. A musician who has practised an instrument and records
    one more take wants that corner fixed without the rest of the mapping
