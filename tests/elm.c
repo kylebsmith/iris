@@ -32,6 +32,7 @@
      5. every output constant, or every take at one gesture, is not reported
         as a collapse; a real collapse still is
      6. the scratch works at every byte offset, with every byte of it in use
+     7. a solve ends a sliced run that is still in flight
    ========================================================================= */
 
 /* The pinned hashes are exact, so the demonstrations built below must be
@@ -580,6 +581,30 @@ int main(int argc, char **argv) {
     snprintf(d, sizeof d, "%d inputs, offsets 0..7 with exactly %zu bytes: %s", IRIS_MAX_IN, need,
              all ? "identical weights" : "DIFFERENT or refused");
     check("the scratch works at any alignment", all, d);
+  }
+
+  /* ---- 7. a solve ends a sliced run ------------------------------------------
+     A run begun with iris_train_begin and still in flight would otherwise go
+     on training from the solved weights at its next slice, and quietly
+     replace the solve. A refused solve leaves the run going, like every other
+     byte. The solve itself does not depend on what the run left in the
+     weights: it gives recipe 0's pinned weights. */
+  {
+    const struct recipe *r = &R[0];
+    iris *k = iris_init(arena, sizeof arena, r->ni, r->nh, r->no, 64, r->seed);
+    record_recipe(k, r);
+    iris_train_begin(k, 4000);
+    iris_train_slice(k, 50);
+    memcpy(before, arena, sizeof arena);
+    int kept = refused_cleanly(iris_train_elm(k, -1.0f, scratch, sizeof scratch))
+            && iris_train_busy(k);
+    int ret = solve_recipe(k, r);
+    uint32_t h = weight_hash(k);
+    int more = iris_train_slice(k, 50);
+    snprintf(d, sizeof d, "refused mid-run: run %s; solve ret %d weights 0x%08X; after: busy %d, slice %d, weights %s",
+             kept ? "kept" : "DISTURBED", ret, h, iris_train_busy(k), more, weight_hash(k) == h ? "kept" : "MOVED");
+    check("a solve ends a sliced run in flight", kept && ret == r->ret && h == r->weights
+          && !iris_train_busy(k) && !more && weight_hash(k) == h, d);
   }
 
   printf("\n  %s\n\n", fails ? "FAILURES ABOVE" : "all pass");

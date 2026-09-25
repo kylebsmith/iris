@@ -2760,6 +2760,8 @@ IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
     k->b2[o] = B[(size_t)NH_ * NO_ + o];
   }
   iris_zero_velocity(k);
+  k->tr_running = 0;         /* end any sliced run: its next slice would
+                                 otherwise go on training over the solve */
   k->trained = 1;
   k->fitted  = 1;                    /* a closed-form solve IS a fit */
   k->status  = doublings > 0 ? IRIS_RIDGE_ESCALATED : IRIS_STATUS_OK;
