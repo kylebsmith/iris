@@ -237,6 +237,60 @@ int main(void) {
              "widest legal shapes accepted %d", bad, sane);
     check("iris_init refuses every impossible shape", bad == 0 && sane, d); }
 
+  /* ---- iris_size refuses the same shapes, with 0 ------------------------
+     Each dimension at 0 and one past its maximum, the others legal: the
+     answer must be exactly 0, the sentinel the header documents, not a size
+     and not SIZE_MAX. The smallest legal shape, capacity 1 included, and the
+     largest must be sized, non-zero, at exactly what IRIS_ARENA says. */
+  { int bad = 0;
+    const int shapes[8][4] = {
+      { 0, 12, 2, 32 }, { IRIS_MAX_IN + 1, 12, 2, 32 },
+      { 2, 7, 2, 32 },  { 2, IRIS_MAX_HID + 1, 2, 32 },
+      { 2, 12, 0, 32 }, { 2, 12, IRIS_MAX_OUT + 1, 32 },
+      { 2, 12, 2, 0 },  { 2, 12, 2, IRIS_MAX_EX + 1 } };
+    for (int j = 0; j < 8; ++j)
+      if (iris_size(shapes[j][0], shapes[j][1], shapes[j][2], shapes[j][3]) != 0) bad++;
+    const size_t small = iris_size(1, 8, 1, 1);
+    const size_t big = iris_size(IRIS_MAX_IN, IRIS_MAX_HID, IRIS_MAX_OUT, IRIS_MAX_EX);
+    const int sized = small != 0 && small == (size_t)IRIS_ARENA(1, 8, 1, 1)
+                   && big != 0 && big == (size_t)IRIS_ARENA(IRIS_MAX_IN, IRIS_MAX_HID,
+                                                            IRIS_MAX_OUT, IRIS_MAX_EX);
+    snprintf(d, sizeof d, "%d of 8 impossible shapes not answered 0; iris_size(1,8,1,1) = %lu, "
+             "the largest shape %lu, each IRIS_ARENA %d", bad, (unsigned long)small,
+             (unsigned long)big, sized);
+    check("iris_size answers 0 for every impossible shape", bad == 0 && sized, d); }
+
+  /* ---- IRIS_STORE_FULL is retracted by the record that succeeds ---------
+     A full store refuses the next take with IRIS_STORE_FULL; after a delete
+     the next take is stored and the status is healthy again. A status
+     raised by something else is not iris_record's to clear. */
+  { iris *k = iris_init(B, sizeof B, 2, 12, 2, 32, 1u);
+    for (int i = 0; i < 32; ++i) iris_record(k, in, out);
+    const int refused = iris_record(k, in, out) == 0 && iris_get_status(k) == IRIS_STORE_FULL;
+    iris_delete_last(k);
+    const int id = iris_record(k, in, out);
+    const int retracted = id > 0 && iris_get_status(k) == IRIS_STATUS_OK;
+    iris_delete_last(k);
+    { float bad_in[2] = { NAN, 0.0f }; iris_record(k, bad_in, out); }
+    const int kept = iris_record(k, in, out) > 0 && iris_get_status(k) == IRIS_NAN_TRAPPED;
+    snprintf(d, sizeof d, "full store refused %d, the next take after a delete id %d with status "
+             "OK %d, a not-a-number trap kept by a good take %d", refused, id, retracted, kept);
+    check("a stored take retracts IRIS_STORE_FULL, and only that", refused && retracted && kept, d); }
+
+  /* ---- the learning-rate setter refuses a not-a-number ------------------
+     iris_internal_set_learning is internal, but the tests set Weka's pair
+     through it; a not-a-number in either argument must leave both values
+     as they were and report IRIS_NAN_TRAPPED. */
+  { iris *k = iris_init(B, sizeof B, 2, 12, 2, 32, 1u);
+    int right = 0;
+    for (int j = 0; j < 2; ++j) {
+      k->status = IRIS_STATUS_OK;
+      iris_internal_set_learning(k, j ? 0.3f : NAN, j ? NAN : 0.2f);
+      right += k->lr == 0.10f && k->momentum == 0.85f && iris_get_status(k) == IRIS_NAN_TRAPPED;
+    }
+    snprintf(d, sizeof d, "%d of 2 not-a-number arguments refused with both values kept", right);
+    check("the learning-rate setter refuses a not-a-number", right == 2, d); }
+
   /* ---- the accessors on a real instrument -------------------------------- */
   { iris *k = filled(A, sizeof A, 6);
     iris_set_smoothing(k, 0.5f);
