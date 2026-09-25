@@ -1,17 +1,24 @@
 /* THE ERROR PATHS.
    =================
-   Branch coverage was 76.8%: roughly one in four two-way decisions had only
-   ever been tested one way, and the untested side was almost always the
-   refusal. That is exactly where a silent failure hides -- the checksum bypass
-   survived four audits by living on a branch nothing exercised.
+   Most two-way decisions in iris.h have a side that says no: a null
+   instrument, an empty store, a budget of zero, a file that lies. That side
+   is exactly where a silent failure hides, because ordinary use never walks
+   down it. So this file is not about happy paths; the other suites cover
+   those. Every case here asks a function to REFUSE, and checks that it does,
+   that it says so, and that it left alone what it promised to leave alone.
 
-   So this file is not about happy paths; the other suites cover those. Every
-   case here asks a function to REFUSE, and checks that it does, and that it
-   says so. Measured with llvm-cov before and after; the numbers are in the
-   commit that added it.                                                     */
+   (This is the "coverage" arm of build.sh because it exists to take the
+   refusing side of those decisions; the "cov" arm is the one that measures
+   line and branch coverage.)
+
+     sh build.sh coverage                                                    */
 #define IRIS_IMPLEMENTATION
 #include "../iris.h"
+/* <math.h> for NAN and INFINITY only: they are never made by dividing by
+   zero, so the float-divide-by-zero sanitizer can run over this file. */
+#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int fails = 0;
@@ -23,6 +30,16 @@ static void check(const char *name, int ok, const char *detail) {
 static unsigned char A[IRIS_ARENA(2, 12, 2, 32)];
 static unsigned char B[IRIS_ARENA(2, 12, 2, 32)];
 static unsigned char SCR[IRIS_ELM_SCRATCH(12, 2)];
+
+/* Does iris_init accept this shape, given exactly the arena IRIS_ARENA says
+   it needs? */
+static int accepts(int ni, int nh, int no, int cap) {
+  size_t n = (size_t)IRIS_ARENA(ni, nh, no, cap);
+  unsigned char *m = (unsigned char *)malloc(n);
+  int yes = m && iris_init(m, n, ni, nh, no, cap, 1u) != 0;
+  free(m);
+  return yes;
+}
 
 static iris *filled(unsigned char *mem, size_t n, int demos) {
   iris *k = iris_init(mem, n, 2, 12, 2, 32, 1234u);
@@ -62,11 +79,14 @@ int main(void) {
     snprintf(d, sizeof d, "%d of 18 calls answered wrongly", bad);
     check("a null instrument refuses across the whole surface", bad == 0, d); }
 
-  /* ---- iris_predict on a null instrument must not leave stale audio ----- */
+  /* ---- iris_predict on a null instrument writes nothing -----------------
+     There is no instrument to take a shape or a range centre from, so the
+     output buffer is not touched: its sentinel values must survive. */
   { float o[2] = { 7.0f, 7.0f };
     iris_predict(0, in, o);
-    snprintf(d, sizeof d, "out left at %.1f, %.1f", (double)o[0], (double)o[1]);
-    check("iris_predict(NULL) writes nothing (documented)", 1, d); }
+    snprintf(d, sizeof d, "out left at %.1f, %.1f (sentinel 7.0)", (double)o[0], (double)o[1]);
+    check("iris_predict(NULL) writes nothing (documented)",
+          o[0] == 7.0f && o[1] == 7.0f, d); }
 
   /* ---- the trainer's refusal paths -------------------------------------- */
   { iris *k = iris_init(A, sizeof A, 2, 12, 2, 32, 1u);
@@ -97,15 +117,22 @@ int main(void) {
     check("every delete refuses an empty store the same way",
           a == 0 && b == 0 && c == 0 && e == 0, d); }
 
-  /* ---- delete_nearest on a real store, then out of range ---------------- */
+  /* ---- delete_nearest on a real store, then out of range ----------------
+     filled() puts demonstration i at (i/8, ((3i) mod 5)/5), so for the query
+     (0.3, 0.4) -- inputs normalised by the demonstrated ranges [0, 0.625]
+     and [0, 0.8] -- the nearest is demonstration 2 at (0.25, 0.2), id 3.
+     That one must be the one that goes, and every other must stay. */
   { iris *k = filled(A, sizeof A, 6);
     int hit  = iris_delete_nearest(k, in);
     int left = iris_count(k);
+    int others = 1;
+    for (int id = 1; id <= 6; ++id)
+      if ((iris_index_of(k, id) >= 0) != (id != 3)) others = 0;
     int oob  = iris_delete_index(k, 99);
-    snprintf(d, sizeof d, "nearest removed %d (count %d), index 99 -> %d",
-             hit, left, oob);
-    check("delete_nearest works and an out-of-range index refuses",
-          hit != 0 && left == 5 && oob == 0, d); }
+    snprintf(d, sizeof d, "nearest removed %d (count %d, id 3 gone and the rest kept %d), "
+             "index 99 -> %d", hit, left, others, oob);
+    check("delete_nearest removes the nearest; an out-of-range index refuses",
+          hit != 0 && left == 5 && others && oob == 0 && iris_count(k) == 5, d); }
 
   /* ---- example_stress: before training, and out of range ---------------- */
   { iris *k = filled(A, sizeof A, 6);
@@ -169,26 +196,38 @@ int main(void) {
     iris *r = iris_init(B, sizeof B, 2, 12, 2, 32, 9u);
     int too_short = iris_load(r, blob, 8);            /* under the header */
     int truncated = iris_load(r, blob, n - 4);        /* wrong length */
-    unsigned char bad_magic[64];
-    memcpy(bad_magic, blob, 64); bad_magic[0] ^= 0xFF;
-    int wrong_magic = iris_load(r, bad_magic, 64);
+    /* A whole file with its magic changed and its checksum recomputed over
+       the change, so that neither the length nor the checksum can be what
+       refuses it: only the magic check can. */
+    static unsigned char bad_magic[2048];
+    memcpy(bad_magic, blob, n); bad_magic[0] ^= 0xFF;
+    { uint32_t c = iris_internal_crc32(bad_magic, n - 4);
+      for (int i = 0; i < 4; ++i) bad_magic[n - 4 + (size_t)i] = (unsigned char)(c >> (8 * i)); }
+    int wrong_magic = iris_load(r, bad_magic, n);
     int small_buf   = (int)iris_save(k, blob, 4);     /* buffer too small */
     snprintf(d, sizeof d, "short %d, truncated %d, bad magic %d, small save %d",
              too_short, truncated, wrong_magic, small_buf);
     check("load refuses short, truncated and mislabelled files",
           !too_short && !truncated && !wrong_magic && !small_buf, d); }
 
-  /* ---- shape refusals in iris_init --------------------------------------- */
+  /* ---- shape refusals in iris_init ---------------------------------------
+     Each impossible shape is offered an arena of exactly IRIS_ARENA bytes of
+     that same shape, so the size bound cannot be what refuses it: only the
+     rule about that dimension can. */
   { int bad = 0;
-    if (iris_init(A, sizeof A,  0, 12,  2, 32, 1u)) bad++;   /* no inputs */
-    if (iris_init(A, sizeof A,  2, 12,  0, 32, 1u)) bad++;   /* no outputs */
-    if (iris_init(A, sizeof A,  2,  4,  2, 32, 1u)) bad++;   /* too narrow */
-    if (iris_init(A, sizeof A,  2, 12,  2,  0, 1u)) bad++;   /* no capacity */
-    if (iris_init(A, sizeof A, 99, 12,  2, 32, 1u)) bad++;   /* too many in */
-    if (iris_init(A, sizeof A,  2, 99,  2, 32, 1u)) bad++;   /* too wide */
+    if (accepts( 0, 12,  2, 32)) bad++;                  /* no inputs */
+    if (accepts( 2, 12,  0, 32)) bad++;                  /* no outputs */
+    if (accepts( 2,  7,  2, 32)) bad++;                  /* too narrow */
+    if (accepts( 2, 12,  2,  0)) bad++;                  /* no capacity */
+    if (accepts(IRIS_MAX_IN + 1, 12, 2, 32)) bad++;      /* too many in */
+    if (accepts( 2, IRIS_MAX_HID + 1, 2, 32)) bad++;     /* too wide */
+    if (accepts( 2, 12, IRIS_MAX_OUT + 1, 32)) bad++;    /* too many out */
+    if (accepts( 2, 12,  2, IRIS_MAX_EX + 1)) bad++;     /* too many demonstrations */
     if (iris_init(0, sizeof A,  2, 12,  2, 32, 1u)) bad++;   /* no memory */
-    snprintf(d, sizeof d, "%d of 7 impossible shapes were accepted", bad);
-    check("iris_init refuses every impossible shape", bad == 0, d); }
+    int sane = accepts(2, 8, 2, 1) && accepts(IRIS_MAX_IN, IRIS_MAX_HID, IRIS_MAX_OUT, 32);
+    snprintf(d, sizeof d, "%d of 9 impossible shapes were accepted; the smallest and "
+             "widest legal shapes accepted %d", bad, sane);
+    check("iris_init refuses every impossible shape", bad == 0 && sane, d); }
 
   /* ---- the accessors on a real instrument -------------------------------- */
   { iris *k = filled(A, sizeof A, 6);
@@ -207,12 +246,11 @@ int main(void) {
   /* ---- the NaN-through-a-clamp class ------------------------------------
      iris_internal_clampf is a ternary on two comparisons and every
      comparison with NaN is false, so a NaN passes straight through a clamp.
-     docs/FREEZE.md named this mechanism and prescribed one
-     iris_internal_isbad at the top of the setters; three instances were
-     fixed and the setters were not. Before the fix:
-     iris_set_smoothing(NaN) left l2 = NaN with status 0, and iris_train then
-     returned 1 -- "it worked" -- with iris_is_trained 0. */
-  { float nan_v = 0.0f/0.0f, inf_v = 1.0f/0.0f;
+     The setters therefore test for a non-finite value before they clamp;
+     without that test iris_set_smoothing(NaN) would leave the weight decay
+     NaN with status 0, and the next training run would poison every
+     weight. */
+  { float nan_v = NAN, inf_v = INFINITY;
     iris *k = filled(A, sizeof A, 6);
     iris_set_smoothing(k, nan_v);
     int poisoned_nan = iris_internal_isbad(iris_get_smoothing(k)) || iris_internal_isbad(iris_internal_get_l2(k));
