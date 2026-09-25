@@ -30,6 +30,9 @@
      7. iris_last_error means one thing: after iris_train, every slice,
         iris_continue and the closed-form solve it equals, to the bit, what a
         load of the saved instrument reports.
+     8. Smoothing's weight decay never leaves a weight below IRIS_TINY and
+        not zero, so no weight goes subnormal, where a board that flushes
+        subnormal numbers and a laptop that does not would part ways.
 
    Not-a-number and infinity are built with __builtin_nanf and __builtin_inff,
    never by dividing by zero, so -fsanitize=float-divide-by-zero can run over
@@ -568,6 +571,41 @@ int main(void) {
              agree, total, ret_is_it, differs_from_run, elm, cleared, first);
     check("iris_last_error is the same after a trainer and a load", agree == total && ret_is_it
           && differs_from_run && elm >= 0 && cleared, d);
+  }
+
+  /* ---- 8. decayed weights are flushed like the velocities -----------------
+     Smoothing shrinks every weight by a fraction of itself on every visit.
+     A weight with no gradient -- here every weight from an input that never
+     moved, which normalises to 0 -- then only shrinks, geometrically, and
+     without a flush it passes through the subnormal numbers, which some
+     processors flush to zero and others do not. At smoothing 1 on these
+     six demonstrations the first weight falls below 1e-30 after 2,225
+     epochs and goes subnormal after 2,832, so the run is taken in slices of
+     25 epochs and every weight is looked at after each: none may be nonzero
+     and smaller than IRIS_TINY (1e-30) in magnitude. */
+  {
+    iris *k = iris_init(A, sizeof A, 2, 12, 1, 16, 7u);
+    for (int i = 0; i < 6; ++i) {
+      float in[2] = { (float)i / 5.0f, 3.0f }, out[1] = { (float)(i * i) };
+      iris_record(k, in, out);
+    }
+    iris_set_smoothing(k, 1.0f);
+    const int nw = 12 * 2 + 12 + 1 * 12 + 1;
+    int tiny = 0, slices = 0, exact_zero = 0;
+    iris_train_begin(k, 8000);
+    while (iris_train_slice(k, 25)) {
+      slices++;
+      for (int i = 0; i < nw; ++i) {
+        const float w = k->w1[i];
+        if (w != 0.0f && w < IRIS_TINY && w > -IRIS_TINY) tiny++;
+      }
+    }
+    for (int h = 0; h < 12; ++h) exact_zero += k->w1[h * 2 + 1] == 0.0f;
+    snprintf(d, sizeof d, "%d epochs in %d slices: %d weight readings below 1e-30 and not zero; "
+             "%d of 12 weights from the still input decayed to exactly 0",
+             iris_train_epochs_done(k), slices, tiny, exact_zero);
+    check("smoothing never leaves a weight subnormal", tiny == 0 && exact_zero == 12
+          && iris_train_epochs_done(k) >= 4000, d);
   }
 
   if (fails) printf("\n  %d FAILING\n", fails);

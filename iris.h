@@ -786,11 +786,12 @@ IRIS_API int iris_internal_isbad(float x) {
 }
 
 /* Any momentum velocity smaller than this is musically and numerically dead:
-   added to a weight of ordinary size it cannot move it by even one ulp.
-   Flushing it to zero keeps the decaying tail of the momentum out of
-   subnormal numbers, which some processors flush to zero in hardware and
-   others compute slowly or exactly, so the tail cannot make a host and a
-   board disagree. Whether the ESP32-S3's floating-point unit flushes
+   added to a weight of ordinary size it cannot move it by even one ulp, and
+   a weight this small moves nothing either. Flushing the velocities, and the
+   weights smoothing's decay shrinks (PART 8), to zero keeps both decaying
+   tails out of subnormal numbers, which some processors flush to zero in
+   hardware and others compute slowly or exactly, so a tail cannot make a
+   host and a board disagree. Whether the ESP32-S3's floating-point unit flushes
    subnormals has not been measured on the chip. 1e-30 is about eight powers
    of ten above the smallest normal float (about 1.2e-38), so every processor
    evaluates the comparison identically.                                     */
@@ -2557,9 +2558,22 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
          rate times its gradient; the weight moves by its velocity.
 
          WEIGHT DECAY, when asked for. `wd` is zero unless iris_set_smoothing
-         set it, and at zero `w[h] -= 0.0f * w[h]` subtracts an exact zero, so
+         set it, and at zero `w[h] - 0.0f * w[h]` subtracts an exact zero, so
          the update is the undecayed one bit for bit; the default path pays
          one multiply and one subtraction per weight for it.
+
+         The decayed weight is flushed like the velocities (IRIS_FLUSH). A
+         weight with no gradient -- one from an input that never moved, say
+         -- only shrinks, by the same fraction on every visit, and without the
+         flush it would pass through the subnormal numbers on its way to
+         zero, where a processor that flushes them and one that does not
+         part ways (see IRIS_TINY). Six demonstrations with one still input
+         at smoothing 1 (the check in tests/train.c) have a weight below
+         IRIS_TINY after 2,225 epochs and a subnormal one after 2,832 without
+         the flush, and every such weight at exactly zero after 2,285 with it.
+         A weight smaller than IRIS_TINY moves nothing, so zero loses
+         nothing, and no healthy run at smoothing 0 has one: the golden hash
+         does not move.
 
          Decoupled (applied to the weight, not folded into the gradient, so it
          does not build up in the momentum) and on WEIGHTS ONLY. Biases are
@@ -2574,7 +2588,7 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
         for (int h = 0; h < NH; ++h) {
           v[h] = IRIS_FLUSH(k->momentum * v[h] - k->lr * g * k->hid[h]);
           w[h] += v[h];
-          w[h] -= wd * w[h];
+          w[h] = IRIS_FLUSH(w[h] - wd * w[h]);
         }
         k->v_b2[o] = IRIS_FLUSH(k->momentum * k->v_b2[o] - k->lr * g);
         k->b2[o]  += k->v_b2[o];      /* biases are not decayed */
@@ -2585,7 +2599,7 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
         for (int i = 0; i < NI; ++i) {
           v[i] = IRIS_FLUSH(k->momentum * v[i] - k->lr * g * x[i]);
           w[i] += v[i];
-          w[i] -= wd * w[i];
+          w[i] = IRIS_FLUSH(w[i] - wd * w[i]);
         }
         k->v_b1[h] = IRIS_FLUSH(k->momentum * k->v_b1[h] - k->lr * g);
         k->b1[h]  += k->v_b1[h];      /* biases are not decayed */

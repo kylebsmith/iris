@@ -159,6 +159,10 @@ Behaviour changes on the playing path:
   it to 1. The reported errors fall by 2% to 13% (the reference task trained
   to its plateau: 4.169e-06 before, 3.718e-06 now). The plateau test and the
   error floor still read the epoch's own figure.
+- Smoothing's weight decay could shrink a weight into the subnormal numbers,
+  where a processor that flushes them and one that does not give different
+  bits; the decayed weight is now flushed below 1e-30, as the momentum
+  velocities are. At smoothing 0 nothing changes.
 - The stuck-divergence refusal fired only on every second warm call, and any
   call that overwrote the status let a warm run through; it now keys on the
   pinned weights and holds on every call.

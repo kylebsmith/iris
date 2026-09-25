@@ -276,7 +276,8 @@ class Net:
 
 
 def flush(v):
-    """A velocity smaller than 1e-30 in magnitude becomes exactly zero."""
+    """A velocity, or a weight after its decay, smaller than 1e-30 in
+    magnitude becomes exactly zero."""
     v[np.abs(v) < TINY] = 0.0
 
 
@@ -290,7 +291,8 @@ def train_epoch(net, X, T, order, lr, momentum, wd):
       logistic's and tanh's own derivatives); hidden error signal from the
       output weights BEFORE this example's update, times (1 - a^2); then the
       output layer's update, then the hidden layer's:
-          v = flush(momentum * v - lr * signal * input);  w += v;  w -= wd * w
+          v = flush(momentum * v - lr * signal * input);  w += v;
+          w = flush(w - wd * w)
           b's velocity likewise, without decay:           b += v_b
     Returns the epoch's error: the mean over demonstrations and outputs of
     (y - t)^2, accumulated while the weights change (an online error)."""
@@ -310,6 +312,7 @@ def train_epoch(net, X, T, order, lr, momentum, wd):
         flush(V2)
         W2 += V2
         W2 -= wd * W2
+        flush(W2)
         c2 *= momentum
         c2 -= lr * g
         flush(c2)
@@ -319,6 +322,7 @@ def train_epoch(net, X, T, order, lr, momentum, wd):
         flush(V1)
         W1 += V1
         W1 -= wd * W1
+        flush(W1)
         c1 *= momentum
         c1 -= lr * gh
         flush(c1)
@@ -367,6 +371,7 @@ def replay_epochs_batched(shape, w, v, orders, X, T, lr, momentum, wd):
         flush(V2)
         W2 += V2
         W2 -= wd * W2
+        flush(W2)
         c2 = momentum * c2 - lr * g
         flush(c2)
         b2 += c2
@@ -374,6 +379,7 @@ def replay_epochs_batched(shape, w, v, orders, X, T, lr, momentum, wd):
         flush(V1)
         W1 += V1
         W1 -= wd * W1
+        flush(W1)
         c1 = momentum * c1 - lr * gh
         flush(c1)
         b1 += c1

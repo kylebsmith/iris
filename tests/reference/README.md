@@ -187,6 +187,9 @@ rounding bound.
 - The guards' recovery. No recipe diverges or meets a not-a-number, so the
   reference's divergence clamp runs and never fires, and the reseed that follows
   a not-a-number is not modelled.
+- The flushes to zero. The reference flushes a velocity, and a weight after
+  its decay, below 1e-30 as the description says, but no recipe takes a weight
+  that low; `tests/train.c` checks the weight flush.
 - A proof of the whole run. No a-priori bound exists for thousands of epochs of
   a non-convex trajectory, because the dynamics amplify a difference (see
   Tolerances), so check (a)2 is calibrated. A longer noisy run can pass its
