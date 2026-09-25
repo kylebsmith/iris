@@ -34,6 +34,9 @@
         as a collapse; a real collapse still is
      6. the scratch works at every byte offset, with every byte of it in use
      7. a solve ends a sliced run that is still in flight
+     8. a solve whose output weights lie past IRIS_W_LIMIT saves, loads and
+        plays; warm training from it reports the divergence, and iris_train
+        starts over
    ========================================================================= */
 
 /* The pinned hashes are exact, so the demonstrations built below must be
@@ -637,6 +640,53 @@ int main(int argc, char **argv) {
              kept ? "kept" : "DISTURBED", ret, h, iris_train_busy(k), more, weight_hash(k) == h ? "kept" : "MOVED");
     check("a solve ends a sliced run in flight", kept && ret == r->ret && h == r->weights
           && !iris_train_busy(k) && !more && weight_hash(k) == h, d);
+  }
+
+  /* ---- 8. weights past IRIS_W_LIMIT make an ordinary instrument ------------
+     The limit detects a runaway gradient run; the closed-form solve is not
+     one, and its output weights can legitimately lie beyond it. This recipe
+     (a cubic in one input times a line in the other, on a 5 x 5 grid, nh 12,
+     lam0 1e-4) solves to output weights past 16. The instrument must save,
+     load and play the same bits. A warm trainer that continues from those
+     weights is gradient training again: its first epoch clamps them to the
+     limit and reports IRIS_TRAINING_DIVERGED, the next warm call refuses with
+     IRIS_DIVERGED_STUCK, and iris_train, starting over from the seed, is the
+     way from one trainer to the other. */
+  {
+    static unsigned char file[4096], other[IRIS_ARENA(2, 12, 1, 64)];
+    iris *k = iris_init(arena, sizeof arena, 2, 12, 1, 64, 1u);
+    for (int a = 0; a < 5; ++a) for (int b = 0; b < 5; ++b) {
+      const float x = (float)a / 4.0f, y = (float)b / 4.0f, t = 2.0f * x - 1.0f;
+      float in[2] = { x, y };
+      float o = 0.5f + 0.4f * (4.0f * t * t * t - 3.0f * t) * (2.0f * y - 1.0f);
+      iris_record(k, in, &o);
+    }
+    const int ret = iris_train_elm(k, 1e-4f, scratch, sizeof scratch);
+    float big = 0.0f;
+    for (int i = 0; i < 12 + 1; ++i) {
+      const float w = i < 12 ? k->w2[i] : k->b2[0], m = w < 0.0f ? -w : w;
+      if (m > big) big = m;
+    }
+    const size_t n = iris_save(k, file, sizeof file);
+    iris *c = iris_init(other, sizeof other, 2, 12, 1, 64, 9u);
+    const int loaded = n > 0 && iris_load(c, file, n);
+    int same = loaded;
+    for (int p = 0; p < 9 && same; ++p) {
+      float in[2] = { (float)(p % 3) / 2.0f, (float)(p / 3) / 2.0f }, ya, yb;
+      iris_predict(k, in, &ya); iris_predict(c, in, &yb);
+      if (bits(ya) != bits(yb)) same = 0;
+    }
+    const float e1 = iris_train_epochs(k, 1);
+    const int st1 = (int)iris_get_status(k);
+    const float e2 = iris_train_epochs(k, 1);
+    const int st2 = (int)iris_get_status(k);
+    const int cold = iris_train(k);
+    snprintf(d, sizeof d, "ret %d, largest output weight %.1f; save %zu, load %d, plays the same %d; "
+             "warm: %g status %d, then %g status %d; iris_train %d",
+             ret, (double)big, n, loaded, same, (double)e1, st1, (double)e2, st2, cold);
+    check("a solve past IRIS_W_LIMIT saves, loads and plays", ret >= 0 && big > IRIS_W_LIMIT
+          && loaded && same && e1 >= 0.0f && st1 == IRIS_TRAINING_DIVERGED
+          && e2 == -1.0f && st2 == IRIS_DIVERGED_STUCK && cold == 1, d);
   }
 
   printf("\n  %s\n\n", fails ? "FAILURES ABOVE" : "all pass");

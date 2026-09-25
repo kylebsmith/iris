@@ -593,7 +593,23 @@ IRIS_API int iris_isbad(float x) {
 
    against 40, 0 and 0 reports on the default fits. 16 stays. The golden
    training hash in tests/audit.c is the same at all three limits: no healthy
-   reference run comes near it. */
+   reference run comes near it.
+
+   IT IS A DETECTOR FOR GRADIENT TRAINING, NOT A RULE ABOUT INSTRUMENTS. The
+   closed-form trainer (PART 8d) solves the output layer directly, and its
+   answer can lie beyond the limit without anything having run away: 155 of
+   2,000 solves at 12 hidden units and lam0 1e-4 have an output weight past
+   16, 132 of 2,000 at 24, the largest 42.6, and none of 2,000 at 48 hidden
+   units and lam0 1e-3 (random sessions of 1 to 4 inputs and outputs and 5 to
+   104 demonstrations of smooth targets with a little noise). Such an
+   instrument plays, saves and loads like any other; a file needs its weights
+   finite, nothing more (PART 9). What it cannot do is carry on with gradient
+   training: a trainer that continues from the current weights
+   (iris_train_epochs, iris_train_converge, iris_correct) clamps every weight
+   past the limit in its first epoch and reports IRIS_TRAINING_DIVERGED, and
+   from then on refuses with IRIS_DIVERGED_STUCK. iris_train, which starts
+   over from the seed, is the way from the closed-form trainer to
+   backpropagation (tests/elm.c checks all of this). */
 #define IRIS_W_LIMIT 16.0f
 
 /* ==========================================================================
@@ -2983,7 +2999,9 @@ IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->see
    again, not one to delete unheard.
 
    The solved instrument is an ordinary iris instrument: same w1/b1/w2/b2
-   arrays, same iris_predict, saves and loads as a normal file. The solve
+   arrays, same iris_predict, saves and loads as a normal file. Its output
+   weights can lie beyond IRIS_W_LIMIT, which is legitimate here; the note at
+   IRIS_W_LIMIT says what that means for gradient training afterwards. The solve
    targets logit space -- the exact inverse of our sigmoid -- so the shipping
    forward pass lands on the normalised targets. That makes it a
    bounded-output VARIANT of the backprop head, not an equivalent.
@@ -3349,8 +3367,7 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
          36  next_id, the next identifier         u32      1 <= next_id < 2^31 - 1
          40  random-number state                  u32      not 0
          44  smoothing                            f32      finite, 0 to 1
-         48  w1, b1, w2, b2                       f32s     finite, magnitude at most
-                                                           IRIS_W_LIMIT
+         48  w1, b1, w2, b2                       f32s     finite
           .  in_lo, in_hi                         f32s     finite, lo <= hi, and
                                                            hi - lo finite
           .  out_lo, out_hi                       f32s     finite, lo < hi, and
@@ -3381,9 +3398,10 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
        instrument has at least one identifier left to hand out. iris_record
        hands out next_id and adds one, and refuses once next_id reaches the
        largest int32_t, so the count never overflows.
-     - A weight past IRIS_W_LIMIT is past the clamp backpropagation enforces
-       (see the note at IRIS_W_LIMIT), and a unit driven that hard is
-       saturated anyway.
+     - A weight need only be finite. IRIS_W_LIMIT is backpropagation's
+       detector for a runaway run, not a rule about valid instruments: the
+       closed-form trainer (PART 8d) legitimately solves output weights beyond
+       it (see the note at IRIS_W_LIMIT).
      - An input range may have zero width, an output range may not. An
        input that never moved during the demonstrations is stored with
        in_hi = in_lo, and iris_norm_in reads it as 0 (PART 5), so that is a
@@ -3420,14 +3438,13 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
 
    iris_save WRITES ONLY FILES iris_load ACCEPTS. It checks its own output
    against the same rules and returns 0 -- clearing what it wrote -- if the
-   instrument breaks one. What can make it refuse: weights past IRIS_W_LIMIT,
-   which the closed-form trainer (PART 8d) reaches when its ridge is set well
-   below the default, and which any trainer reaches when built with
-   IRIS_NO_GUARDS; a demonstration that is not finite, which only an
-   IRIS_NO_GUARDS build lets into the store; demonstrations spread so far
-   apart that a range's width overflows a float; and more than two thousand
-   million recorded takes. Refusing at save time tells you while the
-   instrument is still in front of you, rather than after a power cycle.
+   instrument breaks one. A finite instrument that this library made always
+   saves. What can make it refuse: a weight or a demonstration that is not
+   finite, which only an IRIS_NO_GUARDS build lets into the instrument;
+   demonstrations spread so far apart that a range's width overflows a float;
+   and more than two thousand million recorded takes. Refusing at save time
+   tells you while the instrument is still in front of you, rather than after
+   a power cycle.
 
    ONE THING THE CHECKSUM CANNOT DO. It certifies the bytes that were
    written, not that they all came from the same instant. If the instrument
@@ -3558,10 +3575,8 @@ IRIS_API int iris_internal_file_ok(const iris *k, const unsigned char *b, size_t
     if (iris_isbad(s) || s < 0.0f || s > 1.0f) return 0; }
 
   p = b + IRIS_FILE_HEADER;
-  for (i = 0; i < nh * ni + nh + no * nh + no; ++i, p += 4) {
-    const float w = iris_internal_get_f32(p);
-    if (iris_isbad(w) || w > IRIS_W_LIMIT || w < -IRIS_W_LIMIT) return 0;
-  }
+  for (i = 0; i < nh * ni + nh + no * nh + no; ++i, p += 4)
+    if (iris_isbad(iris_internal_get_f32(p))) return 0;     /* finite, no more */
   for (i = 0; i < ni; ++i)                       /* in_lo[i] against in_hi[i] */
     if (!iris_internal_range_ok(iris_internal_get_f32(p + 4 * i),
                                 iris_internal_get_f32(p + 4 * (ni + i)), 1)) return 0;

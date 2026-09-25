@@ -302,9 +302,6 @@ static const edit REFUSE[] = {
   { "w1[0] not-a-number",                       at_w1_0, NAN_BITS },
   { "w1[last] +infinity",                       at_w1_end, PINF_BITS },
   { "b1[0] -infinity",                          at_b1_0, NINF_BITS },
-  { "w2[0] 16 + one step",                      at_w2_0, 0x41800001u },
-  { "w2[last] 1e30",                            at_w2_end, 0x7149F2CAu },
-  { "b2[last] -16 - one step",                  at_b2_end, 0xC1800001u },
   { "in_lo[0] not-a-number",                    at_inlo0, NAN_BITS },
   { "in_hi[1] +infinity",                       at_inhi1, PINF_BITS },
   { "out_lo[0] not-a-number",                   at_outlo0, NAN_BITS },
@@ -330,6 +327,10 @@ static const edit ACCEPT[] = {
   { "smoothing smallest positive (1e-45)",      at_smooth, 1u },
   { "w1[0] exactly 16",                         at_w1_0, 0x41800000u },
   { "b2[0] exactly -16",                        at_b2_0, 0xC1800000u },
+  { "w2[0] 16 + one step",                      at_w2_0, 0x41800001u },
+  { "w2[last] 1e30",                            at_w2_end, 0x7149F2CAu },
+  { "b2[last] -16 - one step",                  at_b2_end, 0xC1800001u },
+  { "w1[last] the largest float",               at_w1_end, 0x7F7FFFFFu },
 };
 
 static void rules(void) {
@@ -666,22 +667,27 @@ static void save_side(void) {
            need, small, untouched, exact, inside);
   check("iris_save needs exactly iris_save_size bytes", small == 0 && untouched && exact == need && inside, d);
 
-  /* an instrument the loader would refuse is not written */
+  /* a finite weight past IRIS_W_LIMIT is written and loads back to the bit;
+     an instrument the loader would refuse is not written */
   { const float keep = a.k->w2[0];
     a.k->w2[0] = 20.0f;                                 /* past IRIS_W_LIMIT */
-    memset(buf, 0x5A, need + 16);
     size_t w = iris_save(a.k, buf, need + 16);
-    int cleared = 1;
-    for (size_t i = 0; i < need; ++i) if (buf[i] != 0) cleared = 0;
+    receiver v = recv_make(S2);
+    int back = w == need && iris_load(v.r.k, buf, w) && v.r.k->w2[0] == 20.0f;
+    recv_drop(&v);
     a.k->w2[0] = keep;
     const float keep_ex = a.k->ex[1];
     a.k->ex[1] = __builtin_nanf("");                    /* a store only IRIS_NO_GUARDS reaches */
+    memset(buf, 0x5A, need + 16);
     size_t x = iris_save(a.k, buf, need + 16);
+    int cleared = 1;
+    for (size_t i = 0; i < need; ++i) if (buf[i] != 0) cleared = 0;
     a.k->ex[1] = keep_ex;
     size_t again = iris_save(a.k, buf, need + 16);
-    snprintf(d, sizeof d, "weight 20 -> %zu (cleared %d), stored not-a-number -> %zu, restored -> %zu",
-             w, cleared, x, again);
-    check("iris_save refuses what iris_load would refuse", w == 0 && cleared && x == 0 && again == need, d); }
+    snprintf(d, sizeof d, "weight 20 -> %zu (loads back %d), stored not-a-number -> %zu (cleared %d), restored -> %zu",
+             w, back, x, cleared, again);
+    check("iris_save writes every finite instrument, and only those",
+          back && x == 0 && cleared && again == need, d); }
 
   /* null arguments */
   { receiver v = recv_make(S2);
