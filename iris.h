@@ -508,7 +508,7 @@ typedef enum {
                                 and a sketch that printed "full" for either sent
                                 the student to delete demonstrations they did
                                 not have.                                    */
-  IRIS_DIVERGED_STUCK    = 5   /* a trainer that continues from the current
+  IRIS_DIVERGED_STUCK    = 5,  /* a trainer that continues from the current
                                 weights (iris_train_epochs, iris_train_converge
                                 and the functions built on them) refused,
                                 because a weight or bias sits exactly on
@@ -523,11 +523,17 @@ typedef enum {
                                 demonstrations diverge from the same seed
                                 again, the weights are pinned again; a reroll
                                 (iris_reseed with a new seed, then iris_train)
-                                is a different run.
-                                iris_train_elm also reports this status when
-                                its solve collapsed to a near-constant output
-                                (PART 8d); that report alone does not make the
-                                trainers refuse.                             */
+                                is a different run. This status means a
+                                diverged gradient run and nothing else.      */
+  IRIS_SOLVE_COLLAPSED   = 7   /* the closed-form solve (iris_train_elm)
+                                produced a constant mapping: the fit is valid
+                                and installed, but it ignores the inputs. On
+                                every output the demonstrations changed, the
+                                fitted outputs move less than half a percent
+                                as far (PART 8d). A smaller lam0 brings the
+                                mapping back. It locks nothing: the warm
+                                trainers refuse only a diverged gradient run
+                                (IRIS_DIVERGED_STUCK).                       */
 } iris_status;
 
 /* NaN or Inf, by bit pattern — exponent field all ones. No libc, no fenv,
@@ -3288,9 +3294,10 @@ IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
 
        Collapsed means: on every output the demonstrations changed, the fitted
        outputs move less than half a percent as far as the demonstrations did
-       -- a constant with rounding on it. The status says IRIS_DIVERGED_STUCK;
-       the solve is still installed, and a smaller lam0, or a larger gain_w,
-       brings the mapping back. */
+       -- a constant with rounding on it. The status says IRIS_SOLVE_COLLAPSED,
+       a report of its own: the solve is still installed, a smaller lam0, or a
+       larger gain_w, brings the mapping back, and no trainer refuses because
+       of it. */
     {
       int moved = 0, changed = 0, collapsed;
       for (int n = 1; n < k->n_ex && !moved; ++n)
@@ -3310,7 +3317,7 @@ IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
           if (hi_y[o] - lo_y[o] >= 0.005f * (hi_t - lo_t)) collapsed = 0;
         }
       }
-      if (collapsed && changed) k->status = IRIS_DIVERGED_STUCK;
+      if (collapsed && changed) k->status = IRIS_SOLVE_COLLAPSED;
     }
 #endif
   }

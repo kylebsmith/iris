@@ -127,7 +127,7 @@ int main(void){
     for(int i=0;i<20;i++){ float in[2]={i/19.0f,(i%4)/3.0f},
       o[3]={0.1f+i*0.04f,0.5f,0.9f-i*0.03f}; iris_record(k,in,o); }
     iris_train_elm(k,1e6f,scr,sizeof scr);
-    int flagged_collapse = (iris_get_status(k)==IRIS_DIVERGED_STUCK);
+    int flagged_collapse = (iris_get_status(k)==IRIS_SOLVE_COLLAPSED);
 
     iris *k2=iris_init(A,sizeof A,2,16,3,64,5);
     if(!k2){ check("F collapse detector",0,"iris_init refused"); goto done; }
@@ -136,7 +136,7 @@ int main(void){
       float bump=(u>0.2f&&u<0.8f&&v>0.2f&&v<0.8f)?0.4f:0.0f;
       float in[2]={u,v}, o[3]={0.3f+bump,0.5f,0.7f-bump}; iris_record(k2,in,o); }
     iris_train_elm(k2,1e-4f,scr,sizeof scr);
-    int quiet_on_bump = (iris_get_status(k2)!=IRIS_DIVERGED_STUCK);
+    int quiet_on_bump = (iris_get_status(k2)!=IRIS_SOLVE_COLLAPSED);
     snprintf(d,sizeof d,"collapse flagged: %s   healthy bump quiet: %s",
              flagged_collapse?"yes":"NO", quiet_on_bump?"yes":"NO -- false alarm");
     check("F collapse detector is right in both directions",

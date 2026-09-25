@@ -31,7 +31,8 @@
         smoothed
      4. a solve refreshes the worst-example ledger
      5. every output constant, or every take at one gesture, is not reported
-        as a collapse; a real collapse still is
+        as a collapse; a real collapse still is, as IRIS_SOLVE_COLLAPSED, and
+        does not stop warm training
      6. the scratch works at every byte offset, with every byte of it in use
      7. a solve ends a sliced run that is still in flight
      8. a solve whose output weights lie past IRIS_W_LIMIT saves, loads and
@@ -558,7 +559,7 @@ int main(int argc, char **argv) {
       for (int r = 0; r < 6; ++r) { float in[2] = { (float)(r % 3), (float)(r / 3) }, o[2] = { cv[c], -cv[c] };
                                     iris_record(k, in, o); }
       int ret = iris_train_elm(k, 1e-4f, scratch, sizeof scratch);
-      if (ret < 0 || iris_get_status(k) == IRIS_DIVERGED_STUCK) {
+      if (ret < 0 || iris_get_status(k) == IRIS_SOLVE_COLLAPSED) {
         if (!wrong) snprintf(first, sizeof first, "; first at %g: ret %d status %d", (double)cv[c], ret, iris_get_status(k));
         wrong++; }
     }
@@ -566,24 +567,34 @@ int main(int argc, char **argv) {
     iris *k = iris_init(arena, sizeof arena, 2, 12, 1, 128, 1234u);
     for (int r = 0; r < 6; ++r) { float in[2] = { 3.0f, 4.0f }, o = (r & 1) ? 10.0f : 20.0f; iris_record(k, in, &o); }
     int ret = iris_train_elm(k, 1e-4f, scratch, sizeof scratch);
-    int same_gesture = (ret >= 0 && iris_get_status(k) != IRIS_DIVERGED_STUCK);
+    int same_gesture = (ret >= 0 && iris_get_status(k) != IRIS_SOLVE_COLLAPSED);
     snprintf(d, sizeof d, "%d of 7 constant outputs flagged%s; one gesture, two sounds: ret %d status %d",
              wrong, first, ret, iris_get_status(k));
     check("constant outputs and one-gesture sessions are not collapses", wrong == 0 && same_gesture, d);
 
     /* the check still fires: an enormous ridge, and a frozen layer that ignores
-       its inputs, both map every gesture to one sound */
+       its inputs, both map every gesture to one sound. The report is a status
+       of its own, IRIS_SOLVE_COLLAPSED, and it must never lock the warm
+       trainers, which refuse only a diverged gradient run: one warm epoch
+       from the collapsed solve trains. */
     const struct recipe *r = &R[0];
     iris *c1 = iris_init(arena, sizeof arena, r->ni, r->nh, r->no, 64, r->seed);
     record_recipe(c1, r);
     int r1 = iris_train_elm(c1, 1e6f, scratch, sizeof scratch);
     int s1 = iris_get_status(c1);
+    float warm1 = iris_train_epochs(c1, 1);
     iris_clear(c1); record_recipe(c1, r);
     int r2 = iris_train_elm_ex(c1, 1e-4f, 0.0f, 1.0f, scratch, sizeof scratch);
     int s2 = iris_get_status(c1);
-    snprintf(d, sizeof d, "lam0 1e6: ret %d status %d; gain_w 0: ret %d status %d", r1, s1, r2, s2);
-    check("a real collapse is still reported", r1 >= 0 && s1 == IRIS_DIVERGED_STUCK
-          && r2 >= 0 && s2 == IRIS_DIVERGED_STUCK, d);
+    float warm2 = iris_train_epochs(c1, 1);
+    int s2w = iris_get_status(c1);
+    snprintf(d, sizeof d, "lam0 1e6: ret %d status %d, then a warm epoch %g; "
+             "gain_w 0: ret %d status %d, then a warm epoch %g status %d",
+             r1, s1, (double)warm1, r2, s2, (double)warm2, s2w);
+    check("a real collapse is reported, and warm training still runs",
+          r1 >= 0 && s1 == IRIS_SOLVE_COLLAPSED && warm1 >= 0.0f
+          && r2 >= 0 && s2 == IRIS_SOLVE_COLLAPSED && warm2 >= 0.0f
+          && s2w != IRIS_DIVERGED_STUCK, d);
   }
 
   /* ---- 6. the scratch at every byte offset ------------------------------------
