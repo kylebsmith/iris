@@ -47,10 +47,13 @@
 #                      step instructions but no single divide instruction,
 #                      so every float division is this libgcc routine.
 #   every function:    adds __adddf3 __divdf3 __extendsfdf2 __floatsidf
-#                      __muldf3 __subdf3 __truncdfsf2, the double-precision
-#                      routines behind iris_loo_error's double accumulator,
-#                      and memcpy, which GCC for this processor uses to copy
-#                      the constant five-entry table in iris_suggest_smoothing
+#                      __ledf2 __muldf3 __subdf3 __truncdfsf2, the
+#                      double-precision routines behind the leave-one-out
+#                      sweep iris_loo_error and iris_suggest_smoothing share
+#                      (its double accumulator, and the comparison that skips
+#                      an output whose demonstrations never moved), and
+#                      memcpy, which GCC for this processor uses to copy the
+#                      constant five-entry table in iris_suggest_smoothing
 #                      onto the stack.
 # Section 5 requires exactly these lists, the ones the masthead of iris.h
 # states, so a symbol that appears or disappears fails here until the
@@ -138,6 +141,10 @@ int iris_probe(void) {
   SINKF += iris_last_error(k);
   SINKU += iris_seed(k);
   SINKF += iris_loo_error(k, 50);
+  SINKF += iris_internal_loo(k, 50, 1) + (float)iris_internal_out_span(k, 3, 0);
+  SINKI += iris_internal_trainable(k) + iris_internal_pinned(k)
+         + iris_internal_cold_start(k);
+  iris_internal_begin_session(k, 2000);
   SINKF += iris_suggest_smoothing(k, scratch, sizeof scratch);
   SINKI += iris_train_elm(k, 1e-4f, scratch, sizeof scratch);
   SINKI += iris_train_elm_ex(k, 1e-4f, 2.0f, 2.0f, scratch, sizeof scratch);
@@ -299,7 +306,7 @@ else
   XF="-std=c99 -ffreestanding -fno-stack-protector -fno-tree-loop-distribute-patterns -mlongcalls"
   # every function: the list the masthead of iris.h states, in nm's order
   EVERY=$(printf '%s\n' __divsf3 __adddf3 __divdf3 __extendsfdf2 __floatsidf \
-    __muldf3 __subdf3 __truncdfsf2 memcpy | sort -u | tr '\n' ' ' | sed 's/ *$//')
+    __ledf2 __muldf3 __subdf3 __truncdfsf2 memcpy | sort -u | tr '\n' ' ' | sed 's/ *$//')
   for O in -O0 -O2 -Os; do
     if ! "$XT" $XF $O -I"$ROOT" -c "$T/play.c" -o "$T/x.o" 2> "$T/err"; then
       echo "  FAIL  playing path $O did not compile: $(head -1 "$T/err")"; fail=1; continue

@@ -41,8 +41,11 @@
 
      the playing path        __divsf3
      + iris_loo_error        + __adddf3 __divdf3 __extendsfdf2 __floatsidf
-                               __muldf3 __subdf3 __truncdfsf2
-     + iris_suggest_smoothing  + memcpy, to copy its five-entry constant table
+                               __muldf3 __subdf3 __truncdfsf2, and __ledf2
+                               at -O0
+     + iris_suggest_smoothing  + __ledf2, a comparison of doubles in its
+                               scoring, and memcpy, to copy its five-entry
+                               constant table
      + iris_train_elm        adds nothing
 
    __divsf3 is single-precision DIVISION: the S3's floating-point unit has
@@ -52,12 +55,14 @@
    None of this is a call this source writes, and all of it is present on
    every Arduino build anyway; tests/freestanding.sh checks this list too.
 
-   THE DOUBLES ARE REAL AND THEY ARE ONE FUNCTION. The __*df3 routines above
-   are 64-bit soft float, which rule 3 below says this library does not use.
-   iris_loo_error accumulates its error sum in double on purpose (iris.h, PART
-   8c) and iris_suggest_smoothing calls it. That is a deliberate numerical
-   choice in a diagnostic that is not on the playing path, and it is the ONLY
-   exception -- the playing path has no doubles anywhere. Rule 3 is restated
+   THE DOUBLES ARE REAL AND THEY ARE ONE SWEEP. The double-precision
+   routines above are 64-bit soft float, which rule 3 below says this library
+   does not use. iris_loo_error and iris_suggest_smoothing share one
+   leave-one-out sweep (PART 8), which accumulates its error sum in double on
+   purpose and, for iris_suggest_smoothing, divides each miss by an output's
+   range held in double. That is a deliberate numerical choice in a
+   diagnostic that is not on the playing path, and it is the ONLY exception
+   -- the playing path has no doubles anywhere. Rule 3 is restated
    below with that exception named, because a rule with a silent exception is
    worse than no rule.
 
@@ -67,9 +72,9 @@
      2. No libc.    No printf, no math.h. Everything it needs is in here.
      3. No doubles ON THE PLAYING PATH. The ESP32-S3 does 32-bit float in
         hardware and 64-bit float in slow software emulation. The one
-        exception is iris_loo_error (and iris_suggest_smoothing, which calls
-        it), a diagnostic that accumulates in double deliberately; measured
-        above.
+        exception is iris_loo_error (and iris_suggest_smoothing, which shares
+        its sweep), a diagnostic that accumulates in double deliberately;
+        measured above.
 
    USAGE
      static unsigned char mem[IRIS_ARENA(2, 12, 3, 64)];
