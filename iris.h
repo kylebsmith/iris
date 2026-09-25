@@ -2524,12 +2524,13 @@ IRIS_API int iris_train_epochs_done(const iris *k) { if (!k) return 0; return k-
    "give me a different instrument from the same examples" button — the thing
    a deterministic model fundamentally cannot offer. */
 IRIS_API float iris_retrain_new(iris *k, uint32_t seed, int epochs) { if (!k) return -1.0f;
-  /* Check what the trainer will refuse BEFORE throwing the weights away.
-     iris_reseed destroys the instrument; iris_train_epochs then declined a
-     zero budget and returned -1.0, so the caller saw a refusal and had
-     nevertheless lost their instrument. Refuse first, destroy nothing. */
-  if (epochs <= 0)  return -1.0f;
-  if (k->n_ex == 0) return -1.0f;
+  /* Check everything the trainer would refuse BEFORE throwing the weights
+     away. iris_reseed replaces the instrument, so a refusal after it would
+     hand the caller a refusal and no instrument. Refuse first, destroy
+     nothing: a poisoned demonstration sets IRIS_NAN_TRAPPED inside
+     iris_internal_trainable, and that is the one write. */
+  if (epochs <= 0) return -1.0f;
+  if (!iris_internal_trainable(k)) return -1.0f;
   iris_reseed(k, seed);
   return iris_train_epochs(k, epochs);
 }
@@ -2936,6 +2937,10 @@ IRIS_API void iris_zero_velocity(iris *k) { if (!k) return;
    extra times" parameter: measured, every boost k >= 1 slows convergence
    and k >= 2 oscillates on contradictory corrections. */
 IRIS_API float iris_correct(iris *k, int epochs) { if (!k) return -1.0f;
+  /* a store no trainer would accept is refused before the velocities are
+     zeroed, so that refusal changes nothing but, for a poisoned
+     demonstration, the status (iris_internal_trainable) */
+  if (!iris_internal_trainable(k)) return -1.0f;
   iris_zero_velocity(k);
   return iris_train_epochs(k, epochs > 0 ? epochs : 20);
 }
@@ -3409,12 +3414,20 @@ IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_b
 
 /* The reroll button, ELM flavour: a new seed IS a new frozen random layer,
    refit exactly. This is the deliberate new-instrument gesture, so it also
-   resets the rng stream, exactly as iris_retrain_new does. */
+   resets the rng stream, exactly as iris_retrain_new does. The solve reads
+   the new seed, so it is set first; a refused solve puts the old seed and
+   random state back, so a refusal changes exactly what iris_train_elm's
+   does: nothing, or the status alone for a poisoned demonstration. */
 IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
                               void *scratch, size_t scratch_bytes) { if (!k) return -1;
+  const uint32_t seed0 = k->seed, rng0 = k->rng.s;
   k->seed = seed ? seed : 1u;
   k->rng.s = k->seed;
-  return iris_train_elm(k, lam0, scratch, scratch_bytes);
+  {
+    const int r = iris_train_elm(k, lam0, scratch, scratch_bytes);
+    if (r < 0) { k->seed = seed0; k->rng.s = rng0; }
+    return r;
+  }
 }
 
 

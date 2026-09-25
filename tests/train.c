@@ -154,6 +154,8 @@ static int refusals_change_nothing(iris *k, int32_t want, char *why, size_t whyl
   /* no run is in flight, so a slice has nothing to continue and asks nothing */
   REFUSES_AS(iris_train_slice(k, 50) == 0, "slice", IRIS_RIDGE_ESCALATED);
   REFUSES(iris_internal_train_run(k, 50, 0, 0, 0, 0) == -1.0f, "engine");
+  REFUSES(iris_retrain_new(k, 777u, 50) == -1.0f, "retrain_new");
+  REFUSES(iris_correct(k, 0) == -1.0f, "correct");
   REFUSES_AS(iris_train_progress(k) == prog && iris_train_busy(k) == busy
              && iris_train_epochs_done(k) == done, "progress/busy/done", IRIS_RIDGE_ESCALATED);
   { float e = iris_loo_error(k, 30);
@@ -195,7 +197,7 @@ int main(void) {
         bad += b; cases++;
       }
     }
-    snprintf(d, sizeof d, "%d shape/poison cases x 11 calls: %d wrong%s%s",
+    snprintf(d, sizeof d, "%d shape/poison cases x 13 calls: %d wrong%s%s",
              cases, bad, where[0] ? " -- " : "", where);
     check("a poisoned store is refused, only the status set", bad == 0, d);
   }

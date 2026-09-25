@@ -373,6 +373,17 @@ int main(int argc, char **argv) {
         r = iris_train_elm(k, -1.0f, scratch, sizeof scratch);
         cases++;
         if (!refused_cleanly(r)) { bad++; snprintf(which, sizeof which, "poisoned demonstration %d, lam0 -1", p); }
+        /* the reroll door sets a new seed before it solves, and must put the
+           old one back when the solve refuses */
+        snap(k, IRIS_RIDGE_ESCALATED);
+        want_status = IRIS_NAN_TRAPPED;
+        r = iris_retrain_elm_new(k, iris_seed(k) + 17u, 1e-4f, scratch, sizeof scratch);
+        cases++;
+        if (!refused_cleanly(r)) { bad++; snprintf(which, sizeof which, "poisoned demonstration %d (iris_retrain_elm_new)", p); }
+        snap(k, IRIS_RIDGE_ESCALATED);
+        r = iris_retrain_elm_new(k, iris_seed(k) + 17u, -1.0f, scratch, sizeof scratch);
+        cases++;
+        if (!refused_cleanly(r)) { bad++; snprintf(which, sizeof which, "poisoned demonstration %d, lam0 -1 (iris_retrain_elm_new)", p); }
         k->ex[where[p]] = keep;
       } }
 
