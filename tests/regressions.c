@@ -94,7 +94,8 @@ int main(void){
     float lo=1e30f, hi=-1e30f;
     if(ok) for(int t=0;t<=10;t++){
       float q[2]={100.0f, t/10.0f}, out[3]; iris_predict(k2,q,out);
-      if(out[0]<lo) lo=out[0]; if(out[0]>hi) hi=out[0]; }
+      if(out[0]<lo) lo=out[0];
+      if(out[0]>hi) hi=out[0]; }
     int responds = ok && (hi-lo) > 1e-4f;
     snprintf(d,sizeof d,"load=%d  output span across the live channel %.6f  status %d",
              ok, hi-lo, iris_get_status(k2));
@@ -175,7 +176,8 @@ int main(void){
       float b=0; { int n=0; for(int a=0;a<=10;a++) for(int c2=0;c2<=10;c2++){
         float in[2]={a/10.0f,c2/10.0f},got[1];
         float want=0.15f+0.7f*0.5f*(in[0]+in[1]);
-        iris_predict(r,in,got); b+=(got[0]-want)*(got[0]-want); n++; } b/=n; }
+        iris_predict(r,in,got); b+=(got[0]-want)*(got[0]-want); n++; }
+        b/=n; }
       float bad_in[2]={0.5f,0.5f}, bad_out[1]={0.95f};
       int id=iris_record(r,bad_in,bad_out); iris_train(r);
       iris_delete_id(r,id); iris_train(r);
@@ -183,7 +185,8 @@ int main(void){
       float a2=0; { int n=0; for(int a=0;a<=10;a++) for(int c2=0;c2<=10;c2++){
         float in[2]={a/10.0f,c2/10.0f},got[1];
         float want=0.15f+0.7f*0.5f*(in[0]+in[1]);
-        iris_predict(r,in,got); a2+=(got[0]-want)*(got[0]-want); n++; } a2/=n; }
+        iris_predict(r,in,got); a2+=(got[0]-want)*(got[0]-want); n++; }
+        a2/=n; }
       runs++; sum_before+=b; sum_after+=a2; if (a2 > b*1.5f) worse++;
     }
     snprintf(d,sizeof d,"%d of %d runs left the gaps worse; mean ratio %.1fx",
