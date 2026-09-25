@@ -155,8 +155,6 @@ static int refusals_change_nothing(iris *k, int32_t want, char *why, size_t whyl
   /* no run is in flight, so a slice has nothing to continue and asks nothing */
   REFUSES_AS(iris_train_slice(k, 50) == 0, "slice", IRIS_RIDGE_ESCALATED);
   REFUSES(iris_internal_train_run(k, 50, 0, 0, 0, 0) == -1.0f, "engine");
-  REFUSES(iris_retrain_new(k, 777u, 50) == -1.0f, "retrain_new");
-  REFUSES(iris_correct(k, 0) == -1.0f, "correct");
   REFUSES_AS(iris_train_progress(k) == prog && iris_train_busy(k) == busy
              && iris_train_epochs_done(k) == done, "progress/busy/done", IRIS_RIDGE_ESCALATED);
   { float e = iris_loo_error(k, 30);
@@ -198,7 +196,7 @@ int main(void) {
         bad += b; cases++;
       }
     }
-    snprintf(d, sizeof d, "%d shape/poison cases x 13 calls: %d wrong%s%s",
+    snprintf(d, sizeof d, "%d shape/poison cases x 11 calls: %d wrong%s%s",
              cases, bad, where[0] ? " -- " : "", where);
     check("a poisoned store is refused, only the status set", bad == 0, d);
   }
@@ -327,22 +325,20 @@ int main(void) {
     const int first_only_status = r0 == -1.0f && same_arena();
 
     /* Then every warm call refuses, and nothing moves: not a weight, not the
-       epoch count. Zeroing the velocity first (iris_correct) changes the
-       velocities, so only the weights and counters are compared there. */
+       epoch count. */
     const size_t wbytes = sizeof(float) * (size_t)(12 * 2 + 12 + 3 * 12 + 3);
     static float w0[12 * 2 + 12 + 3 * 12 + 3];
     memcpy(w0, k->w1, wbytes);
     const int done0 = iris_train_epochs_done(k);
     int held = 0, calls = 0;
     for (int round = 0; round < 3; ++round) {
-      float r[5];
+      float r[4];
       cb_calls = 0;
       r[0] = iris_continue_to_plateau(k, 0, 0, 0);
       r[1] = iris_continue(k, 100);
       r[2] = iris_continue_to_plateau(k, 4000, count_cb, 0);
-      r[3] = iris_correct(k, 0);
-      r[4] = iris_train_slice(k, 100) == 0 ? -1.0f : 0.0f;   /* no run to continue */
-      for (int c = 0; c < 5; ++c) {
+      r[3] = iris_train_slice(k, 100) == 0 ? -1.0f : 0.0f;   /* no run to continue */
+      for (int c = 0; c < 4; ++c) {
         calls++;
         if (r[c] == -1.0f && iris_get_status(k) == IRIS_DIVERGED_STUCK && cb_calls == 0
             && memcmp(w0, k->w1, wbytes) == 0 && iris_train_epochs_done(k) == done0) held++;

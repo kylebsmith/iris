@@ -615,9 +615,9 @@ IRIS_API int iris_internal_isbad(float x) {
    instrument plays, saves and loads like any other; a file needs its weights
    finite, nothing more (PART 9). What it cannot do is carry on with gradient
    training: a trainer that continues from the current weights
-   (iris_continue, iris_continue_to_plateau, iris_correct) clamps every
-   weight past the limit in its first epoch and reports
-   IRIS_TRAINING_DIVERGED, and from then on refuses with IRIS_DIVERGED_STUCK. iris_train, which starts
+   (iris_continue or iris_continue_to_plateau) clamps every weight past the
+   limit in its first epoch and reports IRIS_TRAINING_DIVERGED, and from then
+   on refuses with IRIS_DIVERGED_STUCK. iris_train, which starts
    over from the seed, is the way from the closed-form trainer to
    backpropagation (tests/elm.c checks all of this). */
 #define IRIS_W_LIMIT 16.0f
@@ -939,23 +939,19 @@ struct iris {
 
    Here is why it has to exist. The two rules below are each individually sound,
    but they meet badly in C, and `if (trainer(...))` is wrong in BOTH directions
-   depending on which trainer you called. Measured, all six on the same data:
+   depending on which trainer you called. Measured, all four on the same data:
 
      on a fit that WORKED        return   if(return)   iris_is_trained
        iris_train                 1.0000    true            1
        iris_continue              0.0002    true            1
        iris_continue_to_plateau   0.0000    true            1
        iris_train_elm             0.0000    FALSE           1   <-- best case
-       iris_correct               0.0004    true            1
-       iris_retrain_new           0.0003    true            1
 
      on a fit that REFUSED
        iris_train                 0.0000    false           0
        iris_continue             -1.0000    TRUE            0   <-- -1 is truthy
        iris_continue_to_plateau  -1.0000    TRUE            0
        iris_train_elm            -1.0000    TRUE            0
-       iris_correct              -1.0000    TRUE            0
-       iris_retrain_new          -1.0000    TRUE            0
 
    iris_train_elm returns the number of ridge escalations, so 0 is its BEST
    outcome and reads as false. The rest return a measurement, and -1 is a
@@ -1050,6 +1046,17 @@ IRIS_API size_t iris_size(int n_in, int n_hid, int n_out, int cap) {
   return iris_internal_bytes(n_in, n_hid, n_out, cap);
 }
 
+/* The momentum velocities back to zero: the state of every fresh start
+   (iris_reseed), of a closed-form solve (PART 8d), whose weights no velocity
+   describes, and of a loaded instrument (PART 9), whose file does not carry
+   them. */
+IRIS_API void iris_internal_zero_velocity(iris *k) { if (!k) return;
+  for (int i = 0; i < k->n_hid * k->n_in;  ++i) k->v_w1[i] = 0.0f;
+  for (int i = 0; i < k->n_hid;            ++i) k->v_b1[i] = 0.0f;
+  for (int i = 0; i < k->n_out * k->n_hid; ++i) k->v_w2[i] = 0.0f;
+  for (int i = 0; i < k->n_out;            ++i) k->v_b2[i] = 0.0f;
+}
+
 /* Randomise the weights. This is the reroll.
 
    The scale matters. Each hidden unit adds up n_in incoming signals, so if
@@ -1058,7 +1065,14 @@ IRIS_API size_t iris_size(int n_in, int n_hid, int n_out, int cap) {
    learning before it starts. Dividing by the square root of the number of
    inputs keeps the sums in the responsive part of the curve. This is a
    standard trick and it is the difference between "trains in 50 ms" and
-   "never trains at all". */
+   "never trains at all".
+
+   TO REROLL a trained instrument, give it a new seed and train again:
+   iris_reseed(k, new_seed) then iris_train(k), or iris_train_elm for the
+   closed-form trainer (PART 8d). The random state starts again from the new
+   seed. The new starting weights replace the old ones at once, so if the
+   trainer then refuses -- no demonstrations, say -- the instrument is left
+   unfitted and plays as one (IRIS_NOT_FITTED) until a trainer succeeds. */
 IRIS_API void iris_reseed(iris *k, uint32_t seed) { if (!k) return;
   k->seed = seed ? seed : 1u;
   k->rng.s = k->seed;
@@ -1068,10 +1082,7 @@ IRIS_API void iris_reseed(iris *k, uint32_t seed) { if (!k) return;
   for (int i = 0; i < k->n_hid;            ++i) k->b1[i] = 0.0f;
   for (int i = 0; i < k->n_out * k->n_hid; ++i) k->w2[i] = iris_internal_rand_sym(&k->rng) * s2;
   for (int i = 0; i < k->n_out;            ++i) k->b2[i] = 0.0f;
-  for (int i = 0; i < k->n_hid * k->n_in;  ++i) k->v_w1[i] = 0.0f;
-  for (int i = 0; i < k->n_hid;            ++i) k->v_b1[i] = 0.0f;
-  for (int i = 0; i < k->n_out * k->n_hid; ++i) k->v_w2[i] = 0.0f;
-  for (int i = 0; i < k->n_out;            ++i) k->v_b2[i] = 0.0f;
+  iris_internal_zero_velocity(k);
   k->trained = 0;
   k->fitted  = 0;          /* random weights are not a fit */
   k->last_error = 1.0f;
@@ -2053,13 +2064,12 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
 
      THE WEIGHTS DECIDE, NOT THE STATUS (iris_internal_pinned). So the refusal
      holds on every call for as long as a weight sits on the limit: a refusal
-     moves no weight, so the next call refuses too; zeroing the velocity, as
-     iris_correct does before it trains, moves no weight either; and a status
-     overwritten by an unrelated call -- a not-a-number refused at
-     iris_record's door, say -- cannot let a warm run through. The way out is
-     a run that does not continue from these weights: iris_train and
-     iris_train_begin reseed from the instrument's own seed before their first
-     epoch, so they never meet this test with pinned weights.
+     moves no weight, so the next call refuses too, and a status overwritten by
+     an unrelated call -- a not-a-number refused at iris_record's door, say --
+     cannot let a warm run through. The way out is a run that does not continue
+     from these weights: iris_train and iris_train_begin reseed from the
+     instrument's own seed before their first epoch, so they never meet this
+     test with pinned weights.
 
      Every entry reaches this test, slices included, but a sliced run starts
      from iris_train_begin's reseed and ends itself if it diverges, so in
@@ -2315,6 +2325,17 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
    the second of them run from a fresh start: it reseeds from the
    instrument's own seed and then calls iris_continue_to_plateau.
 
+   WHY THEY EXIST. A musician who has practised an instrument and records
+   one more take wants that corner fixed without the rest of the mapping
+   moving. Retraining from the seed rewrites the mapping everywhere, which
+   is how musicians lose accumulated technique to retraining (Fiebrink and
+   Sonami, NIME 2020). A short warm run starts from the practised weights
+   instead. tests/audit.c check 16 adds one take to a practised 20-take
+   instrument and runs iris_continue(k, 20): the training root-mean-square
+   error reaches 0.0187, against 0.0181 for a cold 600-epoch retrain from
+   the same seed, on a thirtieth of the epochs, and the mapping far from the
+   new take moves 0.0025 on average, against 0.0033 for the retrain.
+
    THE HAZARD. The weights remember every demonstration they were trained
    on, including one you have since deleted: a deleted bad take's influence
    survives in the weights, and a warm run starts from exactly those
@@ -2322,6 +2343,15 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
    inside iris_train measures how far it pulls the places you never
    demonstrated). After deleting a take, call iris_train, which starts over
    from the seed and fits only the demonstrations stored now.
+
+   THE SEED ALONE NO LONGER DESCRIBES THE INSTRUMENT. A warm run draws its
+   shuffle from the random state the last run left, so after one the seed
+   reproduces only a fresh iris_train; replaying the same records, deletes
+   and runs in the same order reproduces the instrument to the bit
+   (tests/audit.c check 14). A saved file carries the random state (PART 9)
+   but not the momentum velocities, which a load sets to zero, so a warm run
+   after a load matches the same run on the unsaved instrument only when its
+   velocities were zero as well (check 15: it then matches to the bit).
 
    Both refuse (-1) what every trainer refuses (iris_internal_trainable),
    and while a weight sits exactly on ±IRIS_W_LIMIT they refuse with
@@ -2332,8 +2362,9 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
 /* THE FIXED-EPOCH TRAINER: exactly `epochs` more epochs from the current
    weights, fewer only if the error floor or the divergence guard stops the
    run (iris_train_epochs_done says how many ran). Returns the last epoch's
-   mean squared error, or -1 if it refused. Mind THE HAZARD above: after
-   deleting a take, call iris_train, not this.
+   mean squared error, or -1 if it refused, which it also does for a budget
+   of zero or less. Mind THE HAZARD above: after deleting a take, call
+   iris_train, not this.
 
    It matches Weka MultilayerPerceptron's per-weight update recursion and its
    per-sample update granularity; see the divergence table for defaults and
@@ -2444,11 +2475,12 @@ IRIS_API int iris_train(iris *k) {
      health. The one number a screen can show said the instrument had
      improved.
 
-     Warm-starting has its use, argued in PART 8b: continuing from the
-     current fit adjusts one region without rewriting the mapping everywhere,
-     which is how a musician keeps technique. But that is what the warm
-     trainers are for. This function is called train, a caller expects it to
-     fit the demonstrations it has now, and the two must not be the same act. */
+     Warm-starting has its use, argued with the warm trainers above: continuing
+     from the current fit adjusts one region without rewriting the mapping
+     everywhere, which is how a musician keeps technique. But that is what the
+     warm trainers are for. This function is called train, a caller expects it
+     to fit the demonstrations it has now, and the two must not be the same
+     act. */
   if (!iris_internal_cold_start(k)) return 0;
 
   /* WHAT THIS BETS ON, AND WHEN THE BET IS WRONG.
@@ -2572,20 +2604,9 @@ IRIS_API int iris_train_busy(const iris *k) { if (!k) return 0; return k->tr_run
    solve (PART 8d), which runs no epochs, sets it to 0. */
 IRIS_API int iris_train_epochs_done(const iris *k) { if (!k) return 0; return k->tr_done; }
 
-/* Train and immediately reroll from a fresh random start. This is the
-   "give me a different instrument from the same examples" button — the thing
-   a deterministic model fundamentally cannot offer. */
-IRIS_API float iris_retrain_new(iris *k, uint32_t seed, int epochs) { if (!k) return -1.0f;
-  /* Check everything the trainer would refuse BEFORE throwing the weights
-     away. iris_reseed replaces the instrument, so a refusal after it would
-     hand the caller a refusal and no instrument. Refuse first, destroy
-     nothing: a poisoned demonstration sets IRIS_NAN_TRAPPED inside
-     iris_internal_trainable, and that is the one write. */
-  if (epochs <= 0) return -1.0f;
-  if (!iris_internal_trainable(k)) return -1.0f;
-  iris_reseed(k, seed);
-  return iris_continue(k, epochs);
-}
+IRIS_API int   iris_is_trained(const iris *k) { if (!k) return 0; return k->trained; }
+IRIS_API float iris_last_error(const iris *k) { if (!k) return 0.0f; return k->last_error; }
+IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->seed; }
 
 /* The demonstrated range of output j across the first n stored rows, in
    double so that the difference of two finite floats cannot overflow. */
@@ -2687,7 +2708,8 @@ IRIS_API float iris_internal_loo(iris *k, int epochs, int per_range) {
     k->ex_id[i] = k->ex_id[n - 1]; k->ex_id[n - 1] = id_i;
 
     k->n_ex = n - 1;                                        /* hide it     */
-    iris_retrain_new(k, seed0, ep);
+    iris_reseed(k, seed0);
+    iris_continue(k, ep);
     iris_predict(k, held, pred);
     for (j = 0; j < no; ++j) {
       double e = (double)pred[j] - (double)held[ni + j];
@@ -2705,7 +2727,8 @@ IRIS_API float iris_internal_loo(iris *k, int epochs, int per_range) {
     id_i = k->ex_id[i]; k->ex_id[i] = k->ex_id[n - 1]; k->ex_id[n - 1] = id_i;
   }
 
-  iris_retrain_new(k, seed0, ep);      /* leave it playable, fitted on all */
+  iris_reseed(k, seed0);               /* leave it playable, fitted on all */
+  iris_continue(k, ep);
   return (float)(total / ((double)n * (double)no));
 }
 
@@ -2939,69 +2962,6 @@ IRIS_API int iris_worst_example_id(const iris *k, float *margin) { if (!k) retur
 }
 
 /* ==========================================================================
-   PART 8b — THE CORRECTION  (warm start)
-
-   The musician just recorded one more example (or deleted one) and wants the
-   instrument fixed NOW, without losing the instrument they practised. The
-   old way — retrain from the seed — rewrites the mapping EVERYWHERE at an
-   honest budget (measured drift 0.030 far from the correction at 30 epochs);
-   that is the documented way musicians lose accumulated technique to
-   retraining (Fiebrink & Sonami, NIME 2020). The fix is embarrassingly
-   simple: don't reseed. Keep the trained weights, zero the momentum, run a
-   short burst. Measured at 20 examples: equal fit to a cold 600-epoch
-   retrain, 9x less collateral change, 27x faster.
-
-   THE POLICY AS DESIGNED: record or delete an example, then call iris_correct —
-   same instrument, fixed. An explicit reroll gesture calls iris_retrain_new —
-   deliberately a NEW instrument. Nothing else reseeds.
-
-   ⚠️ NOTHING SHIPPED CALLS THIS. iris_correct has no caller in this
-   repository outside the tests, and the instrument application it was written
-   for stopped using it in August 2026 in favour of the ELM solve. ADR 0005 is
-   still marked accepted and still describes it as the policy. It is a working,
-   measured library facility with no production consumer; treat it as such
-   until that decision is revisited.
-
-   Determinism becomes event-sourced: replaying the identical operation
-   history (records / corrections / deletes, in order) reproduces the
-   instrument bit-exactly, because the corrections draw from the same rng
-   stream. The seed ALONE now reproduces only a from-scratch retrain — a
-   saved file carries the live rng state (PART 9) so a reloaded
-   instrument continues exactly where it left off.
-
-   Zeroing the velocity at entry is what makes that cheap: it turns the
-   momentum arrays into transient scratch instead of hidden persistent state,
-   so the file needs one extra word (rng), not four extra weight arrays.
-   A converged net's velocities are already ~0; measured cost of the zeroing:
-   every correction metric identical to 4 decimals.
-   ========================================================================== */
-
-IRIS_API void iris_internal_zero_velocity(iris *k) { if (!k) return;
-  for (int i = 0; i < k->n_hid * k->n_in;  ++i) k->v_w1[i] = 0.0f;
-  for (int i = 0; i < k->n_hid;            ++i) k->v_b1[i] = 0.0f;
-  for (int i = 0; i < k->n_out * k->n_hid; ++i) k->v_w2[i] = 0.0f;
-  for (int i = 0; i < k->n_out;            ++i) k->v_b2[i] = 0.0f;
-}
-
-/* Warm correction. epochs <= 0 takes the default budget of 20, which reaches
-   cold-600 parity on the reference task (train rms 0.019) with far-field
-   drift under 0.004. There is deliberately no "present the new example
-   extra times" parameter: measured, every boost k >= 1 slows convergence
-   and k >= 2 oscillates on contradictory corrections. */
-IRIS_API float iris_correct(iris *k, int epochs) { if (!k) return -1.0f;
-  /* a store no trainer would accept is refused before the velocities are
-     zeroed, so that refusal changes nothing but, for a poisoned
-     demonstration, the status (iris_internal_trainable) */
-  if (!iris_internal_trainable(k)) return -1.0f;
-  iris_internal_zero_velocity(k);
-  return iris_continue(k, epochs > 0 ? epochs : 20);
-}
-
-IRIS_API int   iris_is_trained(const iris *k) { if (!k) return 0; return k->trained; }
-IRIS_API float iris_last_error(const iris *k) { if (!k) return 0.0f; return k->last_error; }
-IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->seed; }
-
-/* ==========================================================================
    PART 8d — THE INSTANT TRAINER  (ELM: freeze the randomness, solve the rest)
 
    The fastest trainer in this file. On a laptop, at 50 demonstrations, two
@@ -3145,15 +3105,16 @@ IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->see
 
    REROLL is the reason to love it: a new seed literally IS a new frozen random
    layer, undiluted by any training -- measurably steadier at the demos and
-   livelier in the gaps. The purest form of "same examples, different
-   instrument" this project has. That corner lives at nh >= 8: four frozen
-   random features cannot recall five demos, so ELM refuses nh < 8 outright
-   rather than shipping a config that breaks the reroll promise. Numbers and
-   the recommended lam0 per width: docs/adr/0008-elm-same-network-better-math.md.
+   livelier in the gaps. iris_reseed(k, new_seed) then iris_train_elm is the
+   whole gesture. The purest form of "same examples, different instrument" this
+   project has. That corner lives at nh >= 8: four frozen random features
+   cannot recall five demos, so ELM refuses nh < 8 outright rather than
+   shipping a config that breaks the reroll promise. Numbers and the
+   recommended lam0 per width: docs/adr/0008-elm-same-network-better-math.md.
 
-   Determinism: the hidden layer is drawn from k->seed by a LOCAL random
-   number generator (k->rng is never touched -- a closed-form solve is not an
-   event in the correction history), accumulation order is fixed by example
+   Determinism: the hidden layer is drawn from k->seed by a LOCAL random number
+   generator (k->rng is never touched, so a solve does not move the random
+   state a warm trainer draws from), accumulation order is fixed by example
    order, and the escalation schedule is fixed. Same seed + same examples =>
    bit-identical weights, verified at nh 12/24/48.
    ========================================================================== */
@@ -3466,25 +3427,6 @@ IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_b
   const float g = 2.0f / iris_internal_sqrt((float)(k->n_in > 0 ? k->n_in : 1));
   return iris_internal_train_elm_ex(k, lam0, g, g, scratch, scratch_bytes);
 }
-
-/* The reroll button, ELM flavour: a new seed IS a new frozen random layer,
-   refit exactly. This is the deliberate new-instrument gesture, so it also
-   resets the rng stream, exactly as iris_retrain_new does. The solve reads
-   the new seed, so it is set first; a refused solve puts the old seed and
-   random state back, so a refusal changes exactly what iris_train_elm's
-   does: nothing, or the status alone for a poisoned demonstration. */
-IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
-                              void *scratch, size_t scratch_bytes) { if (!k) return -1;
-  const uint32_t seed0 = k->seed, rng0 = k->rng.s;
-  k->seed = seed ? seed : 1u;
-  k->rng.s = k->seed;
-  {
-    const int r = iris_train_elm(k, lam0, scratch, scratch_bytes);
-    if (r < 0) { k->seed = seed0; k->rng.s = rng0; }
-    return r;
-  }
-}
-
 
 /* ==========================================================================
    PART 9 — SAVING

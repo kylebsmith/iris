@@ -757,11 +757,12 @@ static void small_unit(void) {
 /* ------------------------------------------------------------- the fixture
    tests/golden/v7-instrument.bin was generated once, on purpose, from the
    recipe of tests/audit.c check 12 (seed 1234, its 20 demonstrations,
-   iris_retrain_new(k, 1234, 800), a 2-12-3 instrument of capacity 256), and
-   tests/golden/v7-expected.txt holds what that instrument played before it
-   was saved. Loading the file must play every one of those bits, and saving
-   it again must give the file back byte for byte. This pins both the bytes of
-   format 7 and what they mean. Never regenerate it to make this pass. */
+   iris_reseed(k, 1234) and iris_continue(k, 800), a 2-12-3 instrument of
+   capacity 256), and tests/golden/v7-expected.txt holds what that instrument
+   played before it was saved. Loading the file must play every one of those
+   bits, and saving it again must give the file back byte for byte. This pins
+   both the bytes of format 7 and what they mean. Never regenerate it to make
+   this pass. */
 static unsigned char *slurp(const char *path, size_t *n) {
   FILE *fp = fopen(path, "rb");
   if (!fp) return 0;

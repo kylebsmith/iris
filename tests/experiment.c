@@ -50,7 +50,8 @@ static void reroll_spread(iris *k, int n_ex, int epochs,
 
   for (int s = 0; s < SEEDS; ++s) {
     load_examples(k, n_ex);
-    errs += iris_retrain_new(k, 1000u + (uint32_t)s * 7919u, epochs);
+    iris_reseed(k, 1000u + (uint32_t)s * 7919u);
+    errs += iris_continue(k, epochs);
     int p = 0;
     for (int a = 0; a <= 20; ++a) for (int b = 0; b <= 20; ++b, ++p) {
       float in[NI] = { a / 20.0f, b / 20.0f };

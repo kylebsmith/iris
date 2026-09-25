@@ -1,7 +1,7 @@
 # The playback half of tests/golden/v7-instrument.bin, checked by tests/load.c.
 # The instrument: 2 inputs, 12 hidden units, 3 outputs, capacity 256, seed
-# 1234, the 20 demonstrations of tests/audit.c check 12 and
-# iris_retrain_new(k, 1234, 800), saved in format 7 (872 bytes).
+# 1234, the 20 demonstrations of tests/audit.c check 12, iris_reseed(k, 1234)
+# and iris_continue(k, 800), saved in format 7 (872 bytes).
 # Each line: two inputs, then the three outputs iris_predict gave for them
 # before the save, as IEEE-754 bit patterns in hexadecimal. The inputs are
 # (a - 4) / 16 and (b - 4) / 16 for a = 0..24 (outer) and b = 0..24 (inner).

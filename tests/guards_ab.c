@@ -45,7 +45,8 @@ int main(void) {
     truth(u, v, out);
     iris_record(k, in, out);
   }
-  iris_retrain_new(k, 1234, 800);
+  iris_reseed(k, 1234);
+  iris_continue(k, 800);
   size_t n = iris_save(k, file, sizeof file);
   printf("blob %zu B fnv1a 0x%08X\n", n, fnv1a(file, n));
 

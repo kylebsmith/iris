@@ -261,7 +261,7 @@ static void reroll_spread(iris *k, float *near_spread, int *near_n,
                           float *gap_spread,  int *gap_n) {
   for (int s = 0; s < RR_SEEDS; ++s) {
     load_examples(k, RR_EX);
-    iris_retrain_new(k, 1000u + (uint32_t)s * 7919u, RR_EP);
+    iris_reseed(k, 1000u + (uint32_t)s * 7919u); iris_continue(k, RR_EP);
     int p = 0;
     for (int a = 0; a < RR_GRID; ++a) for (int b = 0; b < RR_GRID; ++b, ++p) {
       float in[NI] = { a / (float)(RR_GRID - 1), b / (float)(RR_GRID - 1) };
@@ -380,8 +380,8 @@ int main(void) {
       truth(u, v, out);
       iris_record(k2, in, out);
     }
-    iris_retrain_new(k2, 1234, 800);
-    iris_retrain_new(k,  1234, 800);
+    iris_reseed(k2, 1234); iris_continue(k2, 800);
+    iris_reseed(k,  1234); iris_continue(k,  800);
     int identical = 1; float biggest = 0.0f;
     for (int a = 0; a <= 20; ++a) for (int b = 0; b <= 20; ++b) {
       float in[NI] = { a / 20.0f, b / 20.0f }, o1[NO], o2[NO];
@@ -512,7 +512,7 @@ int main(void) {
       truth(u, v, out);
       iris_record(kb, in, out);
     }
-    iris_retrain_new(kb, 1234, 800);
+    iris_reseed(kb, 1234); iris_continue(kb, 800);
     size_t n = iris_save(kb, file, sizeof file);
     size_t n1 = instrument_bytes(file, n);
     uint32_t h = fnv1a(file, n1);
@@ -610,45 +610,47 @@ int main(void) {
   }
 
   /* --- 14. event-sourced determinism ---------------------------------------
-     Warm correction advances the rng past the seed, so the new determinism
-     promise is: the identical OPERATION HISTORY reproduces the instrument
-     bit-exactly. Two instruments, same history of record/correct/delete,
-     compared by memcmp over weights+velocity and the rng word, at every
-     chain length 1..10 and after a delete.                                  */
+     A warm run advances the rng past the seed, so the determinism promise
+     for warm training is: the identical OPERATION HISTORY reproduces the
+     instrument bit-exactly. Two instruments, same history of
+     record/continue/delete, compared by memcmp over weights+velocity and
+     the rng word, at every chain length 1..10 and after a delete.          */
   {
     iris *a = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 42);
     iris *c = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 42);
-    load_examples(a, 20); iris_retrain_new(a, 42, 600);
-    load_examples(c, 20); iris_retrain_new(c, 42, 600);
+    load_examples(a, 20); iris_reseed(a, 42); iris_continue(a, 600);
+    load_examples(c, 20); iris_reseed(c, 42); iris_continue(c, 600);
     int all_same = 1;
     for (int i = 0; i < 10; ++i) {
       float in[NI], out[NO];
       chain_correction(i, in, out);
-      iris_record(a, in, out); iris_correct(a, 20);
-      iris_record(c, in, out); iris_correct(c, 20);
+      iris_record(a, in, out); iris_continue(a, 20);
+      iris_record(c, in, out); iris_continue(c, 20);
       if (!state_identical(a, c)) all_same = 0;
     }
-    iris_delete_last(a); iris_correct(a, 20);
-    iris_delete_last(c); iris_correct(c, 20);
+    iris_delete_last(a); iris_continue(a, 20);
+    iris_delete_last(c); iris_continue(c, 20);
     int after_delete = state_identical(a, c);
     ok("event-sourced determinism (history replay)", all_same && after_delete,
-       "10-correction chain bit-identical %d, delete+correct bit-identical %d",
+       "10-step warm chain bit-identical %d, delete+continue bit-identical %d",
        all_same, after_delete);
   }
 
   /* --- 15. save and load carry the random state --------------------------
      The file stores the live rng word. The test that matters is not "the
-     bytes come back" but "the FUTURE comes back": a correction after
-     save->load must be bit-identical to the correction the in-memory
-     instrument would have made.                                            */
+     bytes come back" but "the FUTURE comes back": a warm run after
+     save->load must be bit-identical to the warm run the in-memory
+     instrument would have made from the same state. A load leaves the
+     momentum velocities at zero (iris.h, PART 9), so the in-memory
+     instrument is put at rest the same way before the two runs.            */
   {
     static unsigned char file[64 * 1024];
     iris *a = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 42);
-    load_examples(a, 20); iris_retrain_new(a, 42, 600);
+    load_examples(a, 20); iris_reseed(a, 42); iris_continue(a, 600);
     for (int i = 0; i < 3; ++i) {
       float in[NI], out[NO];
       chain_correction(i, in, out);
-      iris_record(a, in, out); iris_correct(a, 20);
+      iris_record(a, in, out); iris_continue(a, 20);
     }
     size_t n2 = iris_save(a, file, sizeof file);
     iris *b = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 7);
@@ -657,29 +659,29 @@ int main(void) {
              && iris_count(a) == iris_count(b)
              && memcmp(a->w1, b->w1,
                        sizeof(float) * (size_t)(NH*NI + NH + NO*NH + NO)) == 0;
-    /* the future: one more correction on both must match to the bit */
+    /* the future: at rest, one more warm run on both must match to the bit.
+       v_w1, v_b1, v_w2 and v_b2 are one contiguous span in the arena. */
+    memset(a->v_w1, 0, sizeof(float) * (size_t)(NH*NI + NH + NO*NH + NO));
     float in[NI], out[NO];
     chain_correction(3, in, out);
-    iris_record(a, in, out); iris_correct(a, 20);
-    iris_record(b, in, out); iris_correct(b, 20);
+    iris_record(a, in, out); iris_continue(a, 20);
+    iris_record(b, in, out); iris_continue(b, 20);
     int future = state_identical(a, b);
     ok("save round trip carries the random state", exact && future,
-       "%zu B, state exact %d, post-reload correction bit-identical %d",
+       "%zu B, state exact %d, post-reload warm run bit-identical %d",
        n2, exact, future);
   }
 
   /* --- 16. the correction reaches parity without wrecking the map ---------
-     One corrective example on a practised 20-example instrument, default
-     20-epoch warm budget, ONE iris_correct call — the shipped semantics.
-     References, measured here: cold-600 reaches train rms 0.0185-0.0190
-     with far-field drift 0.0030 in ~30x the time; the single warm call
-     measures 0.0191 / 0.0040. (E4's 0.0190/0.0031 came from a per-epoch
-     measurement loop that re-zeroed velocity every epoch — not the shipped
-     call, so the gates below carry the shipped call's numbers + margin.)   */
+     One corrective example on a practised 20-example instrument, then ONE
+     warm run of 20 epochs (iris_continue). Measured here: it reaches train
+     rms 0.0187 with far-field drift 0.0025; a cold 600-epoch retrain from
+     the same seed reaches 0.0181 with 0.0033, on 30 times the epochs. The
+     gates carry the warm run's numbers with a margin.                      */
   {
     static float snapA[21 * 21][NO], snapB[21 * 21][NO];
     iris *a = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 42);
-    load_examples(a, 20); iris_retrain_new(a, 42, 600);
+    load_examples(a, 20); iris_reseed(a, 42); iris_continue(a, 600);
     int p = 0;
     for (int x = 0; x < 21; ++x) for (int y = 0; y < 21; ++y, ++p) {
       float in[NI] = { x / 20.0f, y / 20.0f };
@@ -689,7 +691,7 @@ int main(void) {
     truth(cin[0], cin[1], cout);
     cout[0] = iris_internal_clampf(cout[0] + 0.15f, 0.0f, 1.0f);
     iris_record(a, cin, cout);
-    iris_correct(a, 20);
+    iris_continue(a, 20);
     /* fit across all 21 examples */
     float acc = 0.0f;
     for (int i = 0; i < iris_count(a); ++i) {
@@ -713,8 +715,8 @@ int main(void) {
     }
     float drift = cf ? sf / (float)cf : -1.0f;
     ok("correction: parity fit, surgical drift", tr <= 0.0195f && drift >= 0.0f && drift <= 0.0045f,
-       "train rms %.4f (want <= 0.0195; cold-600 ref 0.0185), "
-       "far-field drift %.4f (want <= 0.0045; cold-600 ref 0.0030), 20 epochs",
+       "train rms %.4f (want <= 0.0195; cold-600 ref 0.0181), "
+       "far-field drift %.4f (want <= 0.0045; cold-600 ref 0.0033), 20 epochs",
        tr, drift);
   }
 
@@ -732,8 +734,9 @@ int main(void) {
       iris *a = iris_init(arena_w1, sizeof arena_w1, NI, nh, NO, CAP, 7);
       iris *b = iris_init(arena_w2, sizeof arena_w2, NI, nh, NO, CAP, 99);
       load_examples(a, 50); load_examples(b, 50);
-      int ra = iris_retrain_elm_new(a, 4242u, 1e-4f, elm_scratch, sizeof elm_scratch);
-      int rb = iris_retrain_elm_new(b, 4242u, 1e-4f, elm_scratch, sizeof elm_scratch);
+      iris_reseed(a, 4242u); iris_reseed(b, 4242u);
+      int ra = iris_train_elm(a, 1e-4f, elm_scratch, sizeof elm_scratch);
+      int rb = iris_train_elm(b, 1e-4f, elm_scratch, sizeof elm_scratch);
       if (ra < 0 || rb < 0) all_same = 0;
       if (memcmp(a->w1, b->w1,
                  sizeof(float) * (size_t)(nh*NI + nh + NO*nh + NO)) != 0) all_same = 0;
@@ -742,8 +745,8 @@ int main(void) {
     iris *kr = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 1);
     for (int s = 0; s < RR_SEEDS; ++s) {
       load_examples(kr, RR_EX);
-      iris_retrain_elm_new(kr, 1000u + (uint32_t)s * 7919u, 1e-4f,
-                         elm_scratch, sizeof elm_scratch);
+      iris_reseed(kr, 1000u + (uint32_t)s * 7919u);
+      iris_train_elm(kr, 1e-4f, elm_scratch, sizeof elm_scratch);
       int p = 0;
       for (int a = 0; a < RR_GRID; ++a) for (int b = 0; b < RR_GRID; ++b, ++p) {
         float in[NI] = { a / (float)(RR_GRID - 1), b / (float)(RR_GRID - 1) };
@@ -818,10 +821,11 @@ int main(void) {
   {
     iris *a = iris_init(arena_w1, sizeof arena_w1, NI, 48, NO, CAP, 42);
     load_examples(a, 50);
-    iris_retrain_new(a, 42u, 600);
+    iris_reseed(a, 42u); iris_continue(a, 600);
     float bp_rec = recall_rmse_of(a), bp_grid = grid_rmse_of(a);
     load_examples(a, 50);
-    int esc = iris_retrain_elm_new(a, 42u, 1e-3f, elm_scratch, sizeof elm_scratch);
+    iris_reseed(a, 42u);
+    int esc = iris_train_elm(a, 1e-3f, elm_scratch, sizeof elm_scratch);
     float el_rec = recall_rmse_of(a), el_grid = grid_rmse_of(a);
     ok("ELM: nh=48 fit floor beats backprop", esc >= 0
        && el_rec <= bp_rec && el_grid <= bp_grid,
@@ -1051,7 +1055,7 @@ int main(void) {
       float in[NI] = { u, 1.0f - u }, out[NO] = { u, u, u };
       iris_record(a, in, out);
     }
-    iris_retrain_new(a, 4321, 100);
+    iris_reseed(a, 4321); iris_continue(a, 100);
     static unsigned char blob[8 * 1024], evil[8 * 1024];
     static unsigned char arena_before[sizeof arena_b];
     size_t n = iris_save(a, blob, sizeof blob);
@@ -1092,7 +1096,7 @@ int main(void) {
       float in[NI] = { u, 1.0f - u }, out[NO] = { 0.2f + 0.1f * (float)i, 0.5f, 0.8f };
       iris_record(a, in, out);
     }
-    iris_retrain_new(a, 99, 200);
+    iris_reseed(a, 99); iris_continue(a, 200);
     float rlo[NO], rhi[NO];
     for (int o = 0; o < NO; ++o) { rlo[o] = a->out_lo[o]; rhi[o] = a->out_hi[o]; }
     /* iris_record now refuses NaN at the door (B4), so put the poison into the
@@ -1126,7 +1130,7 @@ int main(void) {
      an animation.                                                          */
   {
     load_examples(k, 20);
-    iris_retrain_new(k, 4242u, 600);
+    iris_reseed(k, 4242u); iris_continue(k, 600);
     float e600 = iris_last_error(k), r600 = recall_rmse_of(k);
 
     iris *ka = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 4242u);
@@ -1251,7 +1255,7 @@ int main(void) {
     float rc = iris_continue_to_plateau(d, 0, 0, 0);
     int refused = (rc < 0.0f) && (iris_get_status(d) == IRIS_DIVERGED_STUCK);
 
-    iris_retrain_new(d, 1234, 600);
+    iris_reseed(d, 1234); iris_continue(d, 600);
     float back[NO]; iris_predict(d, pr, back);
     float drift = 0.0f;
     for (int o = 0; o < NO; ++o) {
@@ -1391,16 +1395,16 @@ int main(void) {
     printf("\n");
     for (int e = 0; e < 2; ++e) {
       load_examples(k, cex[e]);
-      iris_retrain_new(k, 4242u, 600);
+      iris_reseed(k, 4242u); iris_continue(k, 600);
       float nin[NI], nout[NO];
       chain_correction(0, nin, nout);
       iris_record(k, nin, nout);
       double t0 = now_ms();
       float unused = 0.0f;
-      for (int rep = 0; rep < 50; ++rep) unused += iris_correct(k, 20);
+      for (int rep = 0; rep < 50; ++rep) unused += iris_continue(k, 20);
       double dc = (now_ms() - t0) / 50.0;
       (void)unused;
-      printf("  one warm correction (iris_correct, 20 epochs) at %3d examples: "
+      printf("  one warm correction (iris_continue, 20 epochs) at %3d examples: "
              "%.3f ms here, ~%.1f ms on the S3\n", cex[e] + 1, dc, dc * IRIS_S3_SCALE);
     }
   }

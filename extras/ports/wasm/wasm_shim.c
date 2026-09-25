@@ -109,7 +109,9 @@ EXPORT int   iris_js_get(int idx)        { return g_k ? iris_get(g_k, idx, s_ex_
 
 EXPORT float iris_js_train(int epochs)   { return g_k ? iris_continue(g_k, epochs) : 1.0f; }
 EXPORT float iris_js_reroll(unsigned int seed, int epochs) {
-  return g_k ? iris_retrain_new(g_k, seed, epochs) : 1.0f;
+  if (!g_k) return 1.0f;
+  iris_reseed(g_k, seed);
+  return iris_continue(g_k, epochs);
 }
 /* REMOVED 2026-08-27. Exposing lr/momentum to a browser UI is exposing the
    two knobs measured to brick instruments: momentum 0.99 bricked 20 of 40 runs
@@ -120,7 +122,10 @@ EXPORT float iris_js_reroll(unsigned int seed, int epochs) {
    A commit, a dissolve, a reroll and an undo each end in one of these; the
    solve is closed-form (~1 ms) and deterministic in seed + dataset, so the
    n-th reroll after a given seed is the same instrument here and on the
-   board. Returns ridge doublings (>= 0) or -1 refused (weights untouched). */
+   board. Returns ridge doublings (>= 0) or -1 refused. A refused
+   iris_js_train_elm leaves the weights untouched; iris_js_reroll_elm has
+   already drawn the new seed's starting weights by then, so a refused
+   reroll leaves the instrument unfitted. */
 #define LAMBDA_DEFAULT 1e-4f
 static unsigned char g_elm_scratch[IRIS_ELM_SCRATCH(HID_MAX, NO)];
 EXPORT int iris_js_train_elm(float lam) {
@@ -129,7 +134,8 @@ EXPORT int iris_js_train_elm(float lam) {
 }
 EXPORT int iris_js_reroll_elm(unsigned int seed, float lam) {
   if (!g_k) return -1;
-  return iris_retrain_elm_new(g_k, seed, lam > 0.0f ? lam : LAMBDA_DEFAULT, g_elm_scratch, sizeof g_elm_scratch);
+  iris_reseed(g_k, seed);
+  return iris_train_elm(g_k, lam > 0.0f ? lam : LAMBDA_DEFAULT, g_elm_scratch, sizeof g_elm_scratch);
 }
 EXPORT int iris_js_status(void) { return g_k ? (int)iris_get_status(g_k) : -1; }
 

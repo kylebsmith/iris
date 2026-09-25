@@ -138,7 +138,6 @@ int iris_probe(void) {
   SINKF += out[0] + iris_novelty(k, in) + iris_example_stress(k, 0);
   SINKI += iris_worst_example(k, &margin) + iris_worst_example_id(k, &margin);
   iris_internal_zero_velocity(k);
-  SINKF += iris_correct(k, 0);
   SINKI += iris_is_trained(k);
   SINKF += iris_last_error(k);
   SINKU += iris_seed(k);
@@ -150,7 +149,6 @@ int iris_probe(void) {
   SINKF += iris_suggest_smoothing(k, scratch, sizeof scratch);
   SINKI += iris_train_elm(k, 1e-4f, scratch, sizeof scratch);
   SINKI += iris_internal_train_elm_ex(k, 1e-4f, 2.0f, 2.0f, scratch, sizeof scratch);
-  SINKI += iris_retrain_elm_new(k, 7u, 1e-4f, scratch, sizeof scratch);
   iris_knn_predict(k, in, out, 3);
   SINKF += out[1];
   SINKI += iris_classify_1nn(k, in, out);
@@ -172,7 +170,6 @@ int iris_probe(void) {
   SINKU += (unsigned long)(iris_internal_put_f32s(word + 8, xn, NI) - word);
   k2 = iris_init(mem2, sizeof mem2, NI, NH, NO, CAP, 1u);
   SINKI += iris_load(k2, file, n);
-  SINKF += iris_retrain_new(k, 42u, 100);
   SINKI += iris_delete_nearest(k, in);
   SINKI += iris_delete_index(k, 0) + iris_delete_id(k, 5) + iris_delete_last(k);
   iris_clear(k);

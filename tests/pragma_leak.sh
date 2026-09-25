@@ -114,19 +114,17 @@ void w_predict(void)    { iris_predict(K, IN, OUT); }
 void w_novelty(void)    { F = iris_novelty(K, IN); }
 void w_stress(void)     { F = iris_example_stress(K, I); I = iris_worst_example(K, &F);
                           I = iris_worst_example_id(K, &F); }
-void w_warm(void)       { iris_internal_zero_velocity(K); F = iris_correct(K, I); }
+void w_velocity(void)   { iris_internal_zero_velocity(K); }
 void w_state(void)      { I = iris_is_trained(K); F = iris_last_error(K); U = iris_seed(K); }
 void w_loo(void)        { F = iris_loo_error(K, I); }
 void w_suggest(void)    { F = iris_suggest_smoothing(K, scratch, sizeof scratch); }
 void w_elm(void)        { I = iris_train_elm(K, F, scratch, sizeof scratch); }
 void w_elm_ex(void)     { I = iris_internal_train_elm_ex(K, F, IN[0], IN[1], scratch, sizeof scratch); }
-void w_elm_new(void)    { I = iris_retrain_elm_new(K, 9u, F, scratch, sizeof scratch); }
 void w_knn(void)        { iris_knn_predict(K, IN, OUT, I); }
 void w_1nn(void)        { I = iris_classify_1nn(K, IN, OUT); }
 void w_save(void)       { N = iris_save_size(K); N = iris_save(K, file, sizeof file);
                           U = iris_internal_crc32(file, N); }
 void w_load(void)       { I = iris_load(K, file, N); }
-void w_retrain(void)    { F = iris_retrain_new(K, 3u, I); }
 void w_delete(void)     { I = iris_delete_nearest(K, IN); I = iris_delete_index(K, I);
                           I = iris_delete_id(K, I); I = iris_delete_last(K); iris_clear(K); }
 

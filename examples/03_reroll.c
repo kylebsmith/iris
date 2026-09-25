@@ -58,7 +58,8 @@ int main(void) {
     iris *k = iris_init(mem, sizeof mem, 2, 12, 1, 16, seeds[s]);
     for (int i = 0; i < 4; ++i) iris_record(k, demo[i], &demo[i][2]);
 
-    int rc = iris_retrain_elm_new(k, seeds[s], 1e-4f, scratch, sizeof scratch);
+    iris_reseed(k, seeds[s]);                /* the reroll: a new random layer */
+    int rc = iris_train_elm(k, 1e-4f, scratch, sizeof scratch);
     if (rc < 0) { printf("  ELM refused (%d)\n", rc); return 1; }
 
     char t[64];
