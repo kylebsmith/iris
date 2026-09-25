@@ -132,7 +132,7 @@ static int scaling_breaks(int path, int which) {
 }
 
 int main(void) {
-  char d[200];
+  char d[256];
   printf("\n  PLAYING AND NEIGHBOURS\n\n");
 
   /* ---- k-nearest neighbours: a unanimous neighbourhood is exact ----------

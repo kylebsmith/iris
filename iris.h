@@ -1173,9 +1173,10 @@ IRIS_API int iris_internal_nearest(iris *k, const float *in);
    picks the second take, while in fractions of each range they are 0.36 and
    1.16 and the first take is the one you are standing on.
 
-   Deletes nothing, and returns 0, when the store is empty or the reading is
-   not finite. On an instrument that has never been fitted it fits the ranges
-   first, as the neighbour functions do. */
+   Deletes nothing, and returns 0, when the store is empty, the reading is
+   not finite, or the instrument's shape is too big for this translation
+   unit (see iris_shape_fits). On an instrument that has never been fitted it
+   fits the ranges first, as the neighbour functions do. */
 /* LENGTHS, same rule as iris_predict and just as unchecked.
    Reads exactly n_in floats from `in`. */
 IRIS_API int iris_delete_nearest(iris *k, const float *in) { if (!k) return 0;
@@ -3234,9 +3235,10 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
   iris_internal_neighbour_scale(k, inv);
 
   const int stride = NIn + NOut;
-  /* Every slot is filled, not only the first kk. The scan and the blend touch
-     only the first kk, but a compiler cannot see that kk is at least 1 here,
-     and gcc-15 at -O2 and -O3 warned that bi might be read uninitialised. */
+  /* Every slot is filled, not only the first kk that the scan and the blend
+     touch. A compiler cannot see that kk is at least 1 here, and with only kk
+     slots filled gcc-15 at -O2 and -O3, and the ESP32-S3's gcc at -O2, warn
+     that bi may be read uninitialised. */
   int   bi[IRIS_KNN_MAXK];
   float bd[IRIS_KNN_MAXK];
   for (int n = 0; n < IRIS_KNN_MAXK; ++n) { bi[n] = -1; bd[n] = IRIS_FLT_MAX; }
