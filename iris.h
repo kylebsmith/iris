@@ -1247,8 +1247,9 @@ IRIS_API void iris_internal_span(const iris *k, int c, float *lo, float *hi) {
 
 /* THE RANGES. Every input and every output gets the smallest and largest value
    the demonstrations gave it. Every trainer calls this before it starts; the
-   neighbour functions call it on an instrument that has never been fitted
-   (PART 10). With no demonstrations it leaves the ranges as they are.
+   neighbour functions (PART 10) and iris_delete_nearest call it on an
+   instrument that has never been fitted. With no demonstrations it leaves the
+   ranges as they are.
 
    AN INPUT THAT NEVER MOVED IS IGNORED. A switch left in one position, a
    sensor resting against its rail, a light sensor under steady light: an input
@@ -1495,8 +1496,8 @@ IRIS_API void iris_predict(iris *k, const float *in, float *out) { if (!k) retur
    on how many takes you recorded, and two instruments are not comparable.
 
    Making the scale relative to the examples' own spacing would fix that. It
-   is deliberately NOT done here: the audit uses novelty to sort probes into
-   near and far bands, so changing the scale moves measured thresholds
+   is deliberately NOT done here: tests/audit.c uses novelty to sort probes
+   into near and far bands, so changing the scale moves measured thresholds
    elsewhere, and that deserves its own measurement rather than a quiet edit.
 
    This costs one pass over the examples. But it lets the instrument know when
@@ -3103,11 +3104,14 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
      - RECALL. Standing on a demonstration returns that demonstration: to
        the bit from iris_classify_1nn, and to within rounding from
        iris_knn_predict, where the demonstration you stand on carries a
-       weight of about 1e9 (the audit's exact-recall check measures a worst
-       error of 6e-8 on outputs between 0 and 1). The MLP does not quite get
-       there: trained to its plateau it misses its own demonstrations by
-       about 0.1% of the output range (the audit's convergence check
-       measures a recall error of 0.0012).
+       weight of about 1e9 against 1/d^2 for each other neighbour (the
+       exact-recall check in tests/audit.c measures a worst error of 6e-8 on
+       outputs between 0 and 1). Only another demonstration almost on top of
+       it pulls the answer measurably away. The MLP does not quite get there:
+       trained to its plateau it misses its own demonstrations by a
+       root-mean-square 0.0012 on outputs whose demonstrated ranges are 0.45
+       to 0.8 wide, about 0.2% of the range (the convergence check in
+       tests/audit.c).
 
      - SEAMS, ON PURPOSE. Between two demos the output can step 31x more
        sharply than its mean step, where the MLP's morph steps 1.9x
@@ -3203,10 +3207,11 @@ IRIS_API int iris_internal_nearest(iris *k, const float *in) {
 /* k-NN inverse-squared-distance-weighted regression. k neighbours (default
    choice: 3, at most IRIS_KNN_MAXK), weight 1/(d^2 + guard) each, where d^2
    is the squared distance. Standing exactly on a demonstration gives that row
-   a weight of 1e9, so recall is exact to within rounding; between
-   demonstrations the nearest k blend. Conflicting duplicates average finitely
-   (the guard keeps zero-distance weights finite). O(n_ex * n_in) per call,
-   division-free scan.
+   a weight of 1e9, so recall is exact to within rounding unless another
+   demonstration lies almost on top of it; between demonstrations the
+   nearest k blend. Conflicting duplicates average finitely (the guard keeps
+   zero-distance weights finite). O(n_ex * n_in) per call, division-free
+   scan.
 
    WHAT IT WRITES INSIDE THE INSTRUMENT: the status, when it has something to
    report, and the ranges of an instrument that has never been fitted (see
@@ -3236,9 +3241,11 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
 
   const int stride = NIn + NOut;
   /* Every slot is filled, not only the first kk that the scan and the blend
-     touch. A compiler cannot see that kk is at least 1 here, and with only kk
-     slots filled gcc-15 at -O2 and -O3, and the ESP32-S3's gcc at -O2, warn
-     that bi may be read uninitialised. */
+     use, so bi is initialised whatever a compiler can prove about kk. gcc's
+     -Wmaybe-uninitialized cannot always follow kk: filling only kk slots and
+     blending in a for loop over kk that stops at the first empty slot draws
+     "bi may be used uninitialized" from gcc-15 at -O2 and -O3 and from the
+     ESP32-S3's gcc at -O2 and -O3. */
   int   bi[IRIS_KNN_MAXK];
   float bd[IRIS_KNN_MAXK];
   for (int n = 0; n < IRIS_KNN_MAXK; ++n) { bi[n] = -1; bd[n] = IRIS_FLT_MAX; }

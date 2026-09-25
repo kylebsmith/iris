@@ -8,7 +8,7 @@
 
    Build and run from the repository root:
 
-     mkdir -p build && cc -std=c99 -O2 -Wall -Wextra -I. -o build/playing tests/playing.c && ./build/playing
+     mkdir -p build && cc -std=c99 -O2 -Wall -Wextra -I. -o build/playing tests/playing.c -lm && ./build/playing
 
    Exits 0 when every check passes and 1 when any fails.
    ========================================================================= */
@@ -510,6 +510,7 @@ int main(void) {
     k->status = IRIS_STATUS_OK;
     const int id = iris_classify_1nn(k, far, o);
     const int nn_ok = id > 0 && iris_get_status(k) == IRIS_STATUS_OK;
+    k->status = IRIS_STATUS_OK;
     iris_knn_predict(k, far, o, 2);
     const int knn_ok = iris_get_status(k) == IRIS_STATUS_OK && !iris_isbad(o[0]);
     const int del = iris_delete_nearest(k, far);
