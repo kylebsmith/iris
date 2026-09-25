@@ -41,16 +41,17 @@
         starts over
    ========================================================================= */
 
+#include "iris.h"
 /* The pinned hashes are exact, so the demonstrations built below must be
    exact too: forbid fused multiply-add in this file's own arithmetic, as
-   iris.h does in its own. */
+   iris.h does in its own. iris.h's contraction setting ends with the header,
+   so this comes after the #include, where the header says an includer's own
+   pragma belongs. */
 #if defined(__clang__)
 #pragma STDC FP_CONTRACT OFF
 #elif defined(__GNUC__)
 #pragma GCC optimize ("fp-contract=off")
 #endif
-
-#include "iris.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
