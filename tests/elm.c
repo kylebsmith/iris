@@ -27,7 +27,8 @@
      2. at smoothing 0 the solved weights match pinned hashes, bit for bit
         (fixed recipes, hashes below)
      3. recall error rises with smoothing, and held-out error on noisy
-        demonstrations falls at a moderate setting
+        demonstrations falls at a moderate setting; the output bias is never
+        smoothed
      4. a solve refreshes the worst-example ledger
      5. every output constant, or every take at one gesture, is not reported
         as a collapse; a real collapse still is
@@ -98,7 +99,7 @@ static const struct recipe R[] = {
 
 static void record_recipe(iris *k, const struct recipe *r) {
   for (int i = 0; i < r->n; ++i) {
-    float in[5], out[3] = { 0.0f, 0.0f, 0.0f };
+    float in[5] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }, out[3] = { 0.0f, 0.0f, 0.0f };
     for (int c = 0; c < r->ni; ++c)
       in[c] = frac((unsigned)i + 1u, 7919u + 104u * (unsigned)c, 97u + 4u * (unsigned)c);
     if (r->kind == 1) { in[0] *= 4095.0f; in[2] = in[2] * 4.0f - 2.0f; }
@@ -437,7 +438,7 @@ int main(int argc, char **argv) {
           }
     int rising = 1;
     for (int s = 1; s < 6; ++s) if (!(rec[s] > rec[s - 1])) rising = 0;
-    snprintf(d, sizeof d, "summed recall MSE %.4f %.4f %.4f %.4f %.4f %.4f",
+    snprintf(d, sizeof d, "summed recall mean squared error %.4f %.4f %.4f %.4f %.4f %.4f",
              rec[0], rec[1], rec[2], rec[3], rec[4], rec[5]);
     check("recall error rises at every smoothing step", rising, d);
 
@@ -448,9 +449,9 @@ int main(int argc, char **argv) {
         smooth_trial(20, 0.10f, 0.0f, shape, sd * 7919u, &r, &h); h0 += h;
         smooth_trial(20, 0.10f, 0.3f, shape, sd * 7919u, &r, &h); h3 += h;
       }
-    snprintf(d, sizeof d, "held-out RMSE %.4f at smoothing 0, %.4f at 0.3",
+    snprintf(d, sizeof d, "held-out root-mean-square error %.4f at smoothing 0, %.4f at 0.3",
              (double)iris_sqrt((float)(h0 / 64.0)), (double)iris_sqrt((float)(h3 / 64.0)));
-    check("moderate smoothing helps noisy demonstrations", h3 < 0.81 * h0, d);   /* RMSE -10% */
+    check("moderate smoothing helps noisy demonstrations", h3 < 0.81 * h0, d);   /* -10% root-mean-square */
 
     const struct recipe *r = &R[0];
     iris *k = iris_init(arena, sizeof arena, r->ni, r->nh, r->no, 64, r->seed);
@@ -462,6 +463,36 @@ int main(int argc, char **argv) {
              ret, h, r->weights, iris_get_status(k));
     check("smoothing reaches the solve", ret >= 0 && h != r->weights
           && iris_get_status(k) == IRIS_STATUS_OK, d);
+
+    /* ...and never reaches the output bias. The bias row of the normal
+       equations then carries only the small ridge relative to the data, so
+       even at smoothing 1 the fitted pre-activations average to the
+       demonstrated targets (in logit units). Measured: the two averages
+       differ by under 4e-5; with the bias smoothed too, by 1e-2 to 2e-2. */
+    iris *b = iris_init(arena, sizeof arena, 2, 12, 2, 128, 31u);
+    for (int i = 0; i < 20; ++i) {
+      float a = (float)((i * 7) % 20) / 19.0f, c = (float)((i * 3) % 20) / 19.0f;
+      float in[2] = { a, c }, o[2] = { 0.5f + 0.4f * iris_tanh(3.0f * (a - 0.2f)), 0.3f + 0.2f * a * c };
+      iris_record(b, in, o);
+    }
+    iris_set_smoothing(b, 1.0f);
+    int rb = iris_train_elm(b, 1e-4f, scratch, sizeof scratch);
+    double gap[2] = { 0.0, 0.0 };
+    for (int n = 0; n < b->n_ex; ++n) {
+      float ti[2], to[2], x[2];
+      iris_get(b, n, ti, to);
+      for (int i = 0; i < 2; ++i) x[i] = iris_norm_in(b, i, ti[i]);
+      iris_forward_norm(b, x);
+      for (int o = 0; o < 2; ++o) {
+        float z = b->b2[o];
+        for (int j = 0; j < 12; ++j) z += b->w2[o * 12 + j] * b->hid[j];
+        gap[o] += ((double)z - (double)iris_logit(iris_norm_out(b, o, to[o]))) / (double)b->n_ex;
+      }
+    }
+    snprintf(d, sizeof d, "smoothing 1: ret %d, fitted minus demonstrated mean logit %.2e %.2e",
+             rb, gap[0], gap[1]);
+    check("smoothing leaves the output bias alone", rb >= 0 && gap[0] < 1e-3 && gap[0] > -1e-3
+          && gap[1] < 1e-3 && gap[1] > -1e-3, d);
   }
 
   /* ---- 4. the ledger is the solve's, not a leftover ------------------------- */

@@ -2452,13 +2452,14 @@ IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->see
    SMOOTHING reaches this trainer as extra ridge on the output weights, and
    never on the output biases: a penalised bias drags every output toward the
    middle of its range, where an unpenalised one lets heavy smoothing settle
-   near the average of what was demonstrated (averaged in logit units). Smoothing s is stored as weight
-   decay 0.3 s (PART 3); the solve adds four times that, 1.2 s, to the diagonal
-   entry of every output weight, on top of the relative ridge above. At
-   smoothing 0 the added term is exactly zero, so the solve is bit-for-bit
-   the unsmoothed one. The extra ridge is absolute, not relative to the data:
-   like backprop's weight decay, its pull stays fixed while the evidence grows
-   with every demonstration, so smoothing matters most with few takes.
+   near the average of what was demonstrated (averaged in logit units).
+   Smoothing s is stored as weight decay 0.3 s (PART 3); the solve adds four
+   times that, 1.2 s, to the diagonal entry of every output weight, on top of
+   the relative ridge above. At smoothing 0 the added term is exactly zero, so
+   the solve is bit-for-bit the unsmoothed one. The extra ridge is absolute,
+   not relative to the data: like backprop's weight decay, its pull stays
+   fixed while the evidence grows with every demonstration, so smoothing
+   matters most with few takes.
 
    THE FOUR IS MEASURED, NOT DERIVED. Carrying backprop's weight decay into
    logit units at the sigmoid's steepest slope (0.25) gives sixteen. With
@@ -2664,7 +2665,9 @@ IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
       iris_rng r = { seed };
       for (int j = 0; j < NH_; ++j) {
         for (int i = 0; i < NI_; ++i) wj[i] = iris_rand_sym(&r) * gain_w;
-        float s = iris_rand_sym(&r) * gain_b;          /* the bias comes first */
+        /* the bias is drawn after the unit's weights, but the sum starts
+           from it, as the forward pass's does (PART 6) */
+        float s = iris_rand_sym(&r) * gain_b;
         for (int i = 0; i < NI_; ++i) s += wj[i] * x[i];
         h[j] = iris_tanh(s);
       }
@@ -2792,10 +2795,10 @@ IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
     k->last_error = err / (float)(k->n_ex * NO_);
 
 #ifndef IRIS_NO_GUARDS
-    /* DID IT ACTUALLY LEARN A MAPPING? A large enough lam0 or smoothing -- or a
-       zero gain_w -- drives every output weight toward nothing, and the solve
-       then maps every gesture to the same sound. That is not a failed solve by
-       any numerical test: no value is bad and the ridge did what it was asked.
+    /* DID IT ACTUALLY LEARN A MAPPING? A large enough lam0 -- or a zero
+       gain_w -- drives every output weight toward nothing, and the solve then
+       maps every gesture to the same sound. That is not a failed solve by any
+       numerical test: no value is bad and the ridge did what it was asked.
        So ask the only question that matters to a musician: do the gestures
        they demonstrated still sound different? Everything is compared in
        normalised units, so the answer does not depend on the caller's units.
@@ -2811,8 +2814,8 @@ IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
        Collapsed means: on every output the demonstrations changed, the fitted
        outputs move less than half a percent as far as the demonstrations did
        -- a constant with rounding on it. The status says IRIS_DIVERGED_STUCK;
-       the solve is still installed, and a smaller lam0 or smoothing, or a
-       larger gain_w, brings the mapping back. */
+       the solve is still installed, and a smaller lam0, or a larger gain_w,
+       brings the mapping back. */
     {
       int moved = 0, changed = 0, collapsed;
       for (int n = 1; n < k->n_ex && !moved; ++n)
