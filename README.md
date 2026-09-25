@@ -283,7 +283,10 @@ each registry. The other seven are absent, including every temporal model
 (dynamic time warping, which matches gestures of differing speed), and so is
 the analyst's toolkit: no dataset table, no algorithm chooser, no per-output
 input selection. `iris_loo_error` gives a leave-one-out error for comparing
-settings.
+settings; it leaves the instrument refitted for a fixed 600 epochs (or the
+count you pass), not the instrument you trained, so save first or call
+`iris_train` afterwards. `iris_suggest_smoothing` runs the same sweep and puts
+every byte back.
 
 ## Honest limitations
 

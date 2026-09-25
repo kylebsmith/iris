@@ -363,7 +363,9 @@
      int   iris_worst_example(k, margin)  position of the one that fought
                                           hardest, or -1
      int   iris_worst_example_id(k, margin)  its identifier, or -1
-     float iris_loo_error(k, epochs)      a leave-one-out held-out error, or -1
+     float iris_loo_error(k, epochs)      a leave-one-out held-out error, or -1;
+                                          it REPLACES the weights with a
+                                          fixed-epoch refit (PART 8)
      float iris_suggest_smoothing(k, scratch, bytes)
                                           a smoothing value to audition, or -1
 
@@ -380,9 +382,16 @@
    IRIS_ARENA_ELM, the two added together; IRIS_MAX_IN, IRIS_MAX_OUT and
    IRIS_MAX_HID, which you may lower before the #include, and IRIS_MAX_EX;
    IRIS_VERSION_MAJOR, _MINOR, _PATCH and _STRING; IRIS_STRESS_MIN_EX and
-   IRIS_STRESS_FLAG (PART 8f); IRIS_KNN_MAXK (PART 10); the iris_status
-   values; and IRIS_NO_GUARDS, which compiles the guards out and is for
-   measuring them, not for instruments.
+   IRIS_STRESS_FLAG (PART 8f); IRIS_KNN_MAXK (PART 10); IRIS_ID_LIMIT, the
+   bound on identifiers on this machine (PART 4); IRIS_W_LIMIT, the
+   divergence guard's limit (PART 8); IRIS_FILE_MAGIC, IRIS_FILE_VERSION and
+   IRIS_FILE_HEADER, the save format's fixed values (PART 9); the iris_status
+   values; IRIS_API, which you may define before the #include to change how
+   every function is declared (the WebAssembly port marks them used); and
+   IRIS_NO_GUARDS, which compiles the guards out and is for measuring them,
+   not for instruments. Every other IRIS_ macro is part of how the file
+   works, like the iris_internal_ names: it can change in any release, and
+   defining one yourself is not supported.
 
    FAILURE, in two rules:
      A call that either works or does not returns 0 for "did nothing".
@@ -391,7 +400,8 @@
    in trouble. Zero means opposite things in the two places. A RETURN VALUE
    of 0 is bad news (the call did nothing); a STATUS of 0 is good news
    (IRIS_STATUS_OK, nothing is wrong). The full account, with the one test
-   that answers "did it train?" after every trainer, is above
+   that answers "did it train?" after every trainer and the places where the
+   two rules give different answers to similar questions, is above
    iris_get_status.
 
    THREADING: never touch the same instrument from two places at once. The
@@ -799,9 +809,7 @@ IRIS_API int iris_internal_isbad(float x) {
    subnormals has not been measured on the chip. 1e-30 is about eight powers
    of ten above the smallest normal float (about 1.2e-38), so every processor
    evaluates the comparison identically.                                     */
-#ifndef IRIS_TINY
 #define IRIS_TINY 1e-30f
-#endif
 #ifdef IRIS_NO_GUARDS
 #define IRIS_FLUSH(v) (v)
 #else
@@ -1263,6 +1271,20 @@ struct iris {
    often a good answer: a training error of 0 is a perfect fit, no ridge
    doublings is the best a solve can do, and a novelty of 0 means the
    reading is exactly on a demonstration.
+
+   WHERE THE RULES DIFFER FOR SIMILAR QUESTIONS, so a table is worth having:
+     - A position with no demonstration: iris_get answers 0 (rule 1: it
+       copied nothing, and no identifier is 0) and iris_id_at answers -1
+       (rule 2).
+     - iris_train_elm's best outcome is 0 ridge doublings, which reads as
+       false (the table above).
+     - iris_set_smoothing returns nothing: a value outside 0 to 1 is clamped
+       to the nearer end without a status, and iris_get_smoothing reports
+       what was kept. Only a value that is not finite is refused, with
+       IRIS_NAN_TRAPPED.
+     - With no demonstrations stored, iris_predict writes 0 and reports
+       IRIS_NOT_FITTED, while iris_knn_predict and iris_classify_1nn write 0
+       (iris_classify_1nn also returns -1) and leave the status alone.
 
    THE READERS cannot fail and so answer every question: iris_count,
    iris_capacity, iris_seed, iris_is_trained, iris_last_error,
