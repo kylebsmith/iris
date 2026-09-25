@@ -736,12 +736,6 @@ typedef enum {
                                 Outputs are the centre of the demonstrated
                                 range (0 with no demonstrations), never the
                                 forward pass over random weights.            */
-  IRIS_STORE_FULL        = 6,  /* iris_record was refused because the store is
-                                full. A poisoned reading reports
-                                IRIS_NAN_TRAPPED instead: both return 0, and
-                                the status is how a sketch tells a student
-                                whether to delete a demonstration or to check
-                                the sensor.                                  */
   IRIS_DIVERGED_STUCK    = 5,  /* a trainer that continues from the current
                                 weights (iris_continue or
                                 iris_continue_to_plateau) refused, because
@@ -759,6 +753,12 @@ typedef enum {
                                 (iris_reseed with a new seed, then iris_train)
                                 is a different run. This status means a
                                 diverged gradient run and nothing else.      */
+  IRIS_STORE_FULL        = 6,  /* iris_record was refused because the store is
+                                full. A poisoned reading reports
+                                IRIS_NAN_TRAPPED instead: both return 0, and
+                                the status is how a sketch tells a student
+                                whether to delete a demonstration or to check
+                                the sensor.                                  */
   IRIS_SOLVE_COLLAPSED   = 7   /* the closed-form solve (iris_train_elm)
                                 produced a constant mapping: the fit is valid
                                 and installed, but it ignores the inputs. On

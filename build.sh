@@ -25,7 +25,8 @@
 # give iris's bits.
 #
 # THE TEST PROGRAMS, each its own arm, each built with -std=c99 -Wall -Wextra
-#   audit        tests/audit.c, the pinned golden hash and exact checks; then
+#   audit        tests/audit.c, the pinned golden hash and exact checks; that
+#                iris.h declares the iris_status values in value order; then
 #                tests/guards_ab.c built with and without -DIRIS_NO_GUARDS:
 #                every healthy line must match and every control line differ
 #   regressions  tests/regressions.c, one test per reviewed defect
@@ -121,6 +122,14 @@ is_clang() { "$1" --version 2>/dev/null | grep -qi clang; }
 arm_audit() {
   "$CC" $CFLAGS -pthread -o build/audit tests/audit.c -lm
   ./build/audit
+  # the iris_status values, in the order iris.h declares them, count up from 0
+  vals=$(sed -n '/^typedef enum {/,/^} iris_status;/s/^ *IRIS_[A-Z_]* *= *\([0-9][0-9]*\).*/\1/p' iris.h | tr '\n' ' ')
+  want=""; i=0
+  for v in $vals; do want="$want$i "; i=$((i + 1)); done
+  if [ -z "$vals" ] || [ "$vals" != "$want" ]; then
+    fail "iris_status is not declared in value order: $vals"
+  fi
+  say "PASS  iris_status is declared in value order     $vals"
   "$CC" $CFLAGS -o build/guards_ab tests/guards_ab.c -lm
   "$CC" $CFLAGS -DIRIS_NO_GUARDS -o build/guards_ab_ng tests/guards_ab.c -lm
   ./build/guards_ab > build/guards_ab.out
