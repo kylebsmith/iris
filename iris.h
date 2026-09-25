@@ -1105,10 +1105,10 @@ struct iris {
 
 /* WHAT THE STATUS DOES AND DOES NOT COVER.
 
-   It reports NUMERICAL HEALTH ONLY: a poisoned value trapped at the door or
-   before an output, a diverged or stuck run, a ridge escalation, a prediction
-   from an instrument that was never fitted, a closed-form solve that collapsed
-   to a constant, a full store. Those are the conditions a caller cannot
+   It reports NUMERICAL HEALTH, and a full store: a poisoned value trapped at
+   the door or before an output, a diverged or stuck run, a ridge escalation,
+   a prediction from an instrument that was never fitted, a closed-form solve
+   that collapsed to a constant. Those are the conditions a caller cannot
    detect for itself.
 
    It does NOT report an argument mistake: asking for demonstration 5,000 of
