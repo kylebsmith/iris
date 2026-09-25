@@ -489,7 +489,7 @@ int main(int argc, char **argv) {
     static const int shapes[5][4] = {
       { NI, NH, NO, CAP }, { 1, 8, 1, 1 }, { 3, 17, 2, 5 }, { 7, 33, 5, 999 },
       { IRIS_MAX_IN, IRIS_MAX_HID, IRIS_MAX_OUT, IRIS_MAX_EX } };
-    int cases = 0, good = 0;
+    int cases = 0, good = 0, bad_shape = -1, bad_off = -1;
     size_t least_slack = (size_t)-1, worst_need = 0, worst_bytes = 0;
     for (int s5 = 0; s5 < 5; ++s5) {
       const int *sh = shapes[s5];
@@ -503,14 +503,23 @@ int main(int argc, char **argv) {
           if (bytes - reach < least_slack) {
             least_slack = bytes - reach; worst_need = reach; worst_bytes = bytes;
           }
+        } else if (bad_shape < 0) {
+          bad_shape = s5; bad_off = (int)off;
         }
         free(base);
       }
     }
-    ok("arena macro covers every array iris_init carves", good == cases,
-       "%d of %d shape/offset cases inside, aligned, disjoint; tightest: "
-       "reaches %zu of %zu B (slack %zu B)", good, cases, worst_need,
-       worst_bytes, least_slack);
+    if (good == cases)
+      ok("arena macro covers every array iris_init carves", 1,
+         "%d of %d shape/offset cases inside, aligned, disjoint; tightest: "
+         "reaches %zu of %zu B (slack %zu B)", good, cases, worst_need,
+         worst_bytes, least_slack);
+    else
+      ok("arena macro covers every array iris_init carves", 0,
+         "%d of %d shape/offset cases inside, aligned, disjoint; the first "
+         "that is not: shape %d-%d-%d with %d demonstrations at offset %d",
+         good, cases, shapes[bad_shape][0], shapes[bad_shape][1],
+         shapes[bad_shape][2], shapes[bad_shape][3], bad_off);
   }
 
   iris *k = iris_init(arena_a, sizeof arena_a, NI, NH, NO, CAP, 1234);
