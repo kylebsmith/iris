@@ -6,13 +6,12 @@ sh build.sh cov builds every test program with clang's source-based coverage
 This script reads those profiles and reports how much of iris.h the test
 programs, taken together, execute.
 
-Why not simply `llvm-cov report bin1 -object bin2 ...`? Because iris.h's
-functions are `static inline`: every program carries its own copy of each one,
-and llvm-cov's summary counts a line or branch as covered only as well as the
-single best copy covers it, not as the union of what all the copies covered. A
-branch taken only in tests/coverage.c and another taken only in tests/audit.c
-would count as one. So this script exports every program's regions and
-branches as JSON and takes the union itself:
+iris.h's functions are `static inline`, so every program carries its own copy
+of each one, compiled with that program's settings (guards_ab_ng, for one,
+has no guards). This script therefore does not ask llvm-cov to combine the
+copies. It exports every program's regions and branches as JSON and takes the
+union itself, position by position, and each program's own share is printed
+beside it:
 
   lines     the union of the lines llvm-cov marks as executed (its lcov "DA"
             records), keeping only lines that belong to iris.h's own functions;
