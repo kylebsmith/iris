@@ -291,7 +291,7 @@ arm_threads() {
   say "PASS  two threads on one instrument are reported  ($races data-race reports, exit status $st)"
   if ! ./build/threads_audit four > build/threads_audit.out 2>&1 \
      || grep -q ThreadSanitizer build/threads_audit.out; then
-    cat build/threads_audit.out; fail "threads: audit check 36 under ThreadSanitizer"
+    cat build/threads_audit.out; fail "threads: the concurrency check of tests/audit.c under ThreadSanitizer"
   fi
   cat build/threads_audit.out
 }

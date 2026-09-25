@@ -60,7 +60,7 @@ int main(void) {
         numbers, no symptom. */
   play(k, "before any training:");
 
-  /* 2. FOURTEEN honest demonstrations along a diagonal.
+  /* 2. Fourteen good demonstrations along a diagonal.
         Why fourteen and not six: the residual ledger in step 5 refuses to
         accuse anything below IRIS_STRESS_MIN_EX (12) demonstrations, because
         with fewer than that the ranking is not meaningful. It returns -1
