@@ -1,5 +1,5 @@
-/* THE ERROR PATHS.
-   =================
+/* coverage.c — the error paths.
+
    Most two-way decisions in iris.h have a side that says no: a null
    instrument, an empty store, a budget of zero, a file that lies. That side
    is exactly where a silent failure hides, because ordinary use never walks
@@ -164,7 +164,7 @@ int main(void) {
     check("worst_example says nothing below the minimum crowd",
           idx == -1 && id == -1, d); }
 
-  /* ---- ELM refusals ------------------------------------------------------ */
+  /* ---- extreme learning machine (ELM) refusals -------------------------- */
   { iris *k = filled(A, sizeof A, 6);
     int no_scratch = iris_train_elm(k, 1e-4f, 0, 0);
     int tiny_scr   = iris_train_elm(k, 1e-4f, SCR, 4);
@@ -306,8 +306,9 @@ int main(void) {
     check("every accessor answers correctly on a live instrument", ok, d); }
 
   /* ---- the NaN-through-a-clamp class ------------------------------------
-     iris_internal_clampf is a ternary on two comparisons and every
-     comparison with NaN is false, so a NaN passes straight through a clamp.
+     NaN is not-a-number. iris_internal_clampf is a ternary on two
+     comparisons and every comparison with NaN is false, so a NaN passes
+     straight through a clamp.
      The setters therefore test for a non-finite value before they clamp;
      without that test iris_set_smoothing(NaN) would leave the weight decay
      NaN with status 0, and the next training run would poison every

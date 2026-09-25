@@ -9,8 +9,9 @@
 
    Each test states the behaviour it holds and fails on a header that lacks
    that behaviour; breaking the behaviour and watching the test go red is the
-   only way to know a test can fail at all. A test that passes whether or not the behaviour is there is
-   worse than none, because it is counted as evidence.
+   only way to know a test can fail at all. A test that passes whether or not
+   the behaviour is there is worse than none, because it is counted as
+   evidence.
 
      sh build.sh regressions
    ========================================================================= */
@@ -169,7 +170,7 @@ int main(void){
     snprintf(d,sizeof d,"trained returned %d, nothing-to-train returned %d", ok, refused);
     check("H iris_train works and refuses with 0", ok!=0 && refused==0, d); }
 
-  /* I — THE REPAIR LOOP. Record a bad take, delete it, retrain: the sequence
+  /* I — the repair loop. Record a bad take, delete it, retrain: the sequence
          the whole library is built around. The instrument must come back to
          where it was, not keep the deleted take's crater. */
   { float sum_before=0, sum_after=0; int worse=0, runs=0;

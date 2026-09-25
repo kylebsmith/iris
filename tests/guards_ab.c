@@ -104,7 +104,7 @@ int main(void) {
   iris *k = fresh(arena, sizeof arena, 1234, 20);
   if (!k) return 1;
 
-  /* backpropagation for a fixed 800 epochs: the golden recipe of the audit */
+  /* backpropagation for a fixed 800 epochs: tests/audit.c's golden recipe */
   iris_reseed(k, 1234);
   iris_continue(k, 800);
   printf("continue(800) saved  0x%08X\n", saved(k));

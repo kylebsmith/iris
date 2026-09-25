@@ -15,7 +15,7 @@
 #   CITATION.cff                  version: 0.2.0
 #   CHANGELOG.md                  the first heading of the form "## 0.2.0 ..."
 # That heading ends in "unreleased" or in the release date, YYYY-MM-DD. Off a
-# tag either will do. ON A TAG -- GITHUB_REF_TYPE is tag, as the release
+# tag either will do. On a tag -- GITHUB_REF_TYPE is tag, as the release
 # workflow sets it, or HEAD carries the tag v<version> -- it must be the date,
 # and CITATION.cff must give the same date as date-released.
 # It prints what it read and exits 1 unless every rule holds.

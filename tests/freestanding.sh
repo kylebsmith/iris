@@ -2,15 +2,15 @@
 # tests/freestanding.sh -- iris.h calls no library function. The claim, the
 # flags it needs, and the one target where the list is not empty.
 #
-# RUN (from anywhere; it writes only to a temporary directory):
+# Run from anywhere; it writes only to a temporary directory:
 #     sh tests/freestanding.sh            or   sh build.sh freestanding
 # The exit status is non-zero if any check fails.
-# THE HOST COMPILERS. With CC set, the host rows test that compiler alone
+# The host compilers. With CC set, the host rows test that compiler alone
 # (CC=gcc-15 sh tests/freestanding.sh). Without it they test each distinct
 # compiler among cc, Homebrew's clang (/opt/homebrew/opt/llvm/bin/clang),
 # clang, gcc-15 and gcc that is installed; two names for one compiler (on
 # macOS, gcc and clang are both Apple clang) are tested once.
-# THE ESP32-S3 ROWS need the esp32 Arduino core, found under
+# The ESP32-S3 rows need the esp32 Arduino core, found under
 # ~/Library/Arduino15 (macOS) or ~/.arduino15 (Linux). Without it they print
 # SKIP; a SKIP is not a pass. With IRIS_REQUIRE containing the word xtensa
 # (as continuous integration sets it where the core is installed), a missing
@@ -20,17 +20,18 @@
 # do); they are for checking Linux from a Mac, and are skipped otherwise:
 #     IRIS_LINUX_IMAGE=my-debian-with-compilers sh tests/freestanding.sh
 #
-# THE CLAIM. A translation unit that calls every public function in iris.h,
+# The claim. A translation unit that calls every public function in iris.h,
 # compiled with
 #     -std=c99 -ffreestanding -fno-stack-protector       (clang)
 #     -std=c99 -ffreestanding -fno-stack-protector \
-#              -fno-tree-loop-distribute-patterns        (GCC)
+#              -fno-tree-loop-distribute-patterns        (GCC, the GNU
+#                                                         Compiler Collection)
 # at -O0, -O1, -O2, -O3 and -Os, as C and as C++, has ZERO undefined symbols
 # and links with -nostdlib -static and no C library at all. That holds for
 # Apple clang, Homebrew clang 22 and gcc-15 on a 64-bit ARM Mac, and for
 # Debian's gcc 14 and clang 19 on 64-bit ARM Linux.
 #
-# WHY EACH FLAG IS STILL NEEDED. None of them changes an output bit; each
+# Why each flag is needed. None of them changes an output bit; each
 # stops the COMPILER, not this code, from reaching for the C library.
 #   -ffreestanding  says there is no C library. Without it clang recognises
 #                   the loops that zero or copy an array and replaces them
@@ -49,7 +50,7 @@
 # Section 3 below rebuilds without each flag and prints what comes back, so
 # a flag that stops being needed shows up (as a NOTE, not a failure).
 #
-# ON THE ESP32-S3 THE LIST IS NOT EMPTY. Every entry comes from libgcc, the
+# On the ESP32-S3 the list is not empty. Every entry comes from libgcc, the
 # compiler's own support library, and none from the C library
 # (xtensa-esp32s3-elf-gcc, the flags above, -O0, -O2 and -Os):
 #   the playing path (init, record, train, predict, novelty, neighbours,

@@ -554,8 +554,8 @@ def check_neighbours(rep, r, ex, rg, tag, stats):
     # iris counts it. The offset matters to scikit-learn alone: its brute-force
     # distance expands |a - b|^2 as |a|^2 - 2 a.b + |b|^2, which loses digits
     # when the coordinates sit far from zero (an input drifting across 0.01
-    # around 500 becomes about 51,000 when merely scaled, and the blends then
-    # came out 2e-3 away from reference.py's own).
+    # around 500 becomes about 51,000 when merely scaled, and scaled that way
+    # the blends come out 2e-3 away from reference.py's own).
     s = ref.neighbour_scale(rg)
     Xs, Qs = (demos[:, :I] - rg.in_lo) * s, (Q - rg.in_lo) * s
     n = len(demos)
@@ -751,6 +751,7 @@ def main():
         os.makedirs(workdir, exist_ok=True)
     else:
         # removed at exit: every run writes about 80 megabytes of JSON
+        # (JavaScript Object Notation)
         workdir = tempfile.mkdtemp(prefix="iris-reference-")
         atexit.register(shutil.rmtree, workdir, True)
     print(f"iris against its binary64 reference (numpy {np.__version__})")

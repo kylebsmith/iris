@@ -8,7 +8,7 @@ no test would notice. This is a report, never a gate: sh build.sh mutate always
 exits 0 unless this program itself breaks, and nothing in continuous
 integration fails on a survivor.
 
-THE MUTANTS. Every site of five standard operator classes inside the bodies of
+The mutants. Every site of five standard operator classes inside the bodies of
 iris.h's functions is enumerated:
   relational   <  <=  >  >=  ==  !=  replaced by another of the six
   arithmetic   + - * / (and += -= *= /=) replaced by another of the four
@@ -28,12 +28,14 @@ as equivalent and not run. Each other mutant is copied into its own directory
 under build/mutate/ and run against the fast arms of build.sh (--arms), in
 order, stopping at the first that fails, each with a time limit (--timeout).
 
-THE BASELINE. --baseline names a file of known survivors, one per line as
+The baseline. --baseline names a file of known survivors, one per line as
 `function | class | original | mutated | site`, which --write-baseline
-rewrites from this run. The site is the first eight hex digits of the SHA-1
-of the source line the mutant sits on, with its spacing collapsed, so two
-sites in one function with the same operator are told apart while an edit
-elsewhere in iris.h, which moves line numbers, leaves the key alone. The
+rewrites from this run. The site is the first eight hexadecimal digits of
+the SHA-1 digest (Secure Hash Algorithm 1) of the source line the mutant
+sits on, with its spacing collapsed, so an edit elsewhere in iris.h, which
+moves line numbers, leaves the key alone. Two sites in one function with the
+same operator on identical lines, or on one line, would share that digest, so
+the second and later of them in source order add ".2", ".3" and so on. The
 file also records the SHA-1 of the iris.h it was written from, and the report
 says when iris.h has changed since: the same seed then plans different
 mutants, so a "new" survivor may only be a site the old sample never drew.
@@ -271,6 +273,15 @@ def plan(src, n, seed, floor):
         first, last = src.rfind("\n", 0, s["a"]) + 1, src.find("\n", s["b"])
         text = " ".join(src[first:last if last >= 0 else len(src)].split())
         s["site"] = hashlib.sha1(text.encode()).hexdigest()[:8]
+    # Identical lines in one function hash alike, and one line can hold the
+    # same operator twice: the second and later such sites, in source order,
+    # carry their ordinal, so every site's key is its own.
+    seen = collections.Counter()
+    for s in every:
+        k = (s["fn"], s["cls"], " ".join(s["orig"].split()), s["site"])
+        seen[k] += 1
+        if seen[k] > 1:
+            s["site"] += "." + str(seen[k])
     by = collections.defaultdict(list)
     for s in every:
         by[s["part"]].append(s)

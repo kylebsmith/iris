@@ -32,7 +32,7 @@ static float lcg01(void) {
 /* The playing functions write into the instrument -- the status, the
    network's activations, the ranges of a never-fitted instrument -- so they
    take a non-const one, and so does iris_novelty, which fits those ranges
-   too. These four lines stop compiling if a signature goes back to
+   too. These four lines stop compiling if a signature takes
    const iris *. */
 static void  (*const play_net)(iris *, const float *, float *) = iris_predict;
 static void  (*const play_knn)(iris *, const float *, float *, int) = iris_knn_predict;
@@ -80,13 +80,14 @@ static float span_of(const sweep *s) {
   return hi - lo;
 }
 
-/* THE SCALING PROPERTIES. iris fits its own ranges and does all its work in
+/* The scaling properties. iris fits its own ranges and does all its work in
    fractions of them, so the units you measure in cannot matter. Doubling a
    binary32 value is exact (it only changes the exponent), so the property can
    be held to the bit: double every input, in the demonstrations and in the
    query, and every playing path must give bit-identical answers; double every
    output and every answer must be exactly double. `path` picks what plays:
-   0 unfitted, 1 iris_train, 2 iris_train_elm, 3 k-NN, 4 1-NN. Returns how
+   0 unfitted, 1 iris_train, 2 iris_train_elm, 3 the k-nearest-neighbour
+   blend (k-NN), 4 the single nearest (1-NN). Returns how
    many of the 15 x 15 probes broke the property.
 
    iris_novelty is held to the input property on every path: on an

@@ -87,7 +87,7 @@ static size_t instrument_bytes(unsigned char *buf, size_t n) {
 /* The reroll checks (6 and 7) run a deliberately under-constrained model:
    8 hidden units, the fewest iris_init accepts, and 5 examples, the corner
    where different random starts disagree most in the gaps. The 12-hidden /
-   20-example model the rest of the audit uses sits at the other end, where
+   20-example model the rest of this file uses sits at the other end, where
    every random start converges to nearly the same answer. */
 #define RR_HID  8
 #define RR_EX   5
@@ -101,15 +101,17 @@ static unsigned char arena_c[IRIS_ARENA(NI, NH, NO, CAP)];
 static unsigned char arena_d[IRIS_ARENA(NI, NH, NO, CAP)];
 static unsigned char arena_r[IRIS_ARENA(NI, RR_HID, NO, RR_EX)];
 
-/* the ELM checks (20-22) sweep hidden widths up to 48; one arena sized for
-   the widest covers the narrower ones, and the solve scratch likewise */
+/* the extreme learning machine (ELM) checks (20-22) sweep hidden widths up
+   to 48; one arena sized for the widest covers the narrower ones, and the
+   solve scratch likewise */
 #define ELM_NHMAX 48
 static unsigned char arena_w1[IRIS_ARENA(NI, ELM_NHMAX, NO, CAP)];
 static unsigned char arena_w2[IRIS_ARENA(NI, ELM_NHMAX, NO, CAP)];
 static unsigned char elm_scratch[IRIS_ELM_SCRATCH(ELM_NHMAX, NO)];
 
 /* two instruments are "the same instrument" iff weights AND velocity AND the
-   rng word match to the bit — w1..v_b2 is one contiguous span in the arena */
+   random-number generator's word match to the bit — w1..v_b2 is one
+   contiguous span in the arena */
 static int state_identical(const iris *a, const iris *b) {
   return memcmp(a->w1, b->w1,
                 sizeof(float) * (size_t)(2 * (NH*NI + NH + NO*NH + NO))) == 0
@@ -558,7 +560,7 @@ int main(int argc, char **argv) {
     }
     float err = iris_continue(k, 800);
 
-    /* recall: how close does it get to the sounds we actually demonstrated? */
+    /* recall: how close does it get to the demonstrated sounds? */
     float worst = 0.0f, sum = 0.0f;
     for (int i = 0; i < iris_count(k); ++i) {
       float in[NI], want[NO], got[NO];
@@ -716,7 +718,8 @@ int main(int argc, char **argv) {
   golden_blob();
 
   /* --- 13. NaN never reaches the audio path -------------------------------
-     Three doors a NaN can come through, all guarded, all REPORTED:
+     NaN is not-a-number. Three doors it can come through, all guarded, all
+     reported:
      (a) a poisoned example  -> training refused, weights bit-preserved;
      (b) a glitched sensor at play time -> finite substitute + status;
      (c) hostile lr/momentum -> zero NaN at predict, anomaly reported within
@@ -735,14 +738,14 @@ int main(int argc, char **argv) {
     iris_continue(k, 400);
     float probe[NI] = { 0.3f, 0.7f }, before[NO], after[NO];
     iris_predict(k, probe, before);
-    /* THE DOOR REFUSES IT. iris_record rejects a not-a-number before it can
+    /* The door refuses it. iris_record rejects a not-a-number before it can
        enter the store: 0 back, status IRIS_NAN_TRAPPED, n_ex unmoved. */
     int door_refused, n_before = iris_count(k);
     { float in[NI] = { NAN, 0.5f }, out[NO] = { 0.5f, 0.5f, 0.5f };
       door_refused = (iris_record(k, in, out) == 0) && iris_count(k) == n_before
                    && iris_get_status(k) == IRIS_NAN_TRAPPED; }
 
-    /* AND THE TRAINER'S BACKSTOP STILL WORKS. The door cannot be the only
+    /* The trainer's backstop works too. The door cannot be the only
        guard: examples also arrive through iris_load, which does not go through
        iris_record. Write the poison straight into the store to exercise the
        pre-scan the way a corrupt file would. */
@@ -804,11 +807,11 @@ int main(int argc, char **argv) {
   }
 
   /* --- 14. event-sourced determinism ---------------------------------------
-     A warm run advances the rng past the seed, so the determinism promise
-     for warm training is: the identical OPERATION HISTORY reproduces the
-     instrument bit-exactly. Two instruments, same history of
+     A warm run advances the random state past the seed, so the determinism
+     promise for warm training is: the identical OPERATION HISTORY reproduces
+     the instrument bit-exactly. Two instruments, same history of
      record/continue/delete, compared by memcmp over weights+velocity and
-     the rng word, at every chain length 1..10 and after a delete.          */
+     the random-state word, at every chain length 1..10 and after a delete. */
   {
     iris *a = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 42);
     iris *c = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 42);
@@ -831,8 +834,8 @@ int main(int argc, char **argv) {
   }
 
   /* --- 15. save and load carry the random state --------------------------
-     The file stores the live rng word. The test that matters is not "the
-     bytes come back" but "the FUTURE comes back": a warm run after
+     The file stores the live random-state word. The test that matters is
+     not "the bytes come back" but "the FUTURE comes back": a warm run after
      save->load must be bit-identical to the warm run the in-memory
      instrument would have made from the same state. A load leaves the
      momentum velocities at zero (iris.h, PART 9), so the in-memory
@@ -1375,7 +1378,7 @@ int main(int argc, char **argv) {
     const int nw = NH * NI + NH + NO * NH + NO;
     int same_bits = memcmp(ka->w1, kb2->w1, (size_t)nw * sizeof(float)) == 0;
 
-    ok("trains to convergence; sliced == unsliced; honest bar",
+    ok("trains to convergence; sliced == unsliced; progress rises to 1",
        econv < e600 * 0.2f && rconv < r600 * 0.6f && same_bits
          && monotone && pend == 1.0f && reads > 2,
        "600 ep: err %.3e recall %.4f -> converged (%d ep): err %.3e recall %.4f; "
@@ -1445,7 +1448,7 @@ int main(int argc, char **argv) {
        "(want < 1e-3)", sc);
   }
 
-  /* --- 35. THE DIVERGENCE TRAP -------------------------------------------
+  /* --- 35. the divergence trap -------------------------------------------
      A contradictory demonstration drives the weights past IRIS_W_LIMIT; the
      guard clamps them onto the limit and stops the run. A warm run that
      continued from those pinned weights would trip the guard again on its
@@ -1501,7 +1504,7 @@ int main(int argc, char **argv) {
 
   /* --- what it costs on this machine -------------------------------------
      A report, never a pass or a fail: these are wall-clock times on whatever
-     computer runs the audit, and they move with its load. Timing on a
+     computer runs this program, and they move with its load. Timing on a
      microcontroller is measured on the microcontroller. */
   printf("--------------------------------------------------------------------------\n");
   printf("TRAINING COST on this machine (a report, not a check)\n\n");
@@ -1527,7 +1530,7 @@ int main(int argc, char **argv) {
     printf("  %6d   %8.1f ms    |  %7.4f ms\n", exs[e], dt, de);
   }
 
-  /* THE PLATEAU TRAINER, iris_train -- the default, and the one number a
+  /* The plateau trainer, iris_train -- the default, and the one number a
      musician actually waits on. It stops when the error plateaus, so the
      epochs it spends are part of the measurement. */
   printf("\n  iris_train (plateau test, ceiling %d)\n", IRIS_CONV_CEILING);

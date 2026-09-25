@@ -25,9 +25,10 @@ Three kinds of number appear here, and the difference matters:
     correctly, as a binary32 processor does) and compared bit for bit.
   * Everything the network then computes is binary64.
 
-The places the description left a choice open, and how each was settled by
-running the library rather than by reading its code, are listed in README.md
-under "What the description left open".
+The places the description left a choice open, and how running the library,
+rather than reading its code, confirms each, are listed in README.md under
+"What the description left open". The header's prose states every one of
+them, the shuffle's direction and the output floor included.
 """
 
 import numpy as np
@@ -178,7 +179,10 @@ def fit_ranges32(demos32, n_in):
     input is still when hi - lo is at most max(1e-5 * max(|lo|, |hi|), 1e-6);
     a still input is stored with hi = lo.
     Outputs: lo and hi likewise, and an output whose width is below
-    max(1e-5 * |lo|, 1e-6) is given exactly that width."""
+    max(1e-5 * |lo|, 1e-6) is given exactly that width. The header widens it
+    upward, hi = lo + width, unless lo + width would pass the largest float,
+    and then downward, lo = hi - width. This models the upward form only: no
+    recipe has an output within 1e-5 of the largest float."""
     f = np.float32
     X = demos32[:, :n_in]
     Y = demos32[:, n_in:]

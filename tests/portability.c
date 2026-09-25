@@ -1,7 +1,7 @@
 /* portability.c -- the parts of iris.h that stand in for the C library give
    the C library's answers.
 
-   BUILD AND RUN (from the repository root):
+   Build and run from the repository root:
        mkdir -p build && cc -std=c99 -O2 -Wall -Wextra -o build/portability \
          tests/portability.c -lm && ./build/portability
    The exit status is non-zero if any check fails.
@@ -10,7 +10,8 @@
    method) so that no build needs the C library's sqrtf. It must still be the
    square root every processor computes, bit for bit, or an instrument would
    change when its square roots moved into the header. The reference is the
-   host's sqrtf, which IEEE 754 requires to be correctly rounded.
+   host's sqrtf, which IEEE 754 (the floating-point standard) requires to
+   be correctly rounded.
    tools/sqrt_exhaustive.c compares all 2^32 inputs and takes about a minute;
    this is the sample that runs every time:
      - ten million non-negative bit patterns from a fixed seed;
@@ -19,7 +20,8 @@
        largest finite float;
      - every perfect square up to 4096 squared, whose root is exact;
      - the arguments iris.h itself passes (the layer widths it scales by);
-     - the IEEE 754 special cases: -0, negative numbers, NaN and infinity.
+     - the IEEE 754 special cases: -0, negative numbers, NaN (not-a-number)
+     and infinity.
    Infinity and NaN are built with __builtin_inff and __builtin_nanf, never
    by dividing by zero, so -fsanitize=float-divide-by-zero can watch this
    file too. */

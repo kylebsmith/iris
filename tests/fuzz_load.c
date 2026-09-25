@@ -16,22 +16,22 @@
    trained with smoothing, fitted with every demonstration deleted, full, and
    fitted after one more take), and the mutator hands them out.
 
-   THE INPUT. Byte 0 picks the receiving instrument's shape; the rest is the
+   The input. Byte 0 picks the receiving instrument's shape; the rest is the
    file, copied into a heap block of exactly its size, so a read past it is an
    AddressSanitizer report.
 
-   THE MUTATOR does what random byte edits almost never do on their own: it
+   The mutator does what random byte edits almost never do on their own: it
    sets n_ex to agree with the length or the length to agree with n_ex,
    plants special floats (not-a-number, infinities, the largest float, just
    past IRIS_W_LIMIT, denormals, -0) in any field, sets header words to edge
    values, collapses or inverts a range, copies one identifier onto another,
    and repairs magic, version, header size and shape so a random blob gets
-   past the door. Then it RECOMPUTES THE TRAILING CHECKSUM, fifteen times in
+   past the door. Then it recomputes the trailing checksum, fifteen times in
    sixteen: without that almost every mutant dies at the checksum and the run
-   measures CRC-32 instead of the loader. The sixteenth keeps the refusal of
-   a bad checksum covered.
+   measures the checksum (a CRC-32, cyclic redundancy check) instead of the
+   loader. The sixteenth keeps the refusal of a bad checksum covered.
 
-   WHAT ABORTS, besides any sanitizer report:
+   What aborts, besides any sanitizer report:
      - a refused load that changed any byte of the receiving arena, status
        included;
      - after an accepted load: any rule of the format table (iris.h PART 9)

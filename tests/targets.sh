@@ -2,13 +2,13 @@
 # tests/targets.sh -- iris.h builds for every processor it is meant for, and
 # refuses the one whose float arithmetic it cannot pin.
 #
-# RUN (from anywhere; compile only, nothing is executed, nothing is written
-# outside a temporary directory):
+# Run from anywhere; it only compiles, executes nothing and writes nothing
+# outside a temporary directory:
 #     sh tests/targets.sh            or   sh build.sh targets
 # The exit status is non-zero if any check fails. A compiler that is not
 # installed prints SKIP; a SKIP is not a pass for that target.
 #
-# THE COMPILERS. The host rows use CC alone when it is set, and otherwise
+# The compilers. The host rows use CC alone when it is set, and otherwise
 # each distinct compiler among cc, Homebrew's clang, clang, gcc-15 and gcc.
 # The cross rows find their compilers: a clang with every code generator
 # (Homebrew's, or a clang on the PATH that is not Apple's, which lacks
@@ -19,7 +19,7 @@
 # rather than skips when an install step breaks: any of "cross-clang",
 # "arm-none-eabi", "xtensa" and "avr".
 #
-# WHAT IT CHECKS. iris.h refuses to compile when __FLT_EVAL_METHOD__ says
+# What it checks. iris.h refuses to compile when __FLT_EVAL_METHOD__ says
 # float arithmetic is carried in a wider format than float (see "2. Wider
 # intermediate results" in its determinism contract). That #error is only
 # worth having if it fires where it should and nowhere else, so this script

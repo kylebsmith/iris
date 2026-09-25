@@ -2,7 +2,7 @@
 # tests/pragma_leak.sh -- iris.h switches contraction off for its own code
 # and for nobody else's.
 #
-# RUN (from anywhere; it writes only to a temporary directory):
+# Run from anywhere; it writes only to a temporary directory:
 #     sh tests/pragma_leak.sh            or   sh build.sh pragma
 # The exit status is non-zero if any check fails. A compiler that is not
 # installed prints SKIP; a SKIP is not a pass for that compiler. IRIS_REQUIRE
@@ -10,7 +10,7 @@
 # fails rather than skips when an install step breaks: any of "xtensa",
 # "arm-none-eabi" and "cross-clang".
 #
-# WHAT IT CHECKS. A fused multiply-add computes a*b+c with one rounding
+# What it checks. A fused multiply-add computes a*b+c with one rounding
 # instead of two, so a build that fuses where another does not makes a
 # different instrument. iris.h therefore switches contraction off -- clang's
 # #pragma STDC FP_CONTRACT OFF, GCC's #pragma GCC optimize ("fp-contract=off")
@@ -36,7 +36,7 @@
 #     BEFORE the #include to survive it: built that way, user_fma must
 #     contain no fused instruction.
 #
-# THE BUILDS. On this machine's processor, at -O2, as C and as C++: CC alone
+# The builds. On this machine's processor, at -O2, as C and as C++: CC alone
 # when it is set, and otherwise each distinct compiler among cc, Homebrew's
 # clang, clang, gcc-15 and gcc. Clang contracts a*b+c by default;
 # GCC does in its GNU modes and in C++, so gcc-15 is run with -std=gnu99 and
@@ -53,7 +53,7 @@
 # installed without a C library (Debian and Ubuntu package newlib, the usual
 # one for arm-none-eabi-gcc, separately).
 #
-# POSITIVE CONTROL. Every build is repeated against a copy of iris.h with its
+# Positive control. Every build is repeated against a copy of iris.h with its
 # two contraction pragmas deleted, and there the iris functions MUST contain
 # fused instructions. Without this, a scan that could not recognise the
 # instruction would pass everything.

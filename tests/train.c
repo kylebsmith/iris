@@ -33,7 +33,7 @@
      8. Smoothing's weight decay never leaves a weight below IRIS_TINY and
         not zero, so no weight goes subnormal, where a board that flushes
         subnormal numbers and a laptop that does not would part ways.
-     9. What the comments say the set-up does: starting weights are each
+     9. What the header says the set-up does: starting weights are each
         draw times the rounded reciprocal of the root of the fan-in; every
         blocking call starts its shuffle from the identity order; the
         learning-rate and momentum clamps pass Weka's pair.
@@ -392,8 +392,8 @@ int main(void) {
   }
   {
     /* Exactly on the limit is stuck, wherever it is -- a bias counts. Just
-       inside it is not: 15.9953 is the largest weight measured in a healthy
-       default fit. */
+       inside it is not: 15.9953 is the largest weight of the healthy default
+       fits measured in iris.h's note on IRIS_W_LIMIT. */
     iris *k = lived_in(2, 12, 3, 32, 14, 8u);
     iris_train(k);
     memcpy(SNAP, A, sizeof A);
@@ -647,7 +647,7 @@ int main(void) {
           && iris_train_epochs_done(k) >= 4000, d);
   }
 
-  /* ---- 9. what the comments say the trainers' set-up does ---------------
+  /* ---- 9. what the header says the trainers' set-up does -----------------
      (a) The starting weights are each draw times the reciprocal of the
      square root of the unit's fan-in, rounded once, not the draw divided by
      the root, which rounds differently (and the check requires that it

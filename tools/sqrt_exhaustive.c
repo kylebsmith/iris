@@ -1,15 +1,17 @@
 /* sqrt_exhaustive.c -- iris_internal_sqrt against the host's square root,
    for every one of the 2^32 float bit patterns.
 
-   BUILD AND RUN (from the repository root; about a minute on an Apple M4):
+   Build and run from the repository root (about a minute on an Apple M4):
        mkdir -p build && cc -O2 -o build/sqrt_exhaustive tools/sqrt_exhaustive.c -lm \
          && ./build/sqrt_exhaustive
    The exit status is non-zero if any input disagrees.
 
-   WHAT "AGREES" MEANS. IEEE 754 requires a square root to be correctly
-   rounded, so the host's sqrtf is the reference, bit for bit, for:
+   What "agrees" means. IEEE 754, the floating-point standard, requires a
+   square root to be correctly rounded, so the host's sqrtf is the
+   reference, bit for bit, for:
      - every pattern with the sign bit clear: +0, every subnormal, every
-       normal number, +infinity, and every NaN with the sign bit clear;
+       normal number, +infinity, and every NaN (not-a-number) with the sign
+       bit clear;
      - -0, whose root is -0;
      - every NaN with the sign bit set (both return the input NaN, quieted).
    A negative number has no real root and IEEE 754 asks only for a NaN, which

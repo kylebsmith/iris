@@ -3,7 +3,8 @@
 # today's. numpy runs the reference; scikit-learn is the neighbour and
 # task-level comparison; the other three are scikit-learn's own dependencies.
 # sh build.sh reference skips with a message when numpy or scikit-learn is
-# missing, and fails instead when CI or IRIS_REQUIRE_REFERENCE is set.
+# missing, and fails instead when CI (set by continuous integration) or
+# IRIS_REQUIRE_REFERENCE is set.
 #   python3 -m pip install -r tests/reference/requirements.txt
 numpy==2.2.4
 scikit-learn==1.8.0

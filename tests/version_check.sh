@@ -2,13 +2,13 @@
 # tests/version_check.sh -- tools/version-check.sh against copies of the
 # files it reads, each changed one way.
 #
-# RUN (from anywhere; it writes only to a temporary directory):
+# Run from anywhere; it writes only to a temporary directory:
 #     sh tests/version_check.sh            or, with the other checks of the
 #                                          files that describe the code,
 #                                          sh build.sh docs
 # The exit status is non-zero if any case gives the wrong answer.
 #
-# THE RULE BEING CHECKED. Off a release tag the first CHANGELOG.md heading
+# The rule being checked. Off a release tag the first CHANGELOG.md heading
 # may say "unreleased" or give a date; on a tag (GITHUB_REF_TYPE=tag, as the
 # release workflow sets it) it must give the release date, and CITATION.cff
 # must carry the same date as date-released. Everywhere the tag, iris.h,

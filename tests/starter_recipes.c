@@ -17,7 +17,7 @@
    Both hashes must hold on the host for every change to iris.h, or the
    sketches' reference numbers would be wrong.
 
-   THE SKETCHES USE IRIS 0.1.0'S NAMES. device_torture calls
+   The sketches use iris 0.1.0's names. device_torture calls
    iris_train_epochs(k, 800), which is iris_continue(k, 800) here.
    determinism_check calls iris_retrain_new(k, 1234, 800). In 0.1.0 that
    function checks it has demonstrations and a positive epoch count, then
@@ -65,8 +65,8 @@ static void check(const char *name, uint32_t got, uint32_t want) {
   if (got != want) fails++;
 }
 
-/* The predictions' bytes, in memory order, through 32-bit FNV-1a: the hash
-   device_torture computes. */
+/* The predictions' bytes, in memory order, through 32-bit FNV-1a (the
+   Fowler-Noll-Vo hash): the hash device_torture computes. */
 static uint32_t fnv_bytes(uint32_t h, const float *v, int n) {
   for (int o = 0; o < n; ++o) {
     unsigned char b[sizeof(float)];

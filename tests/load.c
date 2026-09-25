@@ -757,7 +757,7 @@ static void small_unit(void) {
 
 /* ------------------------------------------------------------- the fixture
    tests/golden/v7-instrument.bin was generated once, on purpose, from the
-   recipe of tests/audit.c check 12 (seed 1234, its 20 demonstrations,
+   golden recipe of tests/audit.c (seed 1234, its 20 demonstrations,
    iris_reseed(k, 1234) and iris_continue(k, 800), a 2-12-3 instrument of
    capacity 256), and tests/golden/v7-expected.txt holds what that instrument
    played before it was saved. Loading the file must play every one of those

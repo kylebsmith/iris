@@ -17,7 +17,7 @@
    each epoch used. Reading the structure is something a program using the
    library should not do; a test that exists to look inside may.
 
-   THE RECIPE comes in on standard input as whitespace-separated tokens, with
+   The recipe comes in on standard input as whitespace-separated tokens, with
    every floating-point number in C99 hexadecimal form (0x1.8p-1), so that it
    arrives as exactly the 32-bit value the generator meant:
 
@@ -35,7 +35,7 @@
      n_probes, then n_probes rows of n_in inputs
      n_k, then n_k neighbour counts for iris_knn_predict
 
-   ONE-EPOCH SLICES ARE iris_train. iris_train_begin checks and reseeds
+   One-epoch slices are iris_train. iris_train_begin checks and reseeds
    exactly as iris_train does, and the shuffle buffer and the plateau
    reference carry across slices, so running the session one epoch at a time
    gives the blocking call's bits (the header's own claim, which this program
@@ -45,24 +45,24 @@
    permutation the epoch just used, because the shuffle permutes it in place
    at the top of each epoch.
 
-   THE WARM EPOCHS are iris_continue(k, 1), one call each. Each call is a
+   The warm epochs are iris_continue(k, 1), one call each. Each call is a
    session of its own: it starts the shuffle again from the identity order,
    keeps the momentum velocities and the random state, and runs one epoch.
    So n such calls are not iris_continue(k, n): on the golden recipe, 800
    one-epoch calls end with weights up to 0.018 away from one 800-epoch call
    (the same random draws, permuting a different starting order).
 
-   THE OUTPUT. Arrays of weights, velocities and demonstrations are printed
+   The output. Arrays of weights, velocities and demonstrations are printed
    as one hexadecimal string each, eight digits per 32-bit float giving its
    bit pattern, most significant digit first, so nothing is lost to decimal
    rounding and a 22,000-epoch run stays a file of 29 megabytes rather than
    hundreds. Weights are w1, b1, w2, b2 in the order the header stores
    them (w1[h*n_in + i], b1[h], w2[o*n_hid + h], b2[o]); velocities the same.
 
-   THE HASH. For every trained recipe it prints the 32-bit Fowler-Noll-Vo
-   hash (fnv1a) of the saved instrument's bytes, taken exactly as tests/audit.c takes its golden
-   hash, so the reference's golden recipe can be shown to be the instrument
-   that hash pins (0x6805FB0D).
+   The hash. For every trained recipe it prints the 32-bit Fowler-Noll-Vo
+   hash (fnv1a) of the saved instrument's bytes, taken exactly as
+   tests/audit.c takes its golden hash, so the reference's golden recipe can
+   be shown to be the instrument that hash pins (0x6805FB0D).
 
    Build and run by tests/reference/run.py; by hand, from the repository root:
 
