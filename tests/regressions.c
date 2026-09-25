@@ -1,12 +1,15 @@
 /* SPDX-License-Identifier: BSD-3-Clause
    Copyright (c) 2026 Kyle Smith */
 /* ============================================================================
-   regressions.c — one test per defect a review found in iris.h, plus tests
-   for properties a mutation run showed had no working check (Q to U).
+   regressions.c — one test per known defect of iris.h, each holding the
+   behaviour that defect broke, plus five small properties of the interface
+   that a change could break silently (Q to U): the arena bound, the width
+   floor, the shuffle buffer, smoothing in a saved file, and iris_train's
+   refusal.
 
-   Each test states the behaviour it holds, and each was watched to fail on a
-   header that lacked that behaviour: that is the only way to know a test can
-   fail at all. A test that passes whether or not the behaviour is there is
+   Each test states the behaviour it holds and fails on a header that lacks
+   that behaviour; breaking the behaviour and watching the test go red is the
+   only way to know a test can fail at all. A test that passes whether or not the behaviour is there is
    worse than none, because it is counted as evidence.
 
      sh build.sh regressions
@@ -270,12 +273,12 @@ int main(void){
              acc,(long)(bits*(bits-1)/2));
     check("P no two-bit corruption survives on a 1-in/1-out file", acc==0, d); }
 
-  /* Q-U — five properties a mutation run showed had no working check. One
-     more mutant of that run, "ignore an unsizeable shape in iris_init", is
-     unreachable on a host whose size_t is 32 bits or wider: iris_init checks
-     every dimension against its maximum before it sizes the arena, so the
-     product cannot overflow and the size is never 0. It can fire only where
-     size_t is 16 bits, so no test is written for it here. */
+  /* Q-U — five small properties of the interface. A sixth, "iris_init
+     refuses a shape whose size cannot be computed", cannot be broken on a
+     host whose size_t is 32 bits or wider: iris_init checks every dimension
+     against its maximum before it sizes the arena, so the product cannot
+     overflow and the size is never 0. It can matter only where size_t is 16
+     bits, so no test is written for it here. */
 
   /* Q — the arena bound. An arena one byte short must be refused. */
   { size_t need = iris_size(1,12,1,32);
