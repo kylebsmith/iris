@@ -217,8 +217,8 @@
      ODR          the one-definition rule: C and C++ require a thing to be
                   defined identically everywhere it appears.
      PLATEAU      the stretch of a training run where the error has stopped
-                  falling by much; iris_train stops when it reaches one
-                  (PART 8).
+                  falling by much; iris_train stops at one unless its error
+                  floor or its ceiling stops it first (PART 8).
      PRE-ACTIVATION  the weighted sum a unit computes before its squashing
                   function is applied.
      RECALL       how closely a trained instrument plays back its own
