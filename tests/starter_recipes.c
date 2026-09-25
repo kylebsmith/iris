@@ -7,28 +7,19 @@
    with a hash the host computed for the same recipe, so a board that trains
    or plays differently shows up as a different number:
 
-     device_torture, test 1   iris_init(seed 1234), 20 demonstrations, 800
-                              epochs continuing from the weights iris_init
+     device_torture, test 1   iris_init(seed 1234), 20 demonstrations,
+                              iris_continue(800) from the weights iris_init
                               drew, then 21 predictions hashed: 0xB7FC47A0
      determinism_check        iris_init(seed 1234), 20 demonstrations,
-                              iris_reseed(1234) and 800 epochs, then 21
-                              predictions hashed: 0x203834ED
+                              iris_reseed(1234) then iris_continue(800),
+                              then 21 predictions hashed: 0x203834ED
 
    Both hashes must hold on the host for every change to iris.h, or the
    sketches' reference numbers would be wrong.
 
-   The sketches use iris 0.1.0's names. device_torture calls
-   iris_train_epochs(k, 800), which is iris_continue(k, 800) here.
-   determinism_check calls iris_retrain_new(k, 1234, 800). In 0.1.0 that
-   function checks it has demonstrations and a positive epoch count, then
-   reseeds and runs iris_train_epochs, so on these demonstrations it is
-   iris_reseed(k, 1234) followed by iris_continue(k, 800). Checked on a
-   header carrying both forms: they leave every byte of the instrument and
-   every counter identical (Apple clang, clang 22 and gcc-15, as C and C++,
-   at -O0, -O2 and -Os), and the 0.1.0 header copied into the kit gives both
-   hashes below from the sketches' own calls.
+   The sketches make the same calls.
 
-   CONTRACTION. The demonstrations are computed here, and device_torture's
+   Contraction. The demonstrations are computed here, and device_torture's
    are a*b+c (1 - 0.03 i). iris.h switches fused multiply-add contraction off
    for its own code only, so a compiler whose default contracts would fuse
    this file's arithmetic into different demonstrations, and so a different

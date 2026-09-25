@@ -46,13 +46,16 @@
    has no undefined symbol and links with -nostdlib -static. The flags only
    stop the compiler inserting C library calls of its own (memset and memcpy
    for loops that zero or copy an array, __stack_chk_fail on macOS), and no
-   flag changes an output bit. On the ESP32-S3 the only
-   symbols left come from libgcc, the compiler's own support library, never
-   from a call this source writes: __divsf3, float division, on the playing
-   path, because the chip has no single instruction that divides two floats,
-   and eight double-precision routines for the leave-one-out sweep (rule 3).
+   flag changes an output bit. On the ESP32-S3 the only symbols left come
+   from libgcc, the compiler's own support library, never from a call this
+   source writes: __divsf3, float division, on the playing path, because
+   the chip has no single instruction that divides two floats, and eight
+   double-precision routines for the leave-one-out sweep (rule 3).
    tests/freestanding.sh checks all of it, compiler by compiler and flag by
-   flag; docs/SYSTEM-technical.md, section 1, names the compilers.
+   flag; docs/SYSTEM-technical.md, section 1, names the compilers. An
+   Arduino build calls the copies of all nine in the chip's read-only
+   memory (the ESP32 Arduino core links esp32s3.rom.libgcc.ld), so they add
+   nothing to a sketch's flash.
 
    How long training takes. iris_train runs until the error stops improving,
    under a ceiling (PART 8). For 20 demonstrations of the reference task in
@@ -66,10 +69,16 @@
 
    Where the numbers come from. Where a figure is reproduced by a test, a
    tool or the board log in this repository, the comment names it. A
-   citation "(iris-studies Snn)" names a study, with its program, raw output
-   and the iris commit it ran against, in
-   https://github.com/kylebsmith/iris-studies. "The development laptop" is
-   an Apple M4 Max, with Apple clang at -O2.
+   citation "(iris-studies Snn)" names a study listed at
+   https://github.com/kylebsmith/iris-studies/tree/v1, and the figure
+   beside it is in that study's record (archived there, or kept in this
+   repository's docs) or is printed by its program, which only S05 and S06
+   have there; iris-studies holds no raw output. A figure from a later
+   re-run, or from a study with no id, says beside it that its program is
+   not yet published, naming the original study where there is one. "The
+   development laptop" is an Apple M4 Max, with Apple clang at -O2; a
+   laptop timing that no test prints is a one-off measurement whose program
+   is not published.
 
    Words this file uses, defined once, here.
 
@@ -94,7 +103,8 @@
      demonstration: one recorded pair, these sensor readings with those
        output values. Also called an example or a take.
      ELM: extreme learning machine, the closed-form trainer. The hidden layer
-       keeps its random weights and the output layer is solved (PART 8d).
+       is drawn at random from the seed and frozen, and the output layer is
+       solved (PART 8d).
      epoch: one pass over every demonstration; "9,000 epochs" means the
        network saw each take 9,000 times.
      error: how far the outputs are from the demonstrated ones. Mean squared
@@ -136,7 +146,11 @@
        defined identically everywhere it appears.
      plateau: where the training error has stopped falling by much (PART 8).
      ridge: a small number added down the diagonal of the closed-form
-       trainer's matrix so its solve cannot fail on near-repeats (PART 8d).
+       trainer's matrix, which pulls its weights toward smaller values and,
+       at the recommended lam0 (iris_train_elm's ridge argument), keeps
+       near-repeats from failing its solve; a failed factorisation doubles
+       it, at most 8 times, and at lam0 = 0 the doublings can still run out
+       (PART 8d).
      sanitizer: instrumentation that stops a program at a fault:
        AddressSanitizer at an out-of-bounds access, UndefinedBehaviorSanitizer
        at an operation C leaves undefined.
@@ -516,7 +530,7 @@
 /* static inline, not plain static. A single-header library defines every
    function in every translation unit that includes it, and a caller who uses
    five of them is doing nothing wrong. With plain static, -Wall -Wextra warns
-   about every function the caller leaves unused: 26 warnings for
+   about every function the caller leaves unused: 27 warnings for
    examples/00_minimal.c with Apple clang 17 or gcc-15. `inline` says the
    definition may go unused here, which silences that without changing
    linkage, ODR behaviour or the generated code. */
@@ -704,21 +718,22 @@ IRIS_API int iris_internal_isbad(float x) {
 
    It fires on some good fits. Measured with iris_train at the defaults on
    2,304 fits (6 target shapes x 5, 10, 20, 50 demonstrations x noise 0,
-   0.05, 0.10 x 32 seeds; 2 inputs, 12 hidden, 3 outputs): the healthy fits'
-   largest weight has a median of 4.07, a 99th percentile of 14.4 and a
-   maximum of 15.9953, and the limit fired on 40, every one at 50
-   demonstrations and 39 of them on sharp targets (cliffs and ridges). Those
-   40 are usable instruments, and stopping them helped: allowed to run on (a
-   limit of 32 or 64 gives the same runs; none passes 31.2) they train
-   longer and end 7.6% worse on held-out error (geometric mean; 27 of the 40
-   are worse). Their status still says they diverged, and the warm trainers
-   refuse them.
+   0.05, 0.10 x 32 seeds; 2 inputs, 12 hidden, 3 outputs; from a study
+   whose program is not yet published): the healthy fits' largest weight
+   has a median of 4.07, a 99th percentile of 14.4 and a maximum of
+   15.9953, and the limit fired on 40, every one at 50 demonstrations and
+   39 of them on sharp targets (cliffs and ridges). Those 40 are usable
+   instruments, and stopping them helped: allowed to run on (a limit of 32
+   or 64 gives the same runs; none passes 31.2) they train longer and end
+   7.6% worse on held-out error (geometric mean; 27 of the 40 are worse).
+   Their status still says they diverged, and the warm trainers refuse
+   them.
 
    Why it is not raised. A higher limit clears those 40 and blinds the guard
    to real runaways. On the same 2,304 datasets, with the learning rate (lr)
    and momentum forced through iris_internal_set_learning, the fits whose
    held-out error came out more than twice the default fit's, and how many
-   of them the guard reported:
+   of them the guard reported (from the same study):
 
                                   limit 16       limit 32       limit 64
      lr 2.0,  momentum 0.85     512 of 1,718    60 of 1,720     0 of 1,720
@@ -735,13 +750,14 @@ IRIS_API int iris_internal_isbad(float x) {
    2,000 solves at 12 hidden units and lam0 1e-4 have an output weight past
    16, 132 of 2,000 at 24, the largest 42.6, and none of 2,000 at 48 hidden
    units and lam0 1e-3 (random sessions of 1 to 4 inputs and outputs and 5
-   to 104 demonstrations of smooth targets with a little noise). Such an
-   instrument plays, saves and loads like any other (PART 9). What it cannot
-   do is carry on with gradient training: a warm trainer clamps every weight
-   past the limit in its first epoch, reports IRIS_TRAINING_DIVERGED, and
-   from then on refuses with IRIS_DIVERGED_STUCK. iris_train, which starts
-   over from the seed, is the way from the closed-form trainer to
-   backpropagation (tests/elm.c checks all of this). */
+   to 104 demonstrations of smooth targets with a little noise; from a
+   study whose program is not yet published). Such an instrument plays,
+   saves and loads like any other (PART 9). What it cannot do is carry on
+   with gradient training: a warm trainer clamps every weight past the
+   limit in its first epoch, reports IRIS_TRAINING_DIVERGED, and from then
+   on refuses with IRIS_DIVERGED_STUCK. iris_train, which starts over from
+   the seed, is the way from the closed-form trainer to backpropagation
+   (tests/elm.c checks all of this). */
 #define IRIS_W_LIMIT 16.0f
 
 /* ==========================================================================
@@ -760,7 +776,8 @@ IRIS_API int iris_internal_isbad(float x) {
    The reason for writing them here is the no-library rule, not speed, but
    the squashing function below is also cheaper than the C library's: on the
    development laptop the same network trained with tanhf takes 53% longer
-   per epoch. It has not been timed on the ESP32-S3.
+   per epoch (from a study whose program is not yet published). It has not
+   been timed on the ESP32-S3.
    ========================================================================== */
 
 /* The nonlinearity, and why it is frozen.
@@ -788,22 +805,25 @@ IRIS_API int iris_internal_isbad(float x) {
    Why this function and not true tanh: it is cheaper and no worse. Against
    true tanh and a rational approximation 245 times more accurate, on 2,304
    paired runs (6 synthetic target shapes, 5 to 50 demonstrations, 3 noise
-   levels, 32 seeds, iris_train, held-out error on a 41 x 41 grid), the
-   accurate function's held-out error is 1.3% higher as a geometric mean,
-   higher on 57.1% of the pairs, and only 0.2% higher with the one
-   saturating target left out, far less than a reroll of the seed changes
-   on the same data. It costs 12% more per epoch and 18% more per prediction
-   (iris-studies S01). It is frozen because saved instruments depend on it:
-   a file's weights mean what they mean only through this exact function.
+   levels, 32 seeds, iris_train, held-out error on a 41 x 41 grid; from a
+   re-run whose program is not yet published; the original study is
+   iris-studies S01), the accurate function's held-out error is 1.3% higher
+   as a geometric mean, higher on 57.1% of the pairs, and only 0.2% higher
+   with the one saturating target left out, far less than a reroll of the
+   seed changes on the same data. It costs 12% more per epoch and 18% more
+   per prediction (from the same re-run). It is frozen because saved
+   instruments depend on it: a file's weights mean what they mean only
+   through this exact function.
 
    Consequence: (1 - a*a) is the derivative of true tanh, not of this
    function, so the backward pass in PART 8 is a surrogate gradient. It
    points downhill, never with the wrong sign (the clamp keeps a inside
    [-1, +1]), and it is under-scaled by 2.4-3.3% in aggregate (iris-studies
    S04). Training with the exact derivative instead makes no measurable
-   difference on the same 2,304 pairs (geometric mean of held-out error
-   0.997, with a 95% confidence interval of 0.988 to 1.005: the range the
-   true ratio lies in at 95% confidence).
+   difference on the same 2,304 pairs: geometric mean of held-out error
+   0.997, with a 95% confidence interval of 0.988 to 1.005, the range the
+   true ratio lies in at 95% confidence (from a re-run whose program is not
+   yet published; the original study is iris-studies S01).
 
    The +/-1e9 test keeps x*(27+x^2) finite; it is not where p saturates,
    which is |x| = 3. It is needed because iris_predict does not clamp its
@@ -1131,11 +1151,12 @@ struct iris {
 
    Rule 1, for a call that either works or does not: 0 means the call did
    nothing, non-zero means it worked. That covers iris_init (a null
-   pointer), iris_size, iris_record, iris_get, iris_train, iris_train_begin,
-   the delete functions, iris_save and iris_load. iris_record returns the
-   new demonstration's identifier, never 0 because identifiers start at 1,
-   so it obeys the rule and hands you the number you need later to delete
-   that take; iris_get returns the identifier of the row it copied.
+   pointer), iris_size, iris_shape, iris_record, iris_get, iris_train,
+   iris_train_begin, the delete functions, iris_save and iris_load.
+   iris_record returns the new demonstration's identifier, never 0 because
+   identifiers start at 1, so it obeys the rule and hands you the number you
+   need later to delete that take; iris_get returns the identifier of the
+   row it copied.
 
    Rule 2, for a call that returns a measurement you asked for: the
    measurement on success, -1 on refusal. That covers iris_continue,
@@ -1161,11 +1182,12 @@ struct iris {
        (iris_classify_1nn also returns -1) and leave the status alone.
 
    The readers cannot fail and so answer every question: iris_count,
-   iris_capacity, iris_seed, iris_is_trained, iris_last_error,
-   iris_train_progress, iris_train_busy, iris_train_epochs_done and
-   iris_get_smoothing answer a null instrument with 0 (iris_get_status with
-   IRIS_NOT_FITTED). iris_train_slice returns 1 while its run has more to do
-   and 0 once the run is over, whatever ended it.
+   iris_capacity, iris_seed, iris_save_size, iris_is_trained,
+   iris_last_error, iris_train_progress, iris_train_busy,
+   iris_train_epochs_done and iris_get_smoothing answer a null instrument
+   with 0 (iris_get_status with IRIS_NOT_FITTED). iris_train_slice returns
+   1 while its run has more to do and 0 once the run is over, whatever
+   ended it.
 
    Whether the instrument itself is in trouble is a separate question with a
    separate answer, iris_get_status, below. A call can succeed on an
@@ -1350,8 +1372,9 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
      no test can observe this loop: 300 trials of random mid-run records,
      deletes and slices on deliberately dirty arenas, under AddressSanitizer
      and UndefinedBehaviorSanitizer, give the same result hash, 0x3920621C,
-     with it and without it. It is a second line of defence, and costs one
-     loop at construction. */
+     with it and without it (from a study whose program is not yet
+     published). It is a second line of defence, and costs one loop at
+     construction. */
   for (int i = 0; i < cap; ++i) k->order[i] = i;
 
   k->n_ex = 0; k->next_id = 1;
@@ -1367,8 +1390,10 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
 
 /* Internal: the learning rate and momentum are not part of the interface,
    because a musician cannot choose them well and a wrong choice destroys
-   the instrument. Measured with iris_train's plateau run on six synthetic
-   target shapes, output noise 0.05, 40 seeds each (iris-studies S02):
+   the instrument. Every figure in this note is from a re-run whose program
+   is not yet published; the original study is iris-studies S02. The
+   momentum figures were measured with iris_train's plateau run on six
+   synthetic target shapes, output noise 0.05, 40 seeds each:
 
    Momentum 0.99, one nudge from the 0.85 default, diverges 11 to 39 of 40
    runs depending on the target, against none at the default. A diverged
@@ -1449,7 +1474,8 @@ IRIS_API float iris_internal_get_l2(const iris *k) { if (!k) return 0.0f; return
    synthetic target shapes (2 inputs, 12 hidden units, 3 outputs), 12 seeds
    each, with Gaussian noise of standard deviation sigma added to the
    demonstrated outputs; root-mean-square error on held-out points against
-   the clean target:
+   the clean target (from a re-run whose program is not yet published; the
+   original study is iris-studies S08):
 
        demonstrations   noise sigma    smoothing 0    smoothing 0.33
              10            0             0.0940           0.1094
@@ -1459,17 +1485,17 @@ IRIS_API float iris_internal_get_l2(const iris *k) { if (!k) return 0.0f; return
              50            0             0.0273           0.0453
              50            0.10          0.1044           0.0723
 
-   On noisy takes smoothing repairs the plateau run, which otherwise fits the
-   noise: at sigma 0.05 and above, smoothing 0 is 1.2 to 2.2 times worse than
-   simply stopping after 100 epochs. On clean takes it costs 16%, 29% and 66%
-   more held-out error at 10, 20 and 50 demonstrations. What it buys depends
-   on the target: at sigma 0.10, smoothing 1 against smoothing 0 ranges from
-   no gain to 4.1 times better across the six shapes, and on one periodic
-   target at sigma 0.05 it is worse. Recall of the demonstrations gets
-   steadily worse as smoothing rises, as it should; held-out error usually
-   has its best value somewhere inside the range, not at either end. Every
-   run above 0 in those measurements ended with a healthy status (0 of
-   5,760).
+   In the same re-run, on noisy takes smoothing repairs the plateau run,
+   which otherwise fits the noise: at sigma 0.05 and above, smoothing 0 is
+   1.2 to 2.2 times worse than simply stopping after 100 epochs. On clean
+   takes it costs 16%, 29% and 66% more held-out error at 10, 20 and 50
+   demonstrations. What it buys depends on the target: at sigma 0.10,
+   smoothing 1 against smoothing 0 ranges from no gain to 4.1 times better
+   across the six shapes, and on one periodic target at sigma 0.05 it is
+   worse. Recall of the demonstrations gets steadily worse as smoothing
+   rises, as it should; held-out error usually has its best value somewhere
+   inside the range, not at either end. Every run above 0 in those
+   measurements ended with a healthy status (0 of 5,760).
 
    The default is 0, stick to the demonstrations, because a musician who has
    not asked for smoothing should get exactly what they showed it, and
@@ -1506,15 +1532,32 @@ IRIS_API int iris_capacity(const iris *k) { if (!k) return 0; return k->cap; }
    Any pointer may be null, to skip that number. Returns 1, or 0 for a null
    instrument, leaving the outputs untouched.
 
-   A refused iris_load looks the same whatever the reason, and this is how to
-   tell a wrong shape from a damaged file. A saved file carries its shape as
-   three little-endian 32-bit numbers at bytes 16, 20 and 24 (inputs, hidden
-   units, outputs) and its number of takes at byte 28 (the table in PART 9).
-   If they differ from what iris_shape reports, or the takes exceed the
-   capacity, the file belongs to another instrument: make one of that shape
-   with iris_init and load into it. If they match and iris_load still refuses,
-   the file is damaged, was written by a later format, or carries identifiers
-   past this machine's IRIS_ID_LIMIT (a laptop's file on an AVR board). */
+   A refused iris_load looks the same whatever the reason. The file's own
+   bytes tell the reasons apart, checked in this order (the table in PART 9;
+   every number in it is a little-endian 32-bit one):
+
+     - Bytes 0 to 3 must be the letters IRIS and bytes 4 to 7 the format
+       number 7. Anything else is another format, whose other bytes mean
+       something else, or not an iris file at all: the 0.1.0 preview's
+       files start with EWEK and a format from 1 to 6, which this release
+       does not read (CHANGELOG.md says how to convert one once), and a
+       later release may write a later format.
+     - The shape at bytes 16, 20 and 24 (inputs, hidden units, outputs) must
+       equal the n_in, n_hid and n_out iris_shape reports, and the number of
+       takes at byte 28 must be at most the capacity it reports. If not, the
+       file needs another instrument: make one of that shape, with room for
+       that many takes, with iris_init and load into it.
+     - On a board whose int is 16 bits, next_id at byte 36 must be at most
+       IRIS_ID_LIMIT, 32,767. A file from a laptop instrument that has handed
+       out identifier 32,767 carries a next_id past it, even if that take
+       has since been deleted.
+
+   A file that passes all of those and is still refused is damaged, or was
+   handed to iris_load with a length other than its own. One kind of
+   refusal says nothing about the file: iris_load refuses every file when the
+   instrument's n_in, n_hid or n_out is larger than the IRIS_MAX_IN,
+   IRIS_MAX_HID or IRIS_MAX_OUT of the translation unit that calls it (see
+   iris_internal_shape_fits). */
 IRIS_API int iris_shape(const iris *k, int *n_in, int *n_hid, int *n_out, int *cap) {
   if (!k) return 0;
   if (n_in)  *n_in  = k->n_in;
@@ -2096,8 +2139,9 @@ IRIS_API float iris_novelty(iris *k, const float *in) { if (!k) return -1.0f;
    Steps in a consistent direction build up; steps that jitter back and
    forth cancel. On 20 demonstrations of a smooth 2-input, 3-output target
    it reaches a mean squared error of 1e-4 in 2,000 to 4,500 epochs, where
-   the same run without momentum takes 8,700 to 28,000 (8 seeds): about five
-   times fewer epochs, for one extra array.
+   the same run without momentum takes 8,700 to 28,000 (8 seeds; from a
+   study whose program is not yet published): about five times fewer
+   epochs, for one extra array.
 
    Shuffling. Present the demonstrations in a different order every epoch.
    A fixed order lets the network learn the order instead of the mapping:
@@ -2178,8 +2222,9 @@ IRIS_API float iris_internal_trap_nan(iris *k) {
    (20 demonstrations, 2 inputs, 12 hidden units, 3 outputs), 600 epochs
    recall the demonstrations to a root-mean-square miss of 0.0066 and the
    plateau run, 18,000 epochs, to 0.0012, 5.5 times closer. On six synthetic
-   target shapes with clean demonstrations the gain is 8.4, 4.2 and 2.8
-   times at 10, 20 and 50 demonstrations.
+   target shapes with clean demonstrations (from a re-run whose program is
+   not yet published; the original study is iris-studies S08) the gain is
+   8.4, 4.2 and 2.8 times at 10, 20 and 50 demonstrations.
 
    What it costs: recall is not generalisation. On the same clean shapes the
    plateau improves held-out error against 600 epochs by much less (7%, 7%
@@ -2187,9 +2232,9 @@ IRIS_API float iris_internal_trap_nan(iris *k) {
    noise: it is 1.2 to 2.2 times worse on held-out error than stopping after
    a fixed 100 epochs (the table at iris_set_smoothing, where smoothing is
    the repair). Running on is worse still: a fixed 60,000 epochs is 2% to
-   29% worse than the plateau under noise. None of this has been checked on
-   recorded human gesture. Treat the ceiling as a ceiling, and smoothing as
-   the knob for noisy takes.
+   29% worse than the plateau under noise (from the same re-run). None of
+   this has been checked on recorded human gesture. Treat the ceiling as a
+   ceiling, and smoothing as the knob for noisy takes.
 
    A plateau run takes seconds on a board, long enough that a screen should
    show something true. Two ways in:
@@ -2453,7 +2498,8 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
          sign). The shipped function does not change sign: the clamp holds a
          inside [-1, +1], so 1-a*a is never negative. Checked over
          66,368,438 finite float bit patterns: 0 negatives, where the same
-         check on the unclamped form finds 3,970,919 of 16,527,549.
+         check on the unclamped form finds 3,970,919 of 16,527,549 (from a
+         study whose program is not yet published).
 
          Why it stays. The textbook objection is that y*(1-y) collapses the
          gradient exactly when a unit is confidently wrong. Instrumented for
@@ -2597,7 +2643,8 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
        demonstrations exactly, noise and all, so with few takes the error
        falls through the floor before the plateau test looks. iris_train on
        2 inputs, 12 hidden, 3 outputs, six synthetic target shapes x 40
-       seeds per cell (240 runs), stopped here in:
+       seeds per cell (240 runs; from a study whose program is not yet
+       published), stopped here in:
            demonstrations       4     5     8    10    12    20    50
            clean              84%   80%   61%   52%   43%   18%   16%
            noise sigma 0.05   84%   85%   88%   79%   65%    3%    0%
@@ -2663,12 +2710,13 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
    take, trained, the take deleted, then trained again: continuing leaves
    the instrument 14 times further from the true mapping than iris_train
    does (mean error 0.1416 against 0.0100, 40 of 40 seeds, every one with a
-   healthy status), and when the deleted take sat between demonstrations it
+   healthy status; from a study whose program is not yet published), and
+   when the deleted take sat between demonstrations it
    leaves the mapping there 0.75 to 0.82 of full scale wrong (8 of 8
    seeds). A take outside the demonstrated range does damage of its own,
    because every run refits the ranges: correcting at twice the range moves
    the whole mapping by 0.07 to 0.16, against about 0.0015 for a take
-   inside it (iris-studies S13). After deleting a take, call iris_train,
+   inside it (from the same study). After deleting a take, call iris_train,
    which starts over from the seed and fits only the demonstrations stored
    now.
 
@@ -3076,11 +3124,13 @@ IRIS_API float iris_loo_error(iris *k, int epochs) { return iris_internal_loo(k,
    15,600 epochs at 20 demonstrations over the runs behind the error-floor
    table in the engine (clean to noise sigma 0.10). The proxy has a price.
    On 36 datasets (six target shapes, three noise levels, two draws of 20
-   demonstrations) with 8 rerolls each, against held-out error on a clean
-   grid, the pick was the best of the five settings for the 600-epoch fit
-   it scores 41% of the time, and for the plateau-trained instrument 35% of
-   the time; following it cost a geometric-mean 6.6% over the best setting
-   for the 600-epoch fit, and 16.2% for the plateau-trained instrument.
+   demonstrations; from a re-run whose program is not yet published; the
+   original study is iris-studies S02) with 8 rerolls each, against
+   held-out error on a clean grid, the pick was the best of the five
+   settings for the 600-epoch fit it scores 41% of the time, and for the
+   plateau-trained instrument 35% of the time; following it cost a
+   geometric-mean 6.6% over the best setting for the 600-epoch fit, and
+   16.2% for the plateau-trained instrument.
 
    Units do not matter. Each output's miss on the hidden demonstration is
    divided by that output's demonstrated range before it is squared, so an
@@ -3099,12 +3149,14 @@ IRIS_API float iris_loo_error(iris *k, int epochs) { return iris_internal_loo(k,
        smoothing 0.
      - It is slow: five sweeps of n + 1 fits, 104 ms at 20 demonstrations
        and 640 ms at 50 on the development laptop (2 inputs, 12 hidden
-       units, 3 outputs). It has not been timed on the board; an estimate
-       from the board log's iris_continue figure (600 epochs of 20
-       demonstrations in 449 ms, about 37 microseconds per demonstration
-       per epoch) puts the 1.2 million demonstration-epochs of a
-       20-demonstration suggestion at about 45 seconds there. That is not
-       something to hide inside a training call.
+       units, 3 outputs; from a re-run whose program is not yet published;
+       the original study is iris-studies S02). It has not been timed on
+       the board; an estimate from the board log's iris_continue figure
+       (600 epochs of 20 demonstrations in 449 ms, about 37 microseconds
+       per demonstration per epoch) puts the 1.2 million
+       demonstration-epochs of a 20-demonstration suggestion at about 45
+       seconds there. That is not something to hide inside a training
+       call.
 
    What it is good for: a starting point when you do not know, on a machine
    where 100 ms is nothing. It captured 81% of what always picking the best
@@ -3297,16 +3349,17 @@ IRIS_API int iris_worst_example_id(const iris *k, float *margin) { if (!k) retur
    PART 8d -- The closed-form trainer (ELM: freeze the randomness, solve the rest)
 
    Backpropagation adjusts every weight a little, thousands of times. This
-   trainer keeps the hidden layer at its random start instead and computes
-   the best output layer directly, in one step, by solving a small system
-   of linear equations. It is the fastest trainer in this file: at 50
-   demonstrations, two inputs and nh = 12 (12 hidden units), a solve takes
-   about 8 microseconds on the development laptop where 600 epochs of
-   backpropagation take 2.6 ms (tests/audit.c prints both in its
-   training-cost table), and 3.5 ms on the ES3C28P board where 600 epochs
-   take 1.1 s (board log docs/board/2026-09-25-es3c28p.txt). The ratio
-   shrinks as inputs are added, because the frozen layer is redrawn for
-   every demonstration (see "Nothing changes unless the solve works").
+   trainer instead freezes a random hidden layer, drawn from the seed at its
+   own scale (see Gain), and computes the best output layer directly, in
+   one step, by solving a small system of linear equations. It is the
+   fastest trainer in this file: at 50 demonstrations, two inputs and
+   nh = 12 (12 hidden units), a solve takes about 8 microseconds on the
+   development laptop where 600 epochs of backpropagation take 2.6 ms
+   (tests/audit.c prints both in its training-cost table), and 3.5 ms on
+   the ES3C28P board where 600 epochs take 1.1 s (board log
+   docs/board/2026-09-25-es3c28p.txt). The ratio shrinks as inputs are
+   added, because the frozen layer is redrawn for every demonstration (see
+   "Nothing changes unless the solve works").
 
    Draw the hidden layer once from the seed and freeze it. Each
    demonstration then gives the hidden units' answers h (plus a constant 1
@@ -3329,9 +3382,8 @@ IRIS_API int iris_worst_example_id(const iris *k, float *margin) { if (!k) retur
    bends: the random features are nearly collinear and the normal matrix is
    numerically rank-deficient. The frozen layer is drawn at 2/sqrt(n_in)
    instead, wide enough that the features have real capacity. Mean held-out
-   error over 4 target shapes x 16 seeds x {8,20,50} demonstrations x nh
-   {12,24,48}, gain = M/sqrt(n_in) (iris-studies S06, one command to
-   reproduce):
+   error over 4 target shapes x 16 seeds x {8,29,50} demonstrations x nh
+   {12,24,48}, gain = M/sqrt(n_in) (iris-studies S06):
 
        M         0.25   0.50   1.00   1.50   2.00   3.00   4.00   8.00
        error    .1143  .1025  .0946  .0919  .0905  .0894  .0920  .1087
@@ -3352,8 +3404,9 @@ IRIS_API int iris_worst_example_id(const iris *k, float *margin) { if (!k) retur
    and the count reported. If escalation was needed the status says
    IRIS_RIDGE_ESCALATED: the result is valid, the data was harder than
    usual. Escalation can still run out: lam0 = 0 on 128 demonstrations all
-   made at one gesture fails all nine attempts (40 seeds of 40, at 8, 12
-   and 24 hidden units), and that is an ordinary refusal (below).
+   made at one gesture fails all nine attempts (tests/elm.c checks one seed
+   at 8 hidden units; 40 seeds of 40 at 8, 12 and 24 are from a study whose
+   program is not yet published), and that is an ordinary refusal (below).
 
    Smoothing reaches this trainer as extra ridge on the output weights, and
    never on the output biases: a penalised bias drags every output toward
@@ -3857,8 +3910,9 @@ IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_b
        identifier, being below next_id, fits the int the functions return it
        as. iris_record hands out next_id and adds one, and refuses once
        next_id reaches the limit, so the count never overflows; an instrument
-       at the limit saves, loads and plays, and records no more. The limit belongs to the receiving
-       machine, like the capacity: the bytes mean the same everywhere.
+       at the limit saves, loads and plays, and records no more. The limit
+       belongs to the receiving machine, like the capacity: the bytes mean
+       the same everywhere.
      - A weight need only be finite. IRIS_W_LIMIT is backpropagation's
        detector for a runaway run, not a rule about valid instruments: the
        closed-form trainer (PART 8d) legitimately solves output weights beyond
@@ -3907,11 +3961,10 @@ IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_b
    against the same rules and returns 0, clearing what it wrote, if the
    instrument breaks one. A finite instrument that this library made always
    saves. What can make it refuse: a weight or a demonstration that is not
-   finite, which only an IRIS_NO_GUARDS build lets into the instrument;
+   finite, which only an IRIS_NO_GUARDS build lets into the instrument; and
    demonstrations spread so far apart that a range's width overflows a
-   float; and more than two thousand million recorded takes. Refusing at
-   save time tells you while the instrument is still in front of you,
-   rather than after a power cycle.
+   float. Refusing at save time tells you while the instrument is still in
+   front of you, rather than after a power cycle.
 
    One thing the checksum cannot do: it certifies the bytes that were
    written, not that they all came from the same instant. If the instrument

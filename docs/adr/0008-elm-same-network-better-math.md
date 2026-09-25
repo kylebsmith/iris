@@ -13,8 +13,8 @@ fit it without backpropagation: freeze the seeded random hidden layer and solve
 the output layer exactly by ridge least squares, one (nh+1) × (nh+1) Cholesky
 factorisation, where nh is the number of hidden units. This is an extreme
 learning machine (ELM). Against 600 epochs of backpropagation, on the
-development laptop (Apple M4 Max, Apple clang 17, `-O2`; recorded, program in
-iris-studies S15):
+development laptop (Apple M4 Max, Apple clang 17, `-O2`; from a study whose
+program is not yet published):
 
 | nh | demonstrations | backpropagation | closed form | speed-up | backpropagation recall / grid | closed-form recall / grid |
 |---|---|---|---|---|---|---|
@@ -31,7 +31,7 @@ layer delivers the seed's character undiluted, where backpropagation trains
 part of its randomness away, while the exact solve holds the demonstrations
 whatever the seed. At 12 hidden units the closed-form reroll moved the sound at
 the demonstrations less than backpropagation's (0.016 against 0.017) and in the
-gaps about 45% more (0.11 against 0.076) (recorded; iris-studies S15).
+gaps about 45% more (0.11 against 0.076) (the same study).
 `tests/audit.c` ("ELM: same seed, same bits; reroll character") prints the
 current figures. A new seed is a new instrument.
 
@@ -63,8 +63,8 @@ Two measurements make the solve work in single precision:
   loads like any other. **It is a bounded-output variant of the
   backpropagation network's output layer, not an equivalent.** The
   disagreement between this logit-space head and a closed-form head with
-  linear outputs reached 4.6e-2, largest near the demonstrations (recorded;
-  iris-studies S15). That is structural, not a defect, and it is why no
+  linear outputs reached 4.6e-2, largest near the demonstrations (the same
+  study). That is structural, not a defect, and it is why no
   equivalence is claimed.
 - The default trainer stays `iris_train`. The closed-form trainer is chosen per
   instrument.
@@ -81,8 +81,8 @@ above. The lively corner lives at 12 hidden units for a frozen layer.
 
 **Compensated (Kahan) summation in building the normal matrix.** Rejected: the
 single-precision output weights miss a double-precision reference by 2e-4 to
-6e-4 in weight space only, and the error on the probe grid is unchanged
-(recorded; iris-studies S15). Paying cycles to fix an error nobody can hear or
+6e-4 in weight space only, and the error on the probe grid is unchanged (the
+same study). Paying cycles to fix an error nobody can hear or
 measure downstream buys nothing.
 
 **Overlay the working memory on the momentum arrays.** Rejected: the solve
@@ -102,4 +102,7 @@ at 48 hidden units. A separate block the caller supplies states the real cost.
 - Re-derive: `sh build.sh audit` (the "ELM:" checks and the training-cost
   table) and `sh build.sh elm`.
 
-Measurements: iris-studies S15, S06.
+Measurements: the gain sweep is iris-studies S06, whose program is published
+there; the board figures are from the board log; every other figure that no
+check prints is from a study whose program is not yet published, which
+iris-studies lists as S15 and points back to this record.

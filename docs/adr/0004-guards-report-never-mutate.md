@@ -1,6 +1,10 @@
 # 0004 — Guards report, never silently mutate
 
-**Status:** accepted, 2026-08-21. Governs `iris.h` 0.2.0.
+**Status:** accepted, 2026-08-21. Governs `iris.h` 0.2.0. Two parts no longer
+hold as first written: the weight limit fires on some good fits on sharp
+targets (the figures, and why 16 is kept, are at `IRIS_W_LIMIT`), and
+`iris_predict` takes a non-`const` instrument instead of writing the status
+through a const cast.
 **Affects:** `iris.h` (the `iris_status` enumeration, `iris_get_status`,
 `iris_internal_isbad`, `iris_internal_trainable`, the guard in `iris_predict`,
 `IRIS_W_LIMIT`), `tests/audit.c` ("NaN never reaches output; guards report",

@@ -31,7 +31,8 @@ What nearest neighbour buys:
   range.
 - Every saved instrument can play this way with nothing added to its file.
 
-What it costs, stated as plainly (recorded; program in iris-studies S14):
+What it costs, stated as plainly (the first two from a study whose program is
+not yet published):
 
 - **It generalises worst of everything tested.** Held-out grid error 0.039 at
   20 demonstrations against the network's 0.014; the network beats k = 3 at
@@ -42,8 +43,8 @@ What it costs, stated as plainly (recorded; program in iris-studies S14):
   times more sharply than its mean step, where the network steps 1.9 times.
   That is the sampler character, by design.
 - **Playing costs grow with the demonstrations.** On the development laptop
-  (Apple M4 Max, Apple clang `-O2`) a prediction takes 0.30 µs at 64
-  demonstrations and 1.1 µs at 256, against 0.037 µs for the network
+  (Apple M4 Max, Apple clang 17, `-O2`) a prediction takes 0.30 µs at 64
+  demonstrations and 1.2 µs at 256, against 0.036 µs for the network
   (`sh build.sh audit`, training-cost table). The algorithm with no training
   is the expensive one at play time. It has not been timed on the board.
 
@@ -76,7 +77,7 @@ best-fitting model is a deliberate, stated loss.
 
 **Gaussian-process regression as the mapper.** Rejected: worse than RBF at
 equal cost (grid error 0.0239 against 0.0220 at 20 demonstrations) and it
-misses the demonstrations by about 0.3% (recorded; iris-studies S14).
+misses the demonstrations by about 0.3% (the same study).
 
 **Hide the seams by smoothing the weights.** Rejected: the seams are the
 sampler character; smoothing them produces a worse network. Anyone who wants
@@ -96,4 +97,6 @@ more PART in the file people already read end to end.
   in the new ranges.
 - Re-derive: `sh build.sh audit`.
 
-Measurements: iris-studies S14.
+Measurements: every figure that no check or command prints is from a study
+whose program is not yet published, which iris-studies lists as S14 and points
+back to this record.

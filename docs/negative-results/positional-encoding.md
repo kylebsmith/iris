@@ -2,12 +2,14 @@
 
 Dyadic positional encoding is not in `iris.h`. This page keeps its code, its
 measurements and the reasons it is off, so the idea can be judged on its
-record rather than rediscovered. The tables are recorded figures; the study is
-iris-studies S20. [The negative-results index](README.md) gives the one-line
+record rather than rediscovered. The tables are recorded figures from a study
+whose program is not yet published; iris-studies lists it as S20 and points
+back to this page. [The negative-results index](README.md) gives the one-line
 summary.
 
 The code below is written for inputs scaled to [0, 1]. `iris.h` scales inputs
-to [-1, +1] ([ADR 0018](../adr/0018-the-input-scaling-travels-with-the-file.md)),
+to [-1, +1]
+([architecture decision record (ADR) 0018](../adr/0018-the-input-scaling-travels-with-the-file.md)),
 so reviving it means adapting the encoder's range first, then pasting it into
 its own optional module.
 
@@ -41,10 +43,10 @@ its own optional module.
    Recall of the musician's own demonstrations improves up to 20x. The
    encoder adds 1,152 arena bytes at 8 outputs.
 
-   AND IT ALSO SETTLED AN OLDER QUESTION, WHICH IS THE PART WORTH KEEPING.
-   The frontier report (iris-studies S19) concluded that the ~25-48%
-   ceiling on a contradictory +0.15 correction is "a capacity bound of the
-   12-hidden net". It is not.
+   AND IT SHOWS WHAT BOUNDS A CORRECTION, WHICH IS THE PART WORTH KEEPING.
+   The ceiling on how much of a contradictory +0.15 correction training
+   closes (the raw rows below) is not a capacity bound of the 12-hidden
+   net.
    Widening the hidden layer is FLAT; changing the input representation is
    not:
 
@@ -58,8 +60,7 @@ its own optional module.
 
    The edit authority a musician has over one demonstration is bounded by
    what the INPUT REPRESENTATION can localise, not by how many hidden units
-   there are. That correction is recorded in the frontier report
-   (iris-studies S19).
+   there are.
 
    WHY IT IS NOT ON.
 

@@ -16,8 +16,9 @@ Without a ridge, the normal matrix of the closed-form trainer's tanh features
 is numerically rank-deficient in single precision in every realistic scenario
 tested, including the benign one of 20 well-spread demonstrations: its smallest
 eigenvalue is at or below zero, and the Cholesky factorisation fails at λ = 0
-in all three scenarios examined (recorded; program in iris-studies S16). This
-is not insurance against hostile input; it is the friendly case.
+in all three scenarios examined (from a study whose program is not yet
+published). This is not insurance against hostile input; it is the friendly
+case.
 
 ## Decision
 
@@ -32,11 +33,12 @@ is not insurance against hostile input; it is the friendly case.
   as `IRIS_RIDGE_ESCALATED`. The schedule is fixed, so the same seed and the
   same demonstrations give the same bits even through escalation.
 - On friendly and hostile data at the recommended `lam0` the solve does not
-  fail: `tests/audit.c` runs six hostile scenarios (256 duplicates,
-  conflicting duplicates, an input that never moves, outliers of 1e6, tight
-  clusters, outputs all equal) at five values of `lam0` and three widths, 90
-  solves, with no unfixable failure, at most 2 doublings, and no non-finite
-  output on probes inside and outside the demonstrated range.
+  fail: `tests/audit.c` runs six scenarios (50 ordinary demonstrations, and
+  five hostile ones: one demonstration repeated 256 times, two tight
+  clusters, output outliers of ±1e6, an input that never moves, outputs all
+  equal) at five values of `lam0` and three widths, 90 solves, with no
+  unfixable failure, at most 2 doublings, and no non-finite output on probes
+  inside and outside the demonstrated range.
 - Escalation can run out, and then the solve refuses: `lam0` = 0 on 128
   demonstrations all made at one gesture fails all nine attempts (`iris.h`
   PART 8d). A refusal leaves every byte of the instrument as it was and
@@ -67,10 +69,12 @@ deficiency, not remove it.
 ## Consequences
 
 - `lam0` is a knob between stability and liveliness with a floor, not an off
-  switch (1e-5 never failed in the scenarios examined, recorded in iris-studies
-  S16; the recommended values are 1e-4 at 12 hidden units and 1e-3 at 48).
+  switch (1e-5 never failed in the scenarios the same study examined; the
+  recommended values are 1e-4 at 12 hidden units and 1e-3 at 48).
 - Escalation is visible to callers through the return count and the status,
   so "the data was harder than usual" is a fact the instrument can display.
 - Re-derive: `sh build.sh audit`.
 
-Measurements: iris-studies S16.
+Measurements: every figure that no check prints is from a study whose program
+is not yet published, which iris-studies lists as S16 and points back to this
+record.

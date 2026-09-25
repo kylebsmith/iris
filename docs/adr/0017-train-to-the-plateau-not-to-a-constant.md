@@ -16,8 +16,8 @@ chosen when the felt latency of the correction loop was the constraint. It is
 not a fit; it is a budget, and measured against the fit it is a bad one.
 
 8 outputs, 20 demonstrations, 12 hidden units, mean of 9 seeds, the same code
-throughout (recorded on the development laptop, an Apple M4 Max; program in
-iris-studies S11):
+throughout (recorded on the development laptop, an Apple M4 Max; from a study
+whose program is not yet published):
 
 | epochs | training mean squared error | recall | grid root-mean-square error | host ms |
 |---|---|---|---|---|
@@ -57,7 +57,7 @@ the run is cut into slices is therefore not part of the instrument's identity.
 
 Rejected on a measurement, not on taste. **At 50 demonstrations a fixed
 200,000 epochs is worse on held-out grid error than 60,000: 0.0065 against
-0.0063** (recorded; iris-studies S11). There is a point past which more
+0.0063** (the same study). There is a point past which more
 training costs generalisation, it moves with the number of demonstrations, and
 no constant finds it. The plateau test stops before it without being told
 where it is.
@@ -66,7 +66,7 @@ A window of 200 to 500 epochs was also rejected, by the same method: it
 mistakes the ordinary epoch-to-epoch noise of a shuffled stochastic gradient
 descent trace for a plateau and stops at a quarter of the achievable fit (10
 demonstrations, window 200, tolerance 2%: 3,577 epochs and training error
-4.9e-4, against 1.07e-5 at 20,000; recorded, iris-studies S11). The sweep
+4.9e-4, against 1.07e-5 at 20,000; the same study). The sweep
 covered 10 pairs of window and tolerance at 10, 20, 50 and 100
 demonstrations.
 
@@ -84,11 +84,17 @@ demonstrations takes 48 ms (ES3C28P, ESP32-S3 at 240 MHz,
 
 Every number above comes from a smooth, noiseless target. "More training never
 hurts" is the conclusion most at risk from sensor noise and human
-inconsistency, and on noisy synthetic demonstrations it does not hold: at
-output noise of standard deviation 0.02 or more, a fixed budget of 100 epochs
-beat the plateau default on held-out error by 1.2 to 3.7 times in 14 to 16 of
-16 trials (recorded; iris-studies S08). Smoothing (`iris_set_smoothing`)
-repairs part of that at a cost on clean data. Nothing here is verified on
-recorded human gesture, and the default waits for that study.
+inconsistency, and on noisy synthetic demonstrations it does not hold: with
+additive noise of standard deviation 0.02 to 0.10 on 20 demonstrations, a fixed
+budget of 100 epochs beat the plateau on held-out error by 1.45 to 3.0 times
+(iris-studies S08). On six target shapes at noise of 0.05 and above, the
+plateau at smoothing 0 is 1.2 to 2.2 times worse than 100 epochs (the table at
+`iris_set_smoothing` in `iris.h`; from a re-run whose program is not yet
+published; the original study is iris-studies S08). Smoothing repairs part of
+that at a cost on clean data. Nothing here is verified on recorded human
+gesture, and the default waits for that study.
 
-Measurements: iris-studies S11, S08.
+Measurements: the caveat's figures are cited where they stand, and the board
+figures are from the board log; every other figure that no check prints is
+from a study whose program is not yet published, which iris-studies lists as
+S11 and points back to this record.

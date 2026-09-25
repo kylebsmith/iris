@@ -3,10 +3,10 @@
 **Version 0.2.0.** BSD 3-Clause, `Copyright (c) 2026, Kyle Smith`. One header,
 no build system: `cc -std=c99 -O2 -I. -o hello examples/01_hello.c`. This page
 summarises the design for a technical reader; [`iris.h`](../iris.h) is the
-authority. A figure below names the check or recipe that produces it, the
-board log it was read from, or the study in
-[iris-studies](https://github.com/kylebsmith/iris-studies) that holds it,
-cited as "(iris-studies Snn)".
+authority. Each figure below names its source as the README sets out under
+[Where the numbers come from](../README.md#where-the-numbers-come-from);
+[iris-studies](https://github.com/kylebsmith/iris-studies/tree/v1) is cited
+at its tag v1.
 The plain-language companion is [SYSTEM-plain-english.md](SYSTEM-plain-english.md).
 
 ## 1. System
@@ -92,18 +92,20 @@ taken as 1.
 `tanh` is the rational `x(27+x²)/(27+9x²)` with its return value clamped to
 [-1, +1]. Its maximum absolute error against true tanh is 0.0235, near
 x = 1.566. Because `p(x) − 1 = (x−3)³/(27+9x²)` the clamp takes effect from
-|x| = 3, and it keeps the backward factor `1 − a²` non-negative everywhere
-(0 negatives over 66,368,438 finite inputs). Against true tanh and a rational
-245 times more accurate, over 2,304 paired runs on six synthetic target shapes,
-the accurate functions give 1.3% higher held-out error as a geometric mean
-(worse on 57.1% of pairs; 0.2% without the one saturating target), and cost 12%
-(the [7/6] rational) to 53% (the C library's `tanhf`) more per epoch. The
-backward pass uses the true-tanh derivative, a surrogate; the exact derivative
-of the rational makes no measurable difference (geometric mean 0.997, 95%
-interval 0.988 to 1.005). The maximum error is recorded in iris-studies S04;
-the comparisons with accurate functions and the exact derivative are
-iris-studies S01. The nonlinearity is frozen because saved instruments depend
-on it.
+|x| = 3, and it keeps the backward factor `1 − a²` non-negative everywhere (0
+negatives over 66,368,438 finite inputs; from a study whose program is not yet
+published). Against true tanh and a rational 245 times more accurate, over 2,304
+paired runs on six synthetic target shapes, the accurate functions give 1.3%
+higher held-out error as a geometric mean (worse on 57.1% of pairs; 0.2% without
+the one saturating target). They also cost 12% (the [7/6] rational) to 53%
+(the C library's `tanhf`) more per epoch on the development laptop. The
+backward pass uses the true-tanh derivative, a surrogate; the exact derivative of the rational makes no
+measurable difference (geometric mean 0.997, 95% interval 0.988 to 1.005). These
+comparisons are from a re-run whose program is not yet published; the original
+study is iris-studies S01, which recorded the accurate functions 3.8% worse, and
+the exact derivative 1.4% better in one run and 1.1% worse in another. The
+maximum error is recorded in iris-studies S04. The nonlinearity is frozen
+because saved instruments depend on it.
 
 ## 3. Trainers
 
@@ -132,21 +134,22 @@ scaled by `1/n_ex`.
   fixed-epoch recursion the golden hash pins. After a deleted bad take they keep
   its influence: on 20 demonstrations of a smooth target plus one contradictory
   take, trained, deleted and trained again, continuing leaves the instrument 14
-  times further from the true mapping than `iris_train` (40 of 40 seeds;
-  iris-studies S13). While
-  a weight sits exactly on ±16 they refuse with `IRIS_DIVERGED_STUCK` on every
-  call; `iris_train` is the way out.
-- **`iris_train_elm`**, the closed-form trainer (an extreme learning machine):
-  a frozen random hidden layer at gain 2/√n_in, and the output layer solved as
+  times further from the true mapping than `iris_train` (40 of 40 seeds; from a
+  study whose program is not yet published). While a weight sits exactly on ±16
+  they refuse with `IRIS_DIVERGED_STUCK` on every call; `iris_train` is the way
+  out.
+- **`iris_train_elm`**, the closed-form trainer (an extreme learning machine): a
+  frozen random hidden layer at gain 2/√n_in, and the output layer solved as
   ridge least squares *in logit space* by one (nh+1)² Cholesky factorisation.
   The ridge is relative (`lam0·trace/K + 1e-7`) with up to 8 deterministic
   doublings on a failed factorisation; smoothing adds `1.2 × smoothing` to the
   ridge on the output weights (never the bias). Every refusal leaves the
-  instrument bit-identical. `tests/audit.c` runs 90 hostile solves with 0
-  unfixable and at most 2 doublings, and at 48 hidden units its recall beats
-  backpropagation's (0.0030 against 0.0059). Output weights may exceed 16; such
-  an instrument saves and plays normally, and `iris_train` is the way back to
-  gradient training.
+  instrument bit-identical. `tests/audit.c` runs 90 solves, on 50 ordinary
+  demonstrations and five hostile sets at five values of `lam0` and three
+  widths, with 0 unfixable and at most 2 doublings, and at 48 hidden units its
+  recall beats backpropagation's (0.0030 against 0.0059). Output weights may
+  exceed 16; such an instrument saves and plays normally, and `iris_train` is
+  the way back to gradient training.
 - **`iris_knn_predict`** and **`iris_classify_1nn`**: inverse-squared-distance
   regression (k clamped to 8, exact when the neighbours agree) and a
   bit-verbatim nearest-demonstration snap, both training-free, with distances
@@ -232,7 +235,7 @@ margin 2.19, below the flag, so it is a ranking rather than an accusation.
 
 ## 6. Measured cost, with scope
 
-Host, the development laptop (Apple M4 Max, Apple clang `-O2`), from the
+Host, the development laptop (Apple M4 Max, Apple clang 17, `-O2`), from the
 training-cost table `sh build.sh audit` prints:
 
 | | 20 demonstrations | 50 demonstrations |
@@ -273,21 +276,23 @@ These are load-bearing, not caveats.
    0.05 or more, `iris_train` at smoothing 0 is 1.2 to 2.2 times worse on
    held-out error than a fixed 100-epoch run. Smoothing 0.33 repairs most of
    that and costs 16%, 29% and 66% on clean data at 10, 20 and 50
-   demonstrations (recorded; iris-studies S08). The decision waits for a study
-   of recorded human gesture.
+   demonstrations (the table at `iris_set_smoothing` in `iris.h`; from a
+   re-run whose program is not yet published; the original study is
+   iris-studies S08). The decision waits for a study of recorded human
+   gesture.
 3. **Nothing is verified on recorded human gesture**: not accuracy, not the
    plateau rule, not the ledger's premise.
-4. **The weight limit flags good fits**: 40 of 2,304 default fits, nearly all
-   on sharp targets at 50 demonstrations, report `IRIS_TRAINING_DIVERGED`
-   although they play as well as the healthy ones (the note at `IRIS_W_LIMIT`
-   in `iris.h` gives the protocol).
+4. **The weight limit flags good fits**: 40 of 2,304 default fits, nearly all on
+   sharp targets at 50 demonstrations, report `IRIS_TRAINING_DIVERGED` although
+   they play as well as the healthy ones (the note at `IRIS_W_LIMIT` in `iris.h`
+   gives the protocol; from a study whose program is not yet published).
 5. **Hardware figures come from one board**: an ES3C28P measured on
    2026-09-25 ([log](board/2026-09-25-es3c28p.txt)); a second board has not been run.
 6. **Recording order matters a little.** Recording the same demonstrations in
    a different order gives a bit-different instrument, because the shuffle
    works on positions: over 60 random orders the largest difference on the
-   probe grid is 0.0037, against a median of 0.0116 for a change of seed (a
-   study whose program is not in this repository). So
+   probe grid is 0.0037, against a median of 0.0116 for a change of seed
+   (from a study whose program is not yet published). So
    deleting and re-recording a take does not return exactly the instrument you
    would have had.
 7. The save format records no trainer, so a file cannot say which trainer

@@ -15,8 +15,8 @@ compiler setting does to the same source.
 Fused multiply-add contraction (the compiler merging `a*b + c` into one
 instruction that rounds once instead of twice) changes the bits. The same
 source, seed and recipe, compiled on Apple clang 17 on an Apple M4 Max with
-three contraction settings, saved three different instruments (recorded;
-program in iris-studies S18):
+three contraction settings, saved three different instruments (from a study
+whose program is not yet published):
 
 | flags | saved-file FNV-1a hash (the Fowler-Noll-Vo byte hash) |
 |---|---|
@@ -27,15 +27,15 @@ program in iris-studies S18):
 With contraction on, `-O0` and `-O1` gave a class of their own, distinct from
 `-O2`, because the optimiser changes which expressions get contracted. Only
 contraction off was the same at every optimisation level. The differences are
-musically nil (at most 4 units in the last place, at most 2.4e-7; recorded,
-iris-studies S18) and fatal to a golden hash, to identity across machines, and
+musically nil (at most 4 units in the last place, at most 2.4e-7; the same
+study) and fatal to a golden hash, to identity across machines, and
 to a saved random state, which assumes a reloaded instrument continues
 exactly.
 
 A second hazard is subnormal numbers (floats so close to zero that the format
 gives up precision to represent them). Momentum velocities decay towards zero
 and, left alone, settle among the subnormals: 49,477 of 50,000 iterations in
-one recorded trace (iris-studies S18). Some processors flush subnormals to zero
+one recorded trace (the same study). Some processors flush subnormals to zero
 in hardware and others compute them, so a decaying tail is a place where a
 host and a board can part ways without any test on one machine seeing it. The
 ESP32-S3 does not flush them (`board_probe`'s subnormal lines in
@@ -73,7 +73,7 @@ Four defences, cheapest first:
 removing the pragmas loses the golden hash.
 
 Host cost of contraction off: 2.3% to 4.0% more training time (recorded on the
-Apple M4 Max, Apple clang 17, `-O2`; iris-studies S18).
+Apple M4 Max, Apple clang 17, `-O2`; the same study).
 
 The cross-platform half of the contract is met on one board: on an ES3C28P
 (ESP32-S3) the golden recipe, the starter kit's `device_torture` test 1 and
@@ -106,4 +106,6 @@ decaying tails the flush is known to be safe on.
   silently.
 - Re-derive: `sh build.sh audit` and `sh build.sh determinism`.
 
-Measurements: iris-studies S18.
+Measurements: every figure that no check prints and the board log does not
+give is from a study whose program is not yet published; the board log is the
+material iris-studies lists for S18.

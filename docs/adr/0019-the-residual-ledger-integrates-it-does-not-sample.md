@@ -14,8 +14,9 @@ so they re-record at random. The obvious free detector: after training, rank
 the demonstrations by how badly the model still misses them. At 6,000 epochs
 it ranks a deliberately corrupted demonstration first in 16 trials out of 20 at
 +0.05, where leave-one-out cross-validation, which costs *n* full retrains,
-manages 1. Every figure in this record's tables is recorded on smooth
-synthetic data; the program is in iris-studies S10.
+manages 1. Every measurement in this record is on smooth synthetic data. All
+but the 0.2.0 figures under "The caveat", which `tests/elm.c measure` prints,
+are from a study whose program is not yet published.
 
 ## Why the obvious version fails
 
@@ -148,4 +149,6 @@ State the relation to TracIn in those terms in any write-up. Every number in
 this record comes from smooth synthetic data, and no human gesture has been
 tested; that bound belongs in any write-up too.
 
-Measurements: iris-studies S10.
+Measurements: `tests/elm.c measure` for the 0.2.0 figures; the rest are from
+a study whose program is not yet published, which iris-studies lists as S10
+and points back to this record.

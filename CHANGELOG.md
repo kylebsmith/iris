@@ -110,7 +110,8 @@ Removed:
   the Broyden–Fletcher–Goldfarb–Shanno method with a bounded history), with its
   checks and hashes. It had no caller outside the tests.
 - `extras/` (the output ports and the browser benchmark) and the historical
-  study documents and decision records in `docs/`, which are archived in
+  study documents, decision records and study programs (`gain-sweep.c`,
+  `degrees-of-freedom.c`) in `docs/`, which are archived in
   [iris-studies](https://github.com/kylebsmith/iris-studies). Nothing in
   `iris.h` used them.
 - The include guard is `IRIS_INTERACTIVE_ML_H`, not `IRIS_H`, which another
@@ -146,8 +147,8 @@ Behaviour changes on the playing path:
   marked it never fitted, so it came back silent after a load.
 - `iris_load` accepted any content with a valid checksum: not-a-number weights,
   inverted or overflowing ranges, non-finite demonstrations, repeated or
-  non-positive identifiers, a `next_id` at the top of the integer range, a
-  not-a-number smoothing value.
+  non-positive identifiers, a `next_id` below 1, above `IRIS_ID_LIMIT` or not
+  above every stored identifier, a not-a-number smoothing value.
 - Saved files depended on the host's byte order and read the caller's buffer
   through pointer casts that need 4-byte alignment.
 - Two refused loads wrote the status.
@@ -209,23 +210,20 @@ Behaviour changes on the playing path:
   restores every byte of the arena.
 - A refused query on an instrument never fitted still fitted its ranges in
   the neighbour paths.
-- `iris_record` could overflow a signed integer handing out the last
-  identifier, reachable through a loaded file; it now refuses once
-  identifiers run out, with `IRIS_STORE_FULL`.
-- An instrument that had handed out its last identifier could not be saved,
-  because the loader refused its `next_id`. `iris_load` now accepts a
-  `next_id` equal to `IRIS_ID_LIMIT`, so such an instrument saves, loads and
-  plays; it records no more.
 - On an instrument never fitted whose store was poisoned directly in memory,
   a refused prediction played the poison as its substitute; the substitute
   is now 0 whenever the centre is not a number.
-- Where `int` is 16 bits (the Arduino AVR boards) identifiers above 32,767
-  came back from `iris_record`, `iris_get`, `iris_id_at`, `iris_classify_1nn`
-  and `iris_worst_example_id` negative, as -1 or as 0. Identifiers now stay
-  below `IRIS_ID_LIMIT`, 32,767 there and 2^31 - 1 elsewhere: `iris_record`
-  refuses at the limit, and `iris_load` refuses a file whose `next_id` is
-  above it, so a file with identifiers past 32,766 does not load on an AVR
-  board.
+- Identifiers had no limit. `iris_record` could overflow a signed integer
+  handing out the last identifier, reachable through a loaded file, and where
+  `int` is 16 bits (the Arduino boards built on AVR, the 8-bit processor of
+  the Uno and Mega) identifiers above 32,767 came back from `iris_record`,
+  `iris_get`, `iris_id_at`, `iris_classify_1nn` and `iris_worst_example_id`
+  negative, as -1 or as 0. Identifiers now stay below `IRIS_ID_LIMIT`, 32,767
+  there and 2^31 - 1 elsewhere: `iris_record` refuses once they run out, with
+  `IRIS_STORE_FULL`, and the instrument still saves, loads and plays;
+  `iris_load` refuses a file whose `next_id` is above the limit, so on an AVR
+  board a file from an instrument that has handed out identifier 32,767 or
+  later does not load.
 - The square root called the C library's `sqrtf` on the ESP32-S3 and, for
   negative inputs, on GCC (the GNU Compiler Collection) and Linux clang, so
   freestanding builds had an undefined symbol. It is now computed in integers
@@ -239,15 +237,15 @@ Behaviour changes on the playing path:
 - `examples/00_minimal.c` read the status and recorded its bad frame inside one
   `printf`, whose argument order C leaves open, so it printed status 0 on some
   compilers.
-- `docs/gain-sweep.c` did not compile, and `docs/tiny.c` used an activation
-  that differs from the header's.
+- `docs/tiny.c` used an activation that differs from the header's.
 
 ### Additions
 
-- `iris_shape(k, &n_in, &n_hid, &n_out, &cap)` reads back the shape an
-  instrument was made with. With the shape a saved file carries at bytes 16
-  to 28, it tells a file for another instrument from a damaged one, which a
-  refused `iris_load` does not.
+- `iris_shape(k, &n_in, &n_hid, &n_out, &cap)` reads back the shape and
+  capacity an instrument was made with. Compared with the shape a saved file
+  carries at bytes 16, 20 and 24 and its number of takes at byte 28, it tells
+  a file for another instrument from a damaged one, which a refused
+  `iris_load` does not.
 
 - Tests: `tests/load.c` (every rule of the save format, round trips, a
   committed format 7 instrument in `tests/golden/` played back bit for bit),
@@ -276,15 +274,21 @@ Behaviour changes on the playing path:
   and ARM) and macOS with gcc and clang, plus libFuzzer on `iris_load`,
   coverage, the Arduino builds and the reference; a nightly workflow fuzzes
   for an hour and runs the full reference and the mutation report. The
-  `claims`, `bloat`, `sketches`, `golden` and `experiment` arms are gone, with
-  `tools/check-claims.sh`, `tools/bloat.sh` and `tools/mutate.sh`.
+  `claims`, `bloat`, `sketches`, `golden`, `experiment` and `target` arms are
+  gone, with `tools/check-claims.sh`, `tools/bloat.sh`, `tools/mutate.sh` and
+  `tools/freestanding-esp32.sh`; the ESP32-S3 check that `target` ran is part
+  of `sh build.sh freestanding`. The `mpe`, `sinks` and `bench` arms went with
+  `extras/`.
 
 ### Documentation
 
 - The comments in `iris.h` describe 0.2.0: the whole interface in eight groups,
   a glossary of every term the file uses, the failure rules regenerated from
-  the functions' behaviour, and every figure with its source. Figures that did
-  not replicate are replaced or removed.
+  the functions' behaviour, and every figure with its source: the test, tool
+  or board log that reproduces or records it, the iris-studies study whose
+  record holds it or whose program prints it, or a note that it comes from a
+  re-run or study whose program is not yet published. Figures that did not
+  replicate are replaced or removed.
 - The README, CONTRIBUTING.md, `docs/SYSTEM-technical.md` and
   `docs/SYSTEM-plain-english.md` are rewritten for 0.2.0, and
   `docs/README.md` says what each document in `docs/` is.

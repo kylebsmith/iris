@@ -13,17 +13,17 @@ blob: [-1,+1] training path bit-pinned"), `tests/load.c`, `tests/golden/`.
 ## Context
 
 Inputs were once mapped to [0, 1]. Wekinator drives Weka's
-`MultilayerPerceptron` with `normalizeAttributes` on, which scales
-attributes to **[-1, +1]**: Weka's attribute normalisation (the brief is
-archived with iris-studies S12). That is also what LeCun et al. 1998
-("Efficient BackProp", §4.3) prescribe, for a concrete reason: with all-positive
-inputs every weight into a hidden unit receives a gradient of the same sign, so
-the descent has to zig-zag.
+`MultilayerPerceptron` with its `normalizeAttributes` option left at Weka's
+default, on, which scales each numeric attribute to **[-1, +1]** (an unpublished
+note on Wekinator's internals records the setting). That is also what LeCun
+et al. 1998 ("Efficient BackProp", §4.3) prescribe, for a concrete reason: with
+all-positive inputs every weight into a hidden unit receives a gradient of the
+same sign, so the descent has to zig-zag.
 
 This is a correction towards Wekinator, not a deviation from it.
 
-50 demonstrations, 8 outputs, 12 hidden units, mean of 9 seeds (recorded;
-program in iris-studies S12):
+50 demonstrations, 8 outputs, 12 hidden units, mean of 9 seeds (from a study
+whose program is not yet published):
 
 | epochs | [0,1] training error | [-1,+1] training error | [0,1] grid error | [-1,+1] grid error |
 |---|---|---|---|---|
@@ -47,7 +47,7 @@ musician loads the instrument they practised for a year, hears something else,
 and has nothing to point at. That is the failure Fiebrink and Sonami describe
 (NIME 2020, the conference on New Interfaces for Musical Expression). An
 instrument saved on one scaling and read on the other played outputs that
-differed by 0.427 of full scale over 441 probes (recorded; iris-studies S12).
+differed by 0.427 of full scale over 441 probes (the same study).
 
 ## Decision
 
@@ -85,4 +85,6 @@ format costs one number and makes the failure impossible rather than unlikely.
   technique to retraining they did not ask for.
 - Re-derive the pinned path: `sh build.sh audit` and `sh build.sh load`.
 
-Measurements: iris-studies S12.
+Measurements: every figure in this record is from a study whose program is
+not yet published, which iris-studies lists as S12 and points back to this
+record.

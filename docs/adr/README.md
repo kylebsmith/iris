@@ -1,7 +1,11 @@
 # Architecture decision records
 
-Measurements behind these records, and the records this project no longer
-follows, are in [iris-studies](https://github.com/kylebsmith/iris-studies).
+The records this project no longer follows, and the archived records of the
+studies behind its figures, are in
+[iris-studies](https://github.com/kylebsmith/iris-studies/tree/v1) at its tag
+v1. Each kept record below names the source of each of its figures as
+[Where the numbers come from](../../README.md#where-the-numbers-come-from)
+sets out.
 
 | Removed record | Where it is |
 |---|---|
@@ -46,8 +50,10 @@ asserts something nobody disputes.
 2. **Record the rejected alternative.** An ADR with no rejected alternative is
    describing a decision that was never actually made.
 3. **Measured, not estimated.** Numbers come from a program in this repository
-   or a study in iris-studies that anyone can re-run. Say which program or
-   study, and on what machine.
+   or a study in iris-studies whose program anyone can re-run. Say which
+   program or study, and on what machine. A figure that falls short of this
+   says so beside it: it cites the archived record in iris-studies that holds
+   it, or says that its program is not yet published.
 4. **Never reverse a decision in place.** If it turns out wrong, write the
    next-numbered ADR that supersedes it, and add a line at the top of the old
    one pointing at it. Where the code has moved on without a new record, the
@@ -57,16 +63,17 @@ asserts something nobody disputes.
 
 `NNNN-short-hyphenated-title.md`, numbered in the order written, never renumbered.
 Sections: Status, Context, Decision, Rejected alternatives, Consequences, and a
-last line naming the iris-studies study that holds the measurements.
+last line naming the study in iris-studies that the measurements belong to,
+and saying whether its program is published.
 
 ## Index
 
 | # | title | status |
 |---|---|---|
 | [0003](0003-bit-identity-is-a-contract-not-an-accident.md) | Bit-identity is a contract, not an accident | accepted |
-| [0004](0004-guards-report-never-mutate.md) | Guards report, never silently mutate | accepted |
+| [0004](0004-guards-report-never-mutate.md) | Guards report, never silently mutate | accepted; the weight limit fires on some good fits (see `IRIS_W_LIMIT`), and `iris_predict` is not `const` |
 | [0008](0008-elm-same-network-better-math.md) | The closed-form trainer: same network, different mathematics | accepted |
-| [0009](0009-ridge-is-mandatory.md) | The ridge is mandatory: the single-precision normal matrix is rank-deficient even on friendly data | accepted |
+| [0009](0009-ridge-is-mandatory.md) | The ridge is mandatory: the single-precision normal matrix is rank-deficient even on friendly data | accepted in part: the ridge and its escalation hold; an exhausted escalation refuses instead of reseeding |
 | [0010](0010-knn-the-sampler-beside-the-morpher.md) | Nearest neighbour: the sampler beside the morpher | accepted |
 | [0017](0017-train-to-the-plateau-not-to-a-constant.md) | Train to the plateau, not to a constant | accepted; the default under noise is contested (iris-studies S08) |
 | [0018](0018-the-input-scaling-travels-with-the-file.md) | Inputs are scaled to [-1, +1], and the scaling travels with the file | accepted in part: the scaling holds; the file no longer carries it |

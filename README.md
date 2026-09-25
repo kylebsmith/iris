@@ -231,7 +231,7 @@ Arduino-ESP32 3.3.3, gcc 14.2, `-Os`), measured on 2026-09-25 by the starter kit
 build. Training on the board is slow: a sketch that must keep drawing trains in
 slices (48 ms per 64 epochs), or uses the closed-form trainer.
 
-For audio, 14.9 µs against the 20.8 µs of one sample at 48 kHz is 1.4 times of
+For audio, 14.95 µs against the 20.8 µs of one sample at 48 kHz is 1.4 times of
 margin: 72% of a core spent on playing alone. It is enough to run per sample and
 not enough to do anything expensive in the same callback. At a control rate of
 1,000 predictions a second it is 1.5% of a core. Training does not fit inside an
@@ -327,24 +327,30 @@ every byte back.
   with added Gaussian noise, never on recorded human gesture. The figures
   quoted here are ones that were re-run and replicated. Those that name a
   program in this repository (`tests/elm.c measure`, `sh build.sh audit`)
-  re-run from here; the rest are studies in iris-studies (see below). Treat
-  them as bounded by that.
+  re-run from here. The rest come from re-runs and studies whose programs are
+  not yet published, so for now neither this repository nor iris-studies can
+  re-run them, and each says so where it is quoted (see
+  [Where the numbers come from](#where-the-numbers-come-from)). Treat them as
+  bounded by that.
 - **Training to a plateau fits noise.** With smoothing at its default of 0, on
   demonstrations with output noise of standard deviation 0.05 or more,
   `iris_train` is 1.2 to 2.2 times worse on held-out error than a fixed
   100-epoch run. Smoothing 0.33 repairs most of that, but costs 16%, 29% and
   66% more error on clean demonstrations at 10, 20 and 50 of them. No single
   default serves both, so the default stays 0 until a study of real recorded
-  gestures settles it (six synthetic target shapes, 12 seeds; the table is
-  beside `iris_set_smoothing` in the header).
+  gestures settles it. The figures are from six synthetic target shapes and
+  12 seeds, tabulated beside `iris_set_smoothing` in the header (from a
+  re-run whose program is not yet published; the original study is
+  iris-studies S08).
 - **The weight limit flags some good fits.** On 2,304 default fits of six
   synthetic shapes, 40, all at 50 demonstrations and nearly all on sharp
   targets, report `IRIS_TRAINING_DIVERGED` although they play as well as the
-  healthy ones. The header's note on `IRIS_W_LIMIT` says why the limit stays.
+  healthy ones (from a study whose program is not yet published). The
+  header's note on `IRIS_W_LIMIT` says why the limit stays.
 - **The worst-demonstration flag can cry wolf and can miss.** After
   `iris_train` it reaches its threshold on 3–8% of clean sessions, and after
   the closed-form trainer on 7–13%; a take offset on one output is ranked
-  first in 18 to 20 sessions of 20 after `iris_train`.
+  first in 18 to 20 sessions of 20 after `iris_train` (`tests/elm.c measure`).
 - **The board results come from one board.** On 2026-09-25 an ES3C28P
   reproduced every host hash bit for bit: `determinism_check` (`0x203834ED`, and
   the saved file's `0xD8666A69`), `device_torture` test 1 (`0xB7FC47A0`) and the
@@ -424,17 +430,31 @@ in any release: do not call it.
 **The file format has its own number.** 0.2.0 writes format 7. Every later
 release reads every format from 7 on, for ever. A file loads into an
 instrument made with the same shape (inputs, hidden units, outputs) and a
-capacity at least the number of takes it holds; the shape is in the file, as
-three little-endian 32-bit numbers at bytes 16, 20 and 24, followed by the
-number of takes at byte 28 (the table in PART 9 of `iris.h`), so a program
-that receives a file it did not make can read them and call `iris_init` to
-match; `iris_shape` reads the same four numbers back from an instrument, so
-a refused load can be told apart: a shape that differs means another
-instrument's file, a shape that matches means a damaged file, one from a later format, or, on
-an AVR board, one whose identifiers run past what that board's `int` holds. A file from a newer release
-that this one does not understand is refused cleanly: `iris_load` returns 0 and
-the instrument you passed in is untouched. Formats 1 to 6 belong to the 0.1.0
-preview and are not read.
+capacity at least the number of takes it holds. The file carries its shape
+and its number of takes as little-endian 32-bit numbers, the shape at bytes
+16, 20 and 24 and the takes at byte 28 (the table in PART 9 of `iris.h`), so a
+program that receives a file it did not make can read them and call
+`iris_init` to match.
+
+A refused load returns 0 and leaves the instrument you passed in untouched,
+whatever the reason. `iris_shape` reads back an instrument's shape and
+capacity, and the file tells the rest, checked in this order. A file starts
+with the letters `IRIS` and, at byte 4, the format number 7; any other start
+means another format, such as a 0.1.0 file or a later release's, or no iris
+file at all. A shape that differs, or more takes than the capacity, means the
+file belongs to another instrument: make one to match with `iris_init` and
+load into that. On an AVR board (AVR is the 8-bit processor of the Arduino Uno
+and Mega, where `int` is 16 bits) the next identifier, at byte 36, must be at
+most 32,767, the identifier limit there, so a file from an instrument that has
+handed out identifier 32,767 or later is refused, even if those takes were
+deleted since. A file that passes all of these and is still refused is
+damaged, or was passed to `iris_load` with a length other than its own. One
+kind of refusal says nothing about the file: `iris_load` refuses every file
+when the instrument's inputs, hidden units or outputs exceed the
+`IRIS_MAX_IN`, `IRIS_MAX_HID` or `IRIS_MAX_OUT` of the source file that calls
+it (the maxima are set separately in each translation unit, the file the
+compiler builds in one go).
+Formats 1 to 6 belong to the 0.1.0 preview and are not read.
 
 **Before 1.0.** While the version starts with 0, a minor release may break the
 first three promises above, but only to fix something measured to be wrong, only
@@ -503,16 +523,27 @@ times changes its answer, about two distinct values per dataset on average over
 36 datasets, and an instrument whose character changes when you reroll is worse
 than one that is merely unsmoothed.
 
-The measurements behind this section are summarised beside each setting in
-`iris.h`, and the study is iris-studies S02; some of the original study's
-figures did not replicate and are not quoted here.
+The measurements behind this section come from re-runs whose programs are not
+yet published: the learning rate, momentum, hidden width and smoothing
+suggestion from one whose original study is iris-studies S02, and the
+smoothing figures (clean and noisy demonstrations, the periodic target, no
+divergence above 0) from one whose original study is iris-studies S08.
+`iris.h` summarises them beside each setting, except the 5% on clean
+demonstrations, the 2.8 times on the smooth target and the hidden width's two
+figures, which are quoted only here. Some figures of both original studies did
+not replicate and are not quoted here.
 
 ## Where the numbers come from
 
-A figure in this repository names the program that reproduces it. Where that
-program is not here, the citation "(iris-studies Snn)" names a study in
-[kylebsmith/iris-studies](https://github.com/kylebsmith/iris-studies), which
-holds the program or the record, and the iris commit it ran against.
+Where a test, a tool or a board log in this repository reproduces or records
+a figure, the figure names it. A citation "(iris-studies Snn)" names a study
+listed in [iris-studies at its tag v1](https://github.com/kylebsmith/iris-studies/tree/v1),
+and stands beside a figure only when that study's record (archived there, or
+kept in this repository's `docs/`) holds the figure, or its program prints it;
+only S05 and S06 have a program there. A figure from a later re-run whose
+program is not yet published says so, as "(from a re-run whose program is not
+yet published; the original study is iris-studies Snn)", or as "(from a study
+whose program is not yet published)" where no study fits.
 
 ## Licence
 

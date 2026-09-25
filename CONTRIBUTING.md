@@ -179,8 +179,10 @@ positive control that must be detected, decides without asking you.
   If a comment is wrong, fix it in the same commit as the code it describes.
 - **Every number names its source**: the test, the file, the program or the
   recipe that reproduces it, or it says it is an estimate and from what. A
-  hardware figure names the board, the sketch and the toolchain, and a board
-  figure without a recorded log says so. "Measured" on its own is not a source.
+  figure whose program is not yet published says so, in the form README.md
+  gives under "Where the numbers come from". A hardware figure names the
+  board, the sketch and the toolchain, and a board figure without a recorded
+  log says so. "Measured" on its own is not a source.
 - **Say it once, next to the code it governs**, and point to it from
   elsewhere. Do not repeat counts of files, checks or lines in prose.
 - **No marketing voice, no platitudes, no hedging.** Say the thing, and state

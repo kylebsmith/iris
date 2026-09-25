@@ -129,7 +129,9 @@ behaviour too, and it is a real choice, not a worse one: the lookup returns your
 demonstrations back exactly, which the network never quite does — in the
 library's tests it misses its own demonstrations by a fraction of a percent.
 The network is better everywhere in between, by roughly two-fold at every
-number of demonstrations tested; iris-studies S14 holds that comparison.)
+number of demonstrations tested, in a study whose program is not yet
+published; [the decision record on nearest
+neighbour](adr/0010-knn-the-sampler-beside-the-morpher.md) gives the figures.)
 
 Two related things worth knowing. First, it is repeatable: on the same machine,
 built the same way, the same starting random numbers plus the same
@@ -217,7 +219,7 @@ measure disagreement against. And deleting a bad take and re-recording it does
 *not* give you back exactly the instrument you would have had if you had never
 made the mistake, because the re-recorded take is now last in the list and the
 order changes the training a little. It gives you a very close one: a few times
-closer than re-rolling would.
+closer than re-rolling would, in a study whose program is not yet published.
 
 **It cannot handle a hard edge.** If you want the sound to change abruptly at a
 boundary — nothing, nothing, nothing, then suddenly everything — this shape of
@@ -262,7 +264,7 @@ been measured.
 
 Once trained, playing the instrument is cheap. One gesture in, one set of sound
 parameters out, in about thirty-six billionths of a second on a laptop. On the
-small chip it is 14.9 millionths of a second (the same board log). At a
+small chip it is 14.95 millionths of a second (the same board log). At a
 thousand gestures per second, that is about 1.5 percent of the chip's time.
 
 The whole instrument, including room for 256 stored demonstrations, occupies

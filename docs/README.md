@@ -5,10 +5,12 @@ is kept true with it; where a document and [`../iris.h`](../iris.h) disagree,
 the header is right and the document is wrong. Read the header and
 [`../README.md`](../README.md) first.
 
-The measurements behind these documents, and the design records the library no
-longer follows, are in
-[iris-studies](https://github.com/kylebsmith/iris-studies), cited as
-"(iris-studies Snn)".
+The design records the library no longer follows, and the archived records of
+the studies behind its figures, are in
+[iris-studies](https://github.com/kylebsmith/iris-studies/tree/v1) at its tag
+v1. How a figure names its source, and what "(iris-studies Snn)" beside it
+means, is set out once in
+[Where the numbers come from](../README.md#where-the-numbers-come-from).
 
 ## Explanations and programs
 
@@ -18,7 +20,7 @@ longer follows, are in
 | [SYSTEM-plain-english.md](SYSTEM-plain-english.md) | The same, explained from scratch for someone who has never trained a network. |
 | [tiny.c](tiny.c) | `iris_train` written out again by hand, which must agree with the library to the bit on one task (`sh build.sh tiny`). |
 | [board/](board/) | Logs of the starter kit's sketches run on hardware. Every board figure in the library cites one. |
-| [negative-results/](negative-results/README.md) | Ideas that were measured and are not in the library, one paragraph each, with the study that holds the numbers. |
+| [negative-results/](negative-results/README.md) | Ideas that are not in the library, one paragraph each, with the source of each figure. |
 
 ## Architecture decision records
 
