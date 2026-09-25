@@ -387,9 +387,15 @@ typedef struct iris iris;
    -------------------------------------------------------------------------- */
 typedef enum {
   IRIS_STATUS_OK         = 0,  /* healthy — guards provably touched nothing    */
-  IRIS_TRAINING_DIVERGED = 1,  /* weights ran past ±16; clamped and training
-                                stopped. Model is usable but suspect: check
-                                lr/momentum, or reseed.                      */
+  IRIS_TRAINING_DIVERGED = 1,  /* a run pushed a weight or bias past
+                                ±IRIS_W_LIMIT. The guard clamped it to exactly
+                                the limit and stopped the run at that epoch.
+                                The instrument is fitted and plays (the trainer
+                                still reports a fit and iris_is_trained is 1),
+                                but from weights that stopped where the guard
+                                stopped them. Every trainer that continues from
+                                the current weights now refuses: see
+                                IRIS_DIVERGED_STUCK.                         */
   IRIS_NAN_TRAPPED       = 2,  /* a not-a-number or an infinity was caught by
                                 the call that set this, and contained. For
                                 example: a reading refused at iris_record's
@@ -417,10 +423,21 @@ typedef enum {
                                 and a sketch that printed "full" for either sent
                                 the student to delete demonstrations they did
                                 not have.                                    */
-  IRIS_DIVERGED_STUCK    = 5   /* a previous run diverged and left weights at the
-                                clamp. Training refuses until the instrument is
-                                rerolled (iris_retrain_new) — the examples are
-                                intact, the weights are not.                 */
+  IRIS_DIVERGED_STUCK    = 5   /* a trainer that continues from the current
+                                weights (iris_train_epochs, iris_train_converge
+                                and the functions built on them) refused,
+                                because a weight or bias sits exactly on
+                                ±IRIS_W_LIMIT, where a divergence left it.
+                                They refuse on EVERY call while that is true,
+                                whatever else has touched the status since.
+                                The way out is iris_train, which starts over
+                                from the instrument's own seed (as does
+                                iris_train_begin): the demonstrations are
+                                intact, only the weights are damaged.
+                                iris_train_elm also reports this status when
+                                its solve collapsed to a near-constant output
+                                (PART 8d); that report alone does not make the
+                                trainers refuse.                             */
 } iris_status;
 
 /* NaN or Inf, by bit pattern — exponent field all ones. No libc, no fenv,
@@ -935,9 +952,9 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
 
    MOMENTUM 0.99 — one nudge from the 0.85 default — DIVERGED 21 of 40 runs and
    BRICKED 20 of them at the default learning rate (structured target, 40 seeds,
-   sigma=0.05). "Bricked" means the musician lowers it back, retrains, and gets
-   IRIS_DIVERGED_STUCK forever; only a reroll recovers, and a reroll is a
-   different instrument.
+   sigma=0.05). "Bricked" means the musician lowers it back and every trainer
+   that continues from the current weights answers IRIS_DIVERGED_STUCK, on
+   every call; only iris_train, which starts over from the seed, recovers.
 
    LR 2.0, the old permitted maximum, destroyed 5 of 16: recall 73x worse than
    default, grid error 6.6x worse. Weka's own documented range for the same
@@ -1495,6 +1512,21 @@ IRIS_API int iris_internal_check_weights(iris *k) { if (!k) return 0;
   }
   return worst;
 }
+
+/* IS ANY WEIGHT OR BIAS SITTING EXACTLY ON THE LIMIT? That is the mark a
+   divergence leaves: iris_internal_check_weights writes exactly ±IRIS_W_LIMIT
+   into every weight it clamps, and only another training run can move it
+   from there. A healthy fit ends strictly inside the limit -- the largest
+   weight in 2,264 healthy default fits was 15.9953 (see the note on
+   IRIS_W_LIMIT) -- so the test is exact equality, not a band near the limit,
+   which that fit would have fallen into. */
+IRIS_API int iris_internal_pinned(const iris *k) {
+  const int nw = k->n_hid * k->n_in + k->n_hid + k->n_out * k->n_hid + k->n_out;
+  const float *w = k->w1;      /* w1,b1,w2,b2 again, walked as one block */
+  for (int i = 0; i < nw; ++i)
+    if (w[i] == IRIS_W_LIMIT || w[i] == -IRIS_W_LIMIT) return 1;
+  return 0;
+}
 #endif
 
 /* --------------------------------------------------------------------------
@@ -1640,48 +1672,44 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
 
 #ifndef IRIS_NO_GUARDS
   /* THE DIVERGENCE TRAP, AND WHY THIS REFUSAL EXISTS.
-     When a run diverges, iris_internal_check_weights clamps the offending weights to
-     +/-IRIS_W_LIMIT and stops. On the NEXT fresh run those weights are still
-     sitting exactly at the clamp: epoch 1 pushes one of them past, the guard
-     fires again, and training stops after a single epoch. Forever.
+     When a run diverges, iris_internal_check_weights clamps the offending
+     weights to exactly ±IRIS_W_LIMIT and stops. A run that continues from
+     those weights starts with them sitting on the clamp: epoch 1 pushes one of
+     them past, the guard fires again, and training stops after a single epoch.
+     Measured: 14 good demonstrations plus one contradictory take diverge and
+     pin ONE weight of 60; without this refusal, a warm run after the bad take
+     is deleted does exactly 1 epoch per call and leaves the instrument frozen
+     at its damaged output, reporting nothing. Zeroing the momentum does not help -- it is the pinned weight,
+     not the velocity.
 
-     MEASURED 2026-08-27: 14 good demonstrations plus one contradictory take
-     diverges; ONE weight of 60 ends up pinned. After deleting the bad example,
-     iris_train_converge ran exactly 1 epoch and returned OK-looking on every
-     subsequent call, leaving the instrument frozen at its damaged output.
-     Zeroing the momentum does not help — it is the pinned weight, not the
-     velocity. The musician deletes the bad take, retrains, and nothing happens,
-     with no message.
+     The demonstrations are fine; the WEIGHTS are damaged. Refitting from the
+     seed recovers the instrument (measured: 0.621 against the 0.618 it played
+     before the damage). So a run that would continue from pinned weights
+     refuses, loudly and distinguishably, with IRIS_DIVERGED_STUCK, rather than
+     pretending to train. It does NOT reseed on its own: a warm trainer is
+     asked to keep the performer's weights, and replacing them silently would
+     hand the performer a different instrument, which is the failure mode
+     Fiebrink & Sonami describe.
 
-     The examples are fine; the WEIGHTS are destroyed. Refitting from a fresh
-     random start recovers the instrument (verified: 0.621 against the 0.618 it
-     produced before the damage). So this refuses, loudly and distinguishably,
-     rather than pretending to train. Recovery is iris_retrain_new(). We do NOT
-     reseed automatically: that would silently hand the performer a different
-     instrument, which is the failure mode Fiebrink & Sonami describe. */
-  /* Not `!resume`. iris_train_slice enters with resume = 1, so a diverged
-     instrument that iris_train refuses to touch used to be trained anyway if
-     you drove it in slices -- and the header calls those two paths
-     bit-identical. They must refuse identically too. */
-  if (k->status == IRIS_TRAINING_DIVERGED) {
-    int pinned = 0, i;
-    const float lim = IRIS_W_LIMIT - 0.01f;
-    /* All FOUR arrays, not two. iris_internal_check_weights clamps the biases as well
-       as the weights and walks them as one block; this check scanned only w1
-       and w2, so a clamp that landed on a bias left the instrument stuck with
-       nothing noticing -- exactly the silent state the note above says this
-       exists to prevent. Unreachable at the shipped defaults (0 of 400), but
-       reachable through iris_internal_set_learning at its permitted maximum, where it
-       happened 60 times out of 60. */
-    for (i = 0; i < k->n_hid * k->n_in;  ++i)
-      if (k->w1[i] >= lim || k->w1[i] <= -lim) pinned = 1;
-    for (i = 0; i < k->n_out * k->n_hid; ++i)
-      if (k->w2[i] >= lim || k->w2[i] <= -lim) pinned = 1;
-    for (i = 0; i < k->n_hid;  ++i)
-      if (k->b1[i] >= lim || k->b1[i] <= -lim) pinned = 1;
-    for (i = 0; i < k->n_out;  ++i)
-      if (k->b2[i] >= lim || k->b2[i] <= -lim) pinned = 1;
-    if (pinned) { k->status = IRIS_DIVERGED_STUCK; k->tr_running = 0; return -1.0f; }
+     THE WEIGHTS DECIDE, NOT THE STATUS (iris_internal_pinned). So the refusal
+     holds on every call for as long as a weight sits on the limit: a refusal
+     moves no weight, so the next call refuses too; zeroing the velocity, as
+     iris_correct does before it trains, moves no weight either; and a status
+     overwritten by an unrelated call -- a not-a-number refused at
+     iris_record's door, say -- cannot let a warm run through. The way out is
+     a run that does not continue from these weights: iris_train and
+     iris_train_begin reseed from the instrument's own seed before their first
+     epoch, so they never meet this test with pinned weights.
+
+     Every entry reaches this test, slices included, but a sliced run starts
+     from iris_train_begin's reseed and ends itself if it diverges, so in
+     practice what it refuses are the warm trainers: iris_train_epochs,
+     iris_train_converge and the functions built on them. The one write is the
+     status, plus ending the run if a slice is refused. */
+  if (iris_internal_pinned(k)) {
+    k->status = IRIS_DIVERGED_STUCK;
+    if (resume) k->tr_running = 0;
+    return -1.0f;
   }
   k->status = IRIS_STATUS_OK;
 #endif
@@ -1939,14 +1967,22 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
    Every "bit-identical" claim in this file is a claim about THIS FILE's
    self-consistency — sliced vs unsliced runs, save/load round trips, -O0 vs
    -O3 — never about Weka. Audit check 12 hashes the weights this produces.
-   Do not "improve" it; iris_train_converge is where improvements go. */
+   Do not "improve" it; iris_train_converge is where improvements go.
+
+   It continues from the current weights, and refuses (-1) the way
+   iris_train_converge does. */
 IRIS_API float iris_train_epochs(iris *k, int epochs) { if (!k) return -1.0f;
   return iris_internal_train_run(k, epochs, 0, 0, 0, 0);
 }
 
 /* Train until the training error plateaus. ceiling <= 0 takes
    IRIS_CONV_CEILING. cb may be NULL. Returns the final mean squared error,
-   or -1 if it refused, in which case nothing was written. */
+   or -1 if it refused.
+
+   It continues from the current weights. A store it cannot train on is
+   refused with nothing written. While a weight sits exactly on
+   ±IRIS_W_LIMIT it refuses with IRIS_DIVERGED_STUCK, on every call, and
+   that status is then the one thing it writes; iris_train is the way out. */
 IRIS_API float iris_train_converge(iris *k, int ceiling, iris_progress_fn cb, void *user) { if (!k) return -1.0f;
   return iris_internal_train_run(k, ceiling > 0 ? ceiling : IRIS_CONV_CEILING, 1, 0, cb, user);
 }

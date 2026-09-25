@@ -14,6 +14,10 @@
         several shapes, seeds and slice sizes, starting from an instrument
         that has already been trained, warm-trained, edited and deleted from.
      3. iris_loo_error refuses with exactly -1, never a not-a-number.
+     4. Once a divergence leaves a weight on the limit, every trainer that
+        continues from the current weights refuses on every call -- no
+        alternation, whatever touches the status in between -- and iris_train
+        is the way out, to the instrument a cold start gives.
 
    Not-a-number and infinity are built with __builtin_nanf and __builtin_inff,
    never by dividing by zero, so -fsanitize=float-divide-by-zero can run over
@@ -243,6 +247,90 @@ int main(void) {
     snprintf(d, sizeof d, "poisoned store %.1f (not-a-number %d), clean store %.5f",
              (double)e, is_nan(e), (double)good);
     check("iris_loo_error refuses with -1, never a not-a-number", e == -1.0f && !is_nan(e) && good >= 0.0f, d);
+  }
+
+  /* ---- 4. the stuck refusal holds on every call -------------------------- */
+  {
+    /* The instrument a cold start from this seed should give, for comparison
+       at the end: iris_init, the same demonstrations, iris_train. */
+    iris *f = iris_init(A, sizeof A, 2, 12, 3, 32, 314u);
+    record_n(f, 20, 2718ul);
+    iris_train(f);
+    memcpy(RA, A, sizeof A);
+
+    iris *k = iris_init(A, sizeof A, 2, 12, 3, 32, 314u);
+    record_n(k, 20, 2718ul);
+    iris_internal_set_learning(k, 2.0f, 0.99f);   /* force a divergence */
+    iris_train_converge(k, 0, 0, 0);
+    const int diverged = iris_get_status(k) == IRIS_TRAINING_DIVERGED && iris_internal_pinned(k);
+    iris_internal_set_learning(k, 0.10f, 0.85f);  /* back to the defaults */
+
+    /* The first refusal writes the status and nothing else. */
+    memcpy(SNAP, A, sizeof A);
+    { int32_t st = IRIS_DIVERGED_STUCK;
+      memcpy(SNAP + ((unsigned char *)&k->status - A), &st, sizeof st); }
+    float r0 = iris_train_converge(k, 0, 0, 0);
+    const int first_only_status = r0 == -1.0f && same_arena();
+
+    /* Then every warm call refuses, and nothing moves: not a weight, not the
+       epoch count. Zeroing the velocity first (iris_correct) changes the
+       velocities, so only the weights and counters are compared there. */
+    const size_t wbytes = sizeof(float) * (size_t)(12 * 2 + 12 + 3 * 12 + 3);
+    static float w0[12 * 2 + 12 + 3 * 12 + 3];
+    memcpy(w0, k->w1, wbytes);
+    const int done0 = iris_train_epochs_done(k);
+    int held = 0, calls = 0;
+    for (int round = 0; round < 3; ++round) {
+      float r[5];
+      cb_calls = 0;
+      r[0] = iris_train_converge(k, 0, 0, 0);
+      r[1] = iris_train_epochs(k, 100);
+      r[2] = iris_train_converge(k, 4000, count_cb, 0);
+      r[3] = iris_correct(k, 0);
+      r[4] = iris_train_slice(k, 100) == 0 ? -1.0f : 0.0f;   /* no run to continue */
+      for (int c = 0; c < 5; ++c) {
+        calls++;
+        if (r[c] == -1.0f && iris_get_status(k) == IRIS_DIVERGED_STUCK && cb_calls == 0
+            && memcmp(w0, k->w1, wbytes) == 0 && iris_train_epochs_done(k) == done0) held++;
+      }
+    }
+    /* A status overwritten by an unrelated call does not let a warm run in. */
+    { float bad[2] = { __builtin_nanf(""), 0.5f }, o[3] = { 100.0f, 200.0f, 300.0f };
+      iris_record(k, bad, o); }
+    const int st_nan = iris_get_status(k) == IRIS_NAN_TRAPPED;
+    float r_after_nan = iris_train_converge(k, 0, 0, 0);
+    const int still = st_nan && r_after_nan == -1.0f && iris_get_status(k) == IRIS_DIVERGED_STUCK
+                   && memcmp(w0, k->w1, wbytes) == 0;
+
+    /* iris_train is the way out, and it gives the cold-start instrument. */
+    int trained = iris_train(k);
+    const int way_out = trained == 1 && iris_get_status(k) == IRIS_STATUS_OK && !iris_internal_pinned(k)
+                     && memcmp(RA, A, sizeof A) == 0;
+    const int warm_again = iris_train_epochs(k, 50) >= 0.0f && iris_get_status(k) == IRIS_STATUS_OK;
+
+    snprintf(d, sizeof d, "diverged %d; first refusal wrote only the status %d; %d of %d warm calls "
+             "refused with nothing moved; after a refused record %d; iris_train %d, same as cold %d; warm again %d",
+             diverged, first_only_status, held, calls, still, trained, way_out, warm_again);
+    check("the stuck refusal holds on every warm call", diverged && first_only_status && held == calls
+          && still && way_out && warm_again, d);
+  }
+  {
+    /* Exactly on the limit is stuck, wherever it is -- a bias counts. Just
+       inside it is not: 15.9953 is the largest weight measured in a healthy
+       default fit. */
+    iris *k = lived_in(2, 12, 3, 32, 14, 8u);
+    iris_train(k);
+    memcpy(SNAP, A, sizeof A);
+    k->w2[5] = 15.9953f;
+    float inside = iris_train_epochs(k, 20);
+    int inside_ok = inside >= 0.0f && iris_get_status(k) != IRIS_DIVERGED_STUCK;
+    memcpy(A, SNAP, sizeof A);
+    k->b2[1] = -IRIS_W_LIMIT;
+    float on = iris_train_epochs(k, 20);
+    int on_ok = on == -1.0f && iris_get_status(k) == IRIS_DIVERGED_STUCK;
+    snprintf(d, sizeof d, "weight at 15.9953 trained (%.2e), bias at -limit refused (%.1f, status %d)",
+             (double)inside, (double)on, (int)iris_get_status(k));
+    check("stuck means exactly on the limit, biases included", inside_ok && on_ok, d);
   }
 
   if (fails) printf("\n  %d FAILING\n", fails);
