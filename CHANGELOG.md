@@ -180,6 +180,18 @@ Behaviour changes on the playing path:
   training run the takes recorded after it read the cleared takes' sums and
   `iris_worst_example` could name a clean take. It now empties the ledger, whose
   readers then answer -1, and `iris_train_progress` reads 0.0 after it.
+- A sliced run noticed an edit to the store between slices only when the
+  count changed, so a take deleted and replaced by a new one went unseen and
+  the run could end at the next plateau test; any record or delete during a
+  run now restarts its shuffle and its plateau window.
+- `iris_reseed` left a sliced run going, whose later slices trained the new
+  seed's weights inside the old run; it now ends the run.
+- An output shown nothing below about 3.40279e38 got an upper range end of
+  infinity, so the instrument played infinity and `iris_save` refused it; its
+  range now widens downward from the largest float.
+- With every stored take far outside the ranges the instrument was fitted to,
+  the neighbour functions found no nearest take for an ordinary reading; they
+  now search again with a distance that cannot overflow.
 - `iris_suggest_smoothing` restored the instrument through a save and a load,
   which lost the momentum velocities and silenced a stale instrument; it now
   restores every byte of the arena.
