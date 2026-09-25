@@ -39,6 +39,10 @@
         learning-rate and momentum clamps pass Weka's pair.
     10. iris_clear empties the worst-demonstration ledger, so no take recorded
         after it is named for a miss made on a cleared one.
+    11. A sliced run sees every edit made between two slices -- a record, a
+        delete, and a delete followed by a record, which leaves the count as
+        it was -- and restarts its plateau window, so the edit is not read as
+        a plateau that ends the run at the next window test.
 
    Not-a-number and infinity are built with __builtin_nanf and __builtin_inff,
    never by dividing by zero, so -fsanitize=float-divide-by-zero can run over
@@ -713,6 +717,47 @@ int main(void) {
     }
     snprintf(d, sizeof d, "%d of 2 trainers' ledgers emptied by iris_clear%s", right, first);
     check("iris_clear empties the worst-demonstration ledger", right == 2, d);
+  }
+
+  /* ---- 11. a sliced run sees every edit between slices ------------------
+     Twenty demonstrations, sliced to epoch 3,999, one epoch short of a
+     plateau test. Then an edit: a take far off the mapping recorded, the
+     fourth take deleted, or the fourth take deleted and the far take
+     recorded in its place. The edit raises the error, so a plateau window
+     that was not restarted would compare the risen error with the reference
+     taken at epoch 2,000 and end the run at epoch 4,000. Restarted, the
+     window test at 4,000 only takes a new reference, so the run must still
+     be going after it. The same run with no edit goes on past 4,000 too,
+     which shows the window test there would not have ended it anyway. */
+  {
+    int right = 0; char first[200] = "";
+    const char *names[4] = { "no edit", "record", "delete", "delete then record" };
+    for (int t = 0; t < 4; ++t) {
+      iris *k = iris_init(A, sizeof A, 2, 12, 1, 64, 11u);
+      for (int i = 0; i < 20; ++i) {
+        const float u = (float)((i * 7919) % 97) / 97.0f, v = (float)((i * 6131) % 89) / 89.0f;
+        float in[2] = { u, v }, out[1] = { 0.5f + 0.4f * iris_internal_tanh(3.0f * (u - 0.5f)) * v };
+        iris_record(k, in, out);
+      }
+      iris_train_begin(k, 0);
+      while (iris_train_busy(k) && iris_train_epochs_done(k) < 3999)
+        iris_train_slice(k, 3999 - iris_train_epochs_done(k));
+      const int at = iris_train_epochs_done(k);
+      float in[2] = { 0.5f, 0.5f }, out[1] = { 5.0f };
+      if (t == 2 || t == 3) iris_delete_index(k, 3);
+      if (t == 1 || t == 3) iris_record(k, in, out);
+      const int more = iris_train_slice(k, 1);          /* epoch 4,000: a window test */
+      const int after = iris_train_epochs_done(k);
+      while (iris_train_slice(k, 500)) {}
+      const int ok = at == 3999 && after == 4000 && more && iris_train_epochs_done(k) > 4000;
+      right += ok;
+      if (!ok && !first[0])
+        snprintf(first, sizeof first, " -- %s: sliced to %d, the window test at %d %s the run, "
+                 "which ended at %d", names[t], at, after, more ? "kept" : "ended",
+                 iris_train_epochs_done(k));
+    }
+    snprintf(d, sizeof d, "%d of 4 runs went on past the window test after the edit%s", right, first);
+    check("a sliced run restarts its window after any edit", right == 4, d);
   }
 
   if (fails) printf("\n  %d FAILING\n", fails);
