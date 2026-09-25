@@ -401,13 +401,13 @@ arm_fuzz_load() {
 # tests in small functions called millions of times, such as
 # iris_internal_norm_in's index check -- and moved by one or two outcomes
 # from run to run.
-# THE THRESHOLDS sit just under what the suite measures. Lines: 1,157 of 1,177
-# (98.30%) with Apple clang 17, Homebrew clang 22 and Debian clang 19 alike.
-# Branch outcomes depend on the LLVM version, which decides how many there
-# are: 878 of 968 (90.70%) with Apple clang 17 and with clang 19, 900 of
-# 1,012 (88.93%) with clang 22, the same in every run. So: lines at least
-# 98.0%, branch outcomes at least 88.5%. COV_MIN_LINES and COV_MIN_BRANCHES
-# override them.
+# THE THRESHOLDS sit under what the suite measures. Lines: 1,169 of 1,177
+# (99.32%) with Apple clang 17 and Homebrew clang 22 alike. Branch outcomes
+# depend on the LLVM version, which decides how many there are: 894 of 980
+# (91.22%) with Apple clang 17, 916 of 1,024 (89.45%) with clang 22, the same
+# in every run. The clang of the Linux runners is not measured here. So:
+# lines at least 98.0%, branch outcomes at least 88.5%. COV_MIN_LINES and
+# COV_MIN_BRANCHES override them.
 arm_cov() {
   KC=""
   if [ -n "$CC_GIVEN" ]; then KC=$CC; else
