@@ -4337,9 +4337,10 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
 
      - STRUCTURAL SAFETY. The answer is a weighted average of demonstrated
        outputs, held inside their range: it is never a not-a-number and
-       never leaves the range you demonstrated, whatever the input does.
-       When every neighbour carries the same value, the answer is exactly
-       that value.
+       never leaves the range you demonstrated, whatever finite reading comes
+       in, however far from every take (a reading that is not finite is
+       refused, with the substitute and IRIS_NAN_TRAPPED). When every
+       neighbour carries the same value, the answer is exactly that value.
 
      - THE ACCURACY FLOOR. The MLP generalises better at EVERY count of
        demonstrations measured (2.4 times at 5, 2.1 times at 200;
@@ -4371,6 +4372,7 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
 
 #define IRIS_KNN_MAXK 8          /* stack bound; k above this is clamped */
 #define IRIS_KNN_GUARD 1e-9f     /* zero-distance guard for the weights */
+#define IRIS_KNN_FAR 1e15f       /* the most ranges one input can count */
 
 /* THE NEIGHBOUR SCALE: one multiplier per input, 1/width of its range, so a
    distance counts each input in fractions of its demonstrated range. A still
@@ -4397,13 +4399,64 @@ IRIS_API float iris_internal_distance2(const iris *k, const float *inv,
   return d;
 }
 
+/* THE FAR DISTANCE, for when every ordinary distance has overflowed: the
+   same count, with no input counting more than IRIS_KNN_FAR (10^15) ranges
+   and a still input skipped outright.
+
+   WHEN IT IS NEEDED. The ranges are the ones the instrument was last fitted
+   to, and a take recorded since can lie any distance outside them: a take at
+   1e20 on an input fitted to 0..1 is 1e20 ranges from a reading of 0.5, and
+   the square of that overflows to infinity. With every stored take that far
+   out no ordinary distance is finite, so a finite reading would have no
+   nearest take: iris_knn_predict would play its substitute, outside the
+   outputs demonstrated, iris_classify_1nn would answer -1 and
+   iris_delete_nearest would delete nothing, with takes stored. The neighbour
+   functions scan again with this distance instead. Capped, each input adds at
+   most 10^30, so between finite numbers it is always finite, and below 10^38
+   for any IRIS_MAX_IN up to 340,000. Skipping a still input keeps an overflowed
+   difference times its zero scale from making a not-a-number.
+
+   WHY ONLY THEN. The skip and the two comparisons per input slow the scan
+   by more than half: 4,000 k-nearest and 1-nearest queries over 2,000 takes
+   of 8 inputs take 0.186 s with them in the ordinary distance and 0.118 s
+   without (Apple clang -O2, the development laptop). Used only when no
+   ordinary distance is finite, they cost nothing otherwise, and every
+   reading with a finite distance to some take plays exactly what it did
+   without them. */
+IRIS_API float iris_internal_distance2_far(const iris *k, const float *inv,
+                                           const float *row, const float *in) {
+  float d = 0.0f;
+  for (int i = 0; i < k->n_in; ++i) {
+    if (inv[i] == 0.0f) continue;
+    float t = (row[i] - in[i]) * inv[i];
+    if (t >  IRIS_KNN_FAR) t =  IRIS_KNN_FAR;
+    if (t < -IRIS_KNN_FAR) t = -IRIS_KNN_FAR;
+    d += t * t;
+  }
+  return d;
+}
+
+/* One row, index r at squared distance d, offered to the kk nearest found so
+   far, which bd and bi hold nearest first. Strict <: on a tie the earlier
+   take keeps its slot (the Weka rule). */
+IRIS_API void iris_internal_knn_insert(float *bd, int *bi, int kk, int r, float d) {
+  int p = kk;
+  while (p > 0 && d < bd[p - 1]) --p;
+  if (p < kk) {
+    for (int q = kk - 1; q > p; --q) { bd[q] = bd[q-1]; bi[q] = bi[q-1]; }
+    bd[p] = d; bi[p] = r;
+  }
+}
+
 /* THE NEAREST DEMONSTRATION: the index of the stored row closest to `in`, the
    earliest-recorded on a tie (strict <, the Weka rule), or -1 when there is
    none -- an empty store, a shape too big for this translation unit, or a
-   query whose distance to every row is not finite (a not-a-number reading,
-   or one so far out that its square overflows). The search starts at the
-   largest finite float, so every smaller distance counts however far outside
-   the demonstrations the query is. Like iris_knn_predict it fits the ranges
+   query whose distance to every row is not a number, which takes a reading
+   or a stored value that is not finite. The search starts at the largest
+   finite float, so every smaller distance counts however far outside the
+   demonstrations the query is, and when no ordinary distance is finite it
+   searches again with the far distance above, which between finite numbers
+   always is. Like iris_knn_predict it fits the ranges
    of an instrument that has never been fitted -- but first it refuses a
    reading that is not finite, which has no nearest demonstration, and then
    the one thing it writes is the status, IRIS_NAN_TRAPPED, as iris_record
@@ -4427,6 +4480,11 @@ IRIS_API int iris_internal_nearest(iris *k, const float *in) {
     const float d = iris_internal_distance2(k, inv, k->ex + (size_t)r * stride, in);
     if (d < best_d) { best_d = d; best = r; }
   }
+  if (best < 0)
+    for (int r = 0; r < k->n_ex; ++r) {
+      const float d = iris_internal_distance2_far(k, inv, k->ex + (size_t)r * stride, in);
+      if (d < best_d) { best_d = d; best = r; }
+    }
   return best;
 }
 
@@ -4497,24 +4555,26 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
   float bd[IRIS_KNN_MAXK];
   for (int n = 0; n < IRIS_KNN_MAXK; ++n) { bi[n] = -1; bd[n] = IRIS_FLT_MAX; }
 
-  for (int r = 0; r < k->n_ex; ++r) {
-    const float d = iris_internal_distance2(k, inv, k->ex + (size_t)r * stride, in);
-    /* strict < : on a tie the earlier example keeps its slot (Weka rule) */
-    int p = kk;
-    while (p > 0 && d < bd[p - 1]) --p;
-    if (p < kk) {
-      for (int q = kk - 1; q > p; --q) { bd[q] = bd[q-1]; bi[q] = bi[q-1]; }
-      bd[p] = d; bi[p] = r;
-    }
-  }
+  /* The ordinary scan, and when it finds no finite distance at all -- every
+     take far outside the ranges the instrument was fitted to -- the same scan
+     with the far distance (see iris_internal_distance2_far). */
+  for (int r = 0; r < k->n_ex; ++r)
+    iris_internal_knn_insert(bd, bi, kk, r,
+                             iris_internal_distance2(k, inv, k->ex + (size_t)r * stride, in));
+  if (bi[0] < 0)
+    for (int r = 0; r < k->n_ex; ++r)
+      iris_internal_knn_insert(bd, bi, kk, r,
+                               iris_internal_distance2_far(k, inv, k->ex + (size_t)r * stride, in));
 
 #ifndef IRIS_NO_GUARDS
-  /* A query so far out that every distance overflows to +inf -- a reading
-     that is not finite was refused above -- makes every comparison false, so
-     no row is ever inserted and each bi[n] is still -1, and -1 * stride is an
-     out-of-bounds read into whatever sits beside the arena. Refuse instead:
-     write the substitute (iris_internal_centre) and report, exactly like the
-     MLP backstop. */
+  /* A distance that is not a number to every take makes every comparison
+     false, so no row is ever inserted and each bi[n] is still -1, and -1 *
+     stride is an out-of-bounds read into whatever sits beside the arena. A
+     reading that is not finite was refused above, and the far distance is
+     finite between finite numbers, so that takes a stored value that is not
+     finite: iris_record and iris_load refuse one, but the store is memory
+     the caller can reach. Refuse instead: write the substitute
+     (iris_internal_centre) and report, exactly like the MLP backstop. */
   if (bi[0] < 0) {
     for (int o = 0; o < NOut; ++o) out[o] = iris_internal_centre(k, o);
     k->status = IRIS_NAN_TRAPPED;
@@ -4591,7 +4651,7 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
 /* 1-NN classification: snap to the single nearest demonstration and return
    its outputs VERBATIM (bit-for-bit) plus its identifier, or -1 if the store
    is empty, the shape is too big for this translation unit, or the reading
-   has no finite distance to any take. For a classifier task store the class
+   is not finite. For a classifier task store the class
    label in out[0]; this then follows the rules of desktop Wekinator's
    default for discrete outputs, Weka's IBk nearest-neighbour classifier with
    k=1: distance normalised by each input's range, Euclidean (straight-line),
@@ -4616,8 +4676,9 @@ IRIS_API int iris_classify_1nn(iris *k, const float *in, float *out) { if (!k) r
                                                 after refusing a reading that
                                                 is not finite */
 #ifndef IRIS_NO_GUARDS
-  /* A query whose distance to every demonstration is not finite -- a
-     disconnected sensor reading not-a-number -- has no nearest row. Answering
+  /* A query with no nearest row -- a disconnected sensor reading
+     not-a-number, or a store whose every take holds a value that is not
+     finite, which only a write into the arena can make -- gets none. Answering
      with the first demonstration would give a classifier a confident wrong
      class and a healthy status, so it refuses instead, as iris_knn_predict
      does: the substitute, and IRIS_NAN_TRAPPED. */

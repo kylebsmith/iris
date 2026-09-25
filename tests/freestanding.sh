@@ -166,7 +166,12 @@ int iris_probe(void) {
   iris_internal_span(k, 0, &lo, &hi);
   iris_internal_neighbour_scale(k, inv);
   SINKF += lo + hi + iris_internal_centre(k, 0)
-         + iris_internal_distance2(k, inv, xn, in);
+         + iris_internal_distance2(k, inv, xn, in)
+         + iris_internal_distance2_far(k, inv, xn, in);
+  { float bd[2]; int bi[2];
+    bd[0] = 1.0f; bd[1] = 2.0f; bi[0] = 0; bi[1] = 1;
+    iris_internal_knn_insert(bd, bi, 2, 2, SINKF);
+    SINKI += bi[0]; }
   SINKI += iris_internal_nearest(k, in);
   SINKU += (unsigned long)iris_save_size(k);
   n = iris_save(k, file, sizeof file);
