@@ -35,7 +35,8 @@
         as a collapse; a real collapse still is, as IRIS_SOLVE_COLLAPSED, and
         does not stop warm training
      6. the scratch works at every byte offset, with every byte of it in use
-     7. a solve ends a sliced run that is still in flight
+     7. a solve ends a sliced run that is still in flight, and leaves the
+        progress fields describing the solve: no epochs, finished
      8. a solve whose output weights lie past IRIS_W_LIMIT saves, loads and
         plays; warm training from it reports the divergence, and iris_train
         starts over
@@ -674,6 +675,26 @@ int main(int argc, char **argv) {
              kept ? "kept" : "DISTURBED", ret, h, iris_train_busy(k), more, weight_hash(k) == h ? "kept" : "MOVED");
     check("a solve ends a sliced run in flight", kept && ret == r->ret && h == r->weights
           && !iris_train_busy(k) && !more && weight_hash(k) == h, d);
+
+    /* and afterwards the progress fields describe the solve, not the run
+       before it: no epochs, and a finished fit. The same on an instrument
+       that never trained any other way. */
+    iris_train(k);
+    const int before_epochs = iris_train_epochs_done(k);
+    solve_recipe(k, r);
+    const int ep = iris_train_epochs_done(k);
+    const float pr = iris_train_progress(k);
+    iris *f = iris_init(arena, sizeof arena, r->ni, r->nh, r->no, 64, r->seed);
+    record_recipe(f, r);
+    const float pr_fresh = iris_train_progress(f);
+    solve_recipe(f, r);
+    snprintf(d, sizeof d, "iris_train ran %d epochs; after a solve %d, progress %g; "
+             "fresh: progress %g, after a solve %d epochs, progress %g",
+             before_epochs, ep, (double)pr, (double)pr_fresh, iris_train_epochs_done(f),
+             (double)iris_train_progress(f));
+    check("after a solve, the progress fields describe the solve", before_epochs > 0
+          && ep == 0 && pr == 1.0f && pr_fresh == 0.0f
+          && iris_train_epochs_done(f) == 0 && iris_train_progress(f) == 1.0f, d);
   }
 
   /* ---- 8. weights past IRIS_W_LIMIT make an ordinary instrument ------------

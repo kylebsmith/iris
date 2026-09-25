@@ -2479,11 +2479,13 @@ IRIS_API float iris_train_progress(const iris *k) { if (!k) return 0.0f;
   /* "Not running" covers two situations that need opposite answers: a run
      that FINISHED is 1.0, and a run that never STARTED is 0.0. Returning 1.0
      for both drew a student's progress bar full before they pressed anything,
-     empty one slice later, then full again. tr_ceiling and tr_done are both 0
-     only on a fresh or freshly-loaded instrument -- iris_train_begin sets the
-     ceiling first thing -- so they are what tells the two apart. */
+     empty one slice later, then full again. After any gradient run the
+     ceiling is set -- iris_train_begin sets it first thing -- and a
+     closed-form solve, which has no epochs and no ceiling, leaves its ledger
+     behind (res_epochs 1, PART 8d). All three are 0 only on a fresh or
+     freshly-loaded instrument, so they are what tells the two apart. */
   if (!k->tr_running)
-    return (k->tr_ceiling > 0 || k->tr_done > 0) ? 1.0f : 0.0f;
+    return (k->tr_ceiling > 0 || k->tr_done > 0 || k->res_epochs > 0) ? 1.0f : 0.0f;
   if (k->tr_ceiling <= 0) return 1.0f;
   {
     float f = (float)k->tr_done / (float)k->tr_ceiling;
@@ -2499,7 +2501,8 @@ IRIS_API int iris_train_busy(const iris *k) { if (!k) return 0; return k->tr_run
    progress callback returning 0. iris_get_status() distinguishes the guard;
    this distinguishes "ran to completion" from "stopped for a good reason",
    which iris_train_progress() deliberately cannot, because it reports 1.0 for
-   any finished run. A refused call leaves it where it was. */
+   any finished run. A refused call leaves it where it was, and a closed-form
+   solve (PART 8d), which runs no epochs, sets it to 0. */
 IRIS_API int iris_train_epochs_done(const iris *k) { if (!k) return 0; return k->tr_done; }
 
 /* Train and immediately reroll from a fresh random start. This is the
@@ -3277,6 +3280,10 @@ IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
   iris_zero_velocity(k);
   k->tr_running = 0;         /* end any sliced run: its next slice would
                                  otherwise go on training over the solve */
+  /* the progress fields describe this fit, not the gradient run before it:
+     no epochs and no ceiling, and iris_train_progress reads the solve's
+     ledger (res_epochs 1, below) as a finished fit */
+  k->tr_done = 0; k->tr_ceiling = 0; k->tr_n_ex = 0; k->tr_ref = 0.0f;
   k->trained = 1;
   k->fitted  = 1;                    /* a closed-form solve IS a fit */
   k->status  = doublings > 0 ? IRIS_RIDGE_ESCALATED : IRIS_STATUS_OK;
