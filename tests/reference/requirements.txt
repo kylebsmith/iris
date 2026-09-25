@@ -1,0 +1,9 @@
+# The Python packages tests/reference/check.py was checked with (Python 3.12),
+# pinned so every run compares against the same reference. NumPy is required;
+# scikit-learn adds one comparison of the neighbour blend and is optional.
+#   python3 -m pip install -r tests/reference/requirements.txt
+numpy==2.2.4
+scikit-learn==1.8.0
+scipy==1.16.1
+joblib==1.5.3
+threadpoolctl==3.6.0
