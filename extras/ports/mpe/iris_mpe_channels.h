@@ -66,7 +66,7 @@ typedef struct {
   uint32_t    shared;   /* notes that had to share. NOT allowed to be ignored */
 } iris_mpe_pool;
 
-static void iris_mpe_pool_init(iris_mpe_pool *p, int n) {
+static inline void iris_mpe_pool_init(iris_mpe_pool *p, int n) {
   p->n = (uint8_t)n; p->seq = 0; p->shared = 0;
   for (int i = 0; i < IRIS_MPE_MAX_MEMBERS; ++i) {
     p->c[i].active = 0; p->c[i].last_note = -1; p->c[i].freed = 0;
@@ -76,7 +76,7 @@ static void iris_mpe_pool_init(iris_mpe_pool *p, int n) {
 /* Choose a channel for `note`. Never fails, because the spec does not permit
    it to fail. *shared is set to 1 when the returned channel is already
    carrying a note, in which case the caller MUST surface that. */
-static int iris_mpe_pool_take(iris_mpe_pool *p, int note, int *shared) {
+static inline int iris_mpe_pool_take(iris_mpe_pool *p, int note, int *shared) {
   int best = 0, i;
   uint8_t min_active = 255;
 
@@ -103,7 +103,7 @@ taken:
   return best;
 }
 
-static void iris_mpe_pool_give(iris_mpe_pool *p, int ch, int note) {
+static inline void iris_mpe_pool_give(iris_mpe_pool *p, int ch, int note) {
   if (ch < 0 || ch >= p->n) return;
   if (p->c[ch].active) p->c[ch].active--;
   p->c[ch].last_note = (int16_t)note;

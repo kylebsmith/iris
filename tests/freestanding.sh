@@ -3,11 +3,21 @@
 # flags it needs, and the one target where the list is not empty.
 #
 # RUN (from anywhere; it writes only to a temporary directory):
-#     sh tests/freestanding.sh
-# The exit status is non-zero if any check fails. A compiler that is not
-# installed prints SKIP; a SKIP is not a pass for that compiler.
-# The Linux rows need Docker and an image with gcc and clang in it, named in
-# IRIS_LINUX_IMAGE (any Debian image with both installed will do):
+#     sh tests/freestanding.sh            or   sh build.sh freestanding
+# The exit status is non-zero if any check fails.
+# THE HOST COMPILERS. With CC set, the host rows test that compiler alone
+# (CC=gcc-15 sh tests/freestanding.sh). Without it they test each distinct
+# compiler among cc, Homebrew's clang (/opt/homebrew/opt/llvm/bin/clang),
+# clang, gcc-15 and gcc that is installed; two names for one compiler (on
+# macOS, gcc and clang are both Apple clang) are tested once.
+# THE ESP32-S3 ROWS need the esp32 Arduino core, found under
+# ~/Library/Arduino15 (macOS) or ~/.arduino15 (Linux). Without it they print
+# SKIP; a SKIP is not a pass. With IRIS_REQUIRE containing the word xtensa
+# (as continuous integration sets it where the core is installed), a missing
+# toolchain fails instead.
+# The Linux rows of section 4 need Docker and an image with gcc and clang in
+# it, named in IRIS_LINUX_IMAGE (any Debian image with both installed will
+# do); they are for checking Linux from a Mac, and are skipped otherwise:
 #     IRIS_LINUX_IMAGE=my-debian-with-compilers sh tests/freestanding.sh
 #
 # THE CLAIM. A translation unit that calls every public function in iris.h,
@@ -199,6 +209,17 @@ PROBE
 undefined() { nm -u "$1" | awk '{print $NF}' | sort -u | tr '\n' ' ' | sed 's/ *$//'; }
 case $(uname -s) in Darwin) ENTRY=_iris_probe ;; *) ENTRY=iris_probe ;; esac
 LLVM=/opt/homebrew/opt/llvm/bin/clang
+# the host compilers: CC alone, or each distinct installed compiler
+if [ -n "${CC:-}" ]; then HOSTCC=$CC; else
+  HOSTCC=""; seen=""
+  for c in cc "$LLVM" clang gcc-15 gcc; do
+    command -v "$c" >/dev/null 2>&1 || continue
+    v=$("$c" --version 2>/dev/null | head -1)
+    case "$seen" in *"|$v|"*) continue ;; esac
+    seen="$seen|$v|"; HOSTCC="$HOSTCC $c"
+  done
+fi
+requires() { case " ${IRIS_REQUIRE:-} " in *" $1 "*) return 0 ;; esac; return 1; }
 
 # ---- 1. the probe really calls every public function ---------------------
 missing=""
@@ -215,9 +236,13 @@ fi
 
 # ---- 2. zero undefined symbols, no warnings, a real link ------------------
 echo "2. zero undefined symbols on the host, no warnings, links with no C library"
-for pair in "Apple clang:cc" "clang 22:$LLVM" "gcc-15:gcc-15"; do
-  name=${pair%%:*}; cc=${pair#*:}
-  if ! command -v "$cc" >/dev/null 2>&1; then echo "  SKIP  $name not installed"; continue; fi
+label_of() { case "$1" in /opt/homebrew/*) echo "Homebrew $(basename "$1")" ;; *) basename "$1" ;; esac; }
+for cc in $HOSTCC; do
+  name=$(label_of "$cc")
+  if ! command -v "$cc" >/dev/null 2>&1; then
+    [ -n "${CC:-}" ] && { echo "  FAIL  $cc (from CC) is not installed"; fail=1; }
+    continue
+  fi
   if "$cc" --version 2>&1 | grep -qi clang; then
     FLAGS="-ffreestanding -fno-stack-protector"
   else
@@ -230,7 +255,7 @@ for pair in "Apple clang:cc" "clang 22:$LLVM" "gcc-15:gcc-15"; do
         D=""; [ $api = every ] && D="-DIRIS_API="
         if ! "$cc" -x $lang $O $FLAGS $D -Wall -Wextra -I"$ROOT" -c "$T/every.c" \
              -o "$T/p.o" > "$T/err" 2>&1; then
-          bad="$bad [$O $api: did not compile]"; continue
+          bad="$bad [$O $api: did not compile: $(grep -m1 -i 'error' "$T/err")]"; continue
         fi
         # warnings count only in the ordinary build; -DIRIS_API= is a probe device
         [ $api = default ] && grep -q "warning:" "$T/err" && \
@@ -262,12 +287,16 @@ flagcheck() { # <name> <cc> <flag to drop> <flags...>
   if [ -n "$U" ]; then printf '  NEEDED  %-38s %-12s without it: %s\n' "$drop" "$name" "$U"
   else printf '  NOTE    %-38s %-12s not needed here\n' "$drop" "$name"; fi
 }
-for pair in "Apple clang:cc" "clang 22:$LLVM"; do
-  name=${pair%%:*}; cc=${pair#*:}
-  flagcheck "$name" "$cc" -ffreestanding -fno-stack-protector
-  flagcheck "$name" "$cc" -fno-stack-protector -ffreestanding
+for cc in $HOSTCC; do
+  command -v "$cc" >/dev/null 2>&1 || continue
+  name=$(label_of "$cc")
+  if "$cc" --version 2>&1 | grep -qi clang; then
+    flagcheck "$name" "$cc" -ffreestanding -fno-stack-protector
+    flagcheck "$name" "$cc" -fno-stack-protector -ffreestanding
+  else
+    flagcheck "$name" "$cc" -fno-tree-loop-distribute-patterns -ffreestanding -fno-stack-protector
+  fi
 done
-flagcheck gcc-15 gcc-15 -fno-tree-loop-distribute-patterns -ffreestanding -fno-stack-protector
 
 # ---- 4. Linux, in a container --------------------------------------------
 echo "4. Linux gcc and clang"
@@ -305,10 +334,16 @@ fi
 
 # ---- 5. the ESP32-S3 ------------------------------------------------------
 echo "5. the ESP32-S3's own compiler"
-XT=$(find "$HOME/Library/Arduino15/packages/esp32" -name 'xtensa-esp32s3-elf-gcc' -type f 2>/dev/null | head -1)
-XNM=$(find "$HOME/Library/Arduino15/packages/esp32" -name 'xtensa-esp32s3-elf-nm' -type f 2>/dev/null | head -1)
+XT=$(find "$HOME/Library/Arduino15/packages/esp32" "$HOME/.arduino15/packages/esp32" \
+       -name 'xtensa-esp32s3-elf-gcc' -type f 2>/dev/null | head -1)
+XNM=$(find "$HOME/Library/Arduino15/packages/esp32" "$HOME/.arduino15/packages/esp32" \
+       -name 'xtensa-esp32s3-elf-nm' -type f 2>/dev/null | head -1)
 if [ -z "$XT" ] || [ -z "$XNM" ]; then
-  echo "  SKIP  no ESP32-S3 toolchain installed (install the esp32 Arduino core)"
+  if requires xtensa; then
+    echo "  FAIL  no ESP32-S3 toolchain installed, and IRIS_REQUIRE asks for it"; fail=1
+  else
+    echo "  SKIP  no ESP32-S3 toolchain installed (install the esp32 Arduino core)"
+  fi
 else
   XF="-std=c99 -ffreestanding -fno-stack-protector -fno-tree-loop-distribute-patterns -mlongcalls"
   # every function: the list the masthead of iris.h states, in nm's order

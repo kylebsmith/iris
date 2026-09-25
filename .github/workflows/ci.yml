@@ -1,90 +1,282 @@
 name: ci
 
-# The whole test suite is one command with no dependencies, so CI is cheap and
-# there is no excuse for the determinism contract to rot silently.
-on: [push, pull_request]
+# Every pull request, every push to master, and every release tag (through
+# release.yml). Each command is `sh build.sh <arm>`, the command a
+# contributor runs; the workflow only chooses the machine and the compiler.
+# Each arm is its own step, so a failing arm is named and the arms after it
+# still run. ci-ok passes only when every job passed, so it is the one check
+# a branch rule needs to require.
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  audit:
-    name: audit (${{ matrix.os }} / ${{ matrix.cc }})
+  test:
+    name: test ${{ matrix.os }} ${{ matrix.compiler }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        cc: [gcc, clang]
+        # ubuntu-latest is 64-bit x86, the other two 64-bit ARM.
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+        compiler: [gcc, clang]
+    env:
+      COMPILER: ${{ matrix.compiler }}
     steps:
       - uses: actions/checkout@v4
-      # The `sketches` arm below compares the students' ten copies of iris.h
-      # against this one. Without this second checkout it had nothing to
-      # compare and printed SKIP, so the step could only ever pass -- which is
-      # exactly the failure it was written to catch.
-      # continue-on-error is NOT a way to let this pass quietly. If the checkout
-      # fails, IRIS_STARTER below points at a directory that does not exist and
-      # `build.sh sketches` exits 1 under CI with a sentence saying why. The
-      # difference is WHERE the failure lands: without this, the job dies at
-      # step 2 on a raw git error before a single test runs. With it, the job
-      # fails at the check that actually cares, with a message a person can act
-      # on. Publish iris-starter before iris and neither happens.
-      - uses: actions/checkout@v4
-        continue-on-error: true
-        with:
-          repository: kylebsmith/iris-starter
-          path: _starter
-      - name: audit, mpe, sinks
+
+      - name: Linux packages (compilers, LLVM tools, Cortex-M and AVR cross compilers)
+        if: runner.os == 'Linux'
         run: |
-          export CC=${{ matrix.cc }}
-          export IRIS_STARTER="$GITHUB_WORKSPACE/_starter"
-          sh build.sh audit
-          sh build.sh mpe
-          sh build.sh sinks
-          sh build.sh claims
-          sh build.sh bloat
-          sh build.sh coverage
-          sh build.sh sketches
-          sh build.sh tu
-          # regressions is one test per reviewed defect, each written before its
-          # fix; fuzz is the only arm that encodes none of our expectations and
-          # lets AddressSanitizer decide. Neither was run here, so the net
-          # against reintroducing 21 specific fixed defects was the one net CI
-          # did not hold.
-          sh build.sh regressions
-          sh build.sh fuzz
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            gcc g++ clang llvm gcc-arm-none-eabi binutils-arm-none-eabi gcc-avr avr-libc
+          # The sanitizers map memory at fixed places that the kernel's
+          # default address randomisation on these runners can collide with.
+          sudo sysctl -w vm.mmap_rnd_bits=28
 
-  # The library claims zero external symbols. That claim is checkable in one
-  # command, so check it on every push rather than asserting it in a README.
-  freestanding:
-    name: zero external symbols
+      - name: Homebrew gcc (on macOS, plain gcc is Apple clang)
+        if: runner.os == 'macOS' && matrix.compiler == 'gcc'
+        run: brew install gcc
+
+      - name: Choose the compiler and prove it is the one this cell names
+        id: cc
+        run: |
+          case "$RUNNER_OS/$COMPILER" in
+            macOS/gcc) cc=gcc-15 ;;
+            *) cc=$COMPILER ;;
+          esac
+          "$cc" --version
+          if "$cc" --version | grep -qi clang; then kind=clang; else kind=gcc; fi
+          if [ "$kind" != "$COMPILER" ]; then
+            echo "the $COMPILER cell's compiler, $cc, is $kind"
+            exit 1
+          fi
+          echo "CC=$cc" >> "$GITHUB_ENV"
+          # Linux has every cross compiler installed above, so a missing one
+          # is a failure there rather than a skip.
+          if [ "$RUNNER_OS" = Linux ]; then
+            echo "IRIS_REQUIRE=cross-clang arm-none-eabi avr" >> "$GITHUB_ENV"
+          fi
+
+      - name: audit (golden hash, exact checks, guards with and without)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh audit
+      - name: regressions
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh regressions
+      - name: coverage (the refusal paths)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh coverage
+      - name: load (the save format as a parser)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh load
+      - name: train
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh train
+      - name: elm (the closed-form trainer)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh elm
+      - name: playing
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh playing
+      - name: portability
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh portability
+      - name: recipes (the starter kit's pinned hashes)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh recipes
+      - name: tu (two translation units, different maxima)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh tu
+      - name: examples (-Werror, and run)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh examples
+      - name: tiny (iris_train written again, agreeing to the bit)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh tiny
+      - name: noheap (zero allocator calls, with positive controls)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh noheap
+      - name: determinism (golden and starter hashes at every level and contraction setting, GNU C for gcc, positive control)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh determinism
+      - name: pragma (contraction off for iris only)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh pragma
+      - name: freestanding (no C library needed)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh freestanding
+      # The ESP32-S3's xtensa compiler is checked in the arduino job below,
+      # which installs it; here the Linux cells check Cortex-M, AVR and the
+      # clang cross targets, including the refusal of 32-bit x87.
+      - name: targets (every processor builds; x87 is refused)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh targets
+      - name: mpe (the polyphonic-expression port, byte by byte)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh mpe
+      - name: sinks (the control-change and Open Sound Control ports)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh sinks
+      # Homebrew gcc on macOS ships no sanitizer runtime.
+      - name: fuzz (random call sequences under AddressSanitizer)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' && !(runner.os == 'macOS' && matrix.compiler == 'gcc') }}
+        run: sh build.sh fuzz 2000
+      - name: sanitize (every test program under AddressSanitizer and UndefinedBehaviorSanitizer)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' && !(runner.os == 'macOS' && matrix.compiler == 'gcc') }}
+        run: sh build.sh sanitize
+      - name: threads (ThreadSanitizer, with its positive control)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' && matrix.compiler == 'clang' }}
+        run: sh build.sh threads
+
+  fuzz-load:
+    name: fuzz-load (libFuzzer on iris_load, 300 seconds)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CC: clang
     steps:
       - uses: actions/checkout@v4
-      # This job used to carry its OWN copy of the probe, and the copy drifted:
-      # tools/check-claims.sh compiles with -fno-math-errno and
-      # -fno-tree-loop-distribute-patterns on GNU compilers, because without
-      # them gcc emits calls to memcpy, memset and sqrtf that the library never
-      # wrote -- and this job omitted both. So `sh build.sh claims` passed while
-      # the job asserting the same thing failed on ubuntu's real gcc. Two
-      # implementations of one claim is how that happens. There is one now.
-      - run: sh build.sh claims
+      - name: Linux packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends clang llvm
+          sudo sysctl -w vm.mmap_rnd_bits=28
+      - name: fuzz iris_load past the checksum
+        run: sh build.sh fuzz-load 300
+      - name: keep the input that failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-load-artifacts
+          path: build/fuzz-load/artifacts/
+          if-no-files-found: ignore
 
-  # Determinism is a contract, not a hope. This job runs FIVE combinations --
-  # -O0 -O1 -O2 -O3 -Os, all with -ffp-contract=off -- and every one must
-  # produce the pinned hashes. (The wider 20-combination sweep that includes
-  # -ffp-contract=fast, where four legitimately differ, is documented in the
-  # header and is not what runs here.)
-  determinism:
-    name: golden hashes across optimisation levels
+  cov:
+    name: cov (line and branch coverage of iris.h, with thresholds)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CC: clang
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          for O in -O0 -O1 -O2 -O3 -Os; do
-            echo "== $O -ffp-contract=off =="
-            cc -std=c99 $O -ffp-contract=off -I. -o build_audit tests/audit.c -lm 2>/dev/null || \
-              { mkdir -p build; cc -std=c99 $O -ffp-contract=off -I. -o build_audit tests/audit.c -lm; }
-            # NOT `./build_audit | grep ...`: audit.c prints the same label text on
-            # PASS and on FAIL, and a pipe hands the exit status to grep, so that
-            # form matched a FAILING golden hash and reported success.
-            ./build_audit > audit.out || { cat audit.out; exit 1; }
-            grep -qE '^PASS  golden blob' audit.out || { cat audit.out; exit 1; }
+      - name: Linux packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends clang llvm
+      - name: coverage, the union over every test program
+        run: |
+          set -o pipefail
+          sh build.sh cov | tee build-cov.txt
+      - name: report into the job summary
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -f build-cov.txt ]; then
+            { echo '```'; cat build-cov.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  arduino:
+    name: arduino (iris_smallest for ESP32-S3 and Uno; the xtensa compiler)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      ARDUINO_CLI_VERSION: 1.5.1
+      ESP32_CORE: esp32:esp32@3.3.3
+      AVR_CORE: arduino:avr@1.8.7
+      ESP32_INDEX: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+    steps:
+      - uses: actions/checkout@v4
+      - name: arduino-cli
+        run: |
+          mkdir -p "$RUNNER_TEMP/arduino-cli"
+          curl -fsSL "https://downloads.arduino.cc/arduino-cli/arduino-cli_${ARDUINO_CLI_VERSION}_Linux_64bit.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP/arduino-cli"
+          echo "$RUNNER_TEMP/arduino-cli" >> "$GITHUB_PATH"
+      - name: the cores, kept between runs
+        uses: actions/cache@v4
+        with:
+          path: ~/.arduino15
+          key: arduino15-${{ env.ESP32_CORE }}-${{ env.AVR_CORE }}
+      - name: the pinned cores (esp32 brings the ESP32-S3 compiler the Arduino IDE uses)
+        run: |
+          arduino-cli core update-index --additional-urls "$ESP32_INDEX"
+          arduino-cli core install "$ESP32_CORE" --additional-urls "$ESP32_INDEX"
+          arduino-cli core install "$AVR_CORE"
+      - name: examples/iris_smallest for esp32s3, no warning from this repository
+        run: |
+          arduino-cli compile --fqbn esp32:esp32:esp32s3 --library "$GITHUB_WORKSPACE" \
+            --warnings all examples/iris_smallest 2>&1 | tee esp32s3.log
+          if grep -E '(iris\.h|iris_smallest\.ino)[^ ]*: warning:' esp32s3.log; then exit 1; fi
+      - name: examples/iris_smallest for uno, no warning from this repository
+        if: ${{ !cancelled() }}
+        run: |
+          arduino-cli compile --fqbn arduino:avr:uno --library "$GITHUB_WORKSPACE" \
+            --warnings all examples/iris_smallest 2>&1 | tee uno.log
+          if grep -E '(iris\.h|iris_smallest\.ino)[^ ]*: warning:' uno.log; then exit 1; fi
+      # The cores installed above hold xtensa-esp32s3-elf-gcc and avr-gcc, so
+      # the toolchain scripts can require them here.
+      - name: targets on the ESP32-S3 and AVR compilers
+        if: ${{ !cancelled() }}
+        env:
+          IRIS_REQUIRE: xtensa avr
+        run: sh build.sh targets
+      - name: freestanding on the ESP32-S3 compiler (the exact libgcc symbol list)
+        if: ${{ !cancelled() }}
+        env:
+          IRIS_REQUIRE: xtensa
+        run: sh build.sh freestanding
+      - name: pragma scope on the ESP32-S3 compiler
+        if: ${{ !cancelled() }}
+        env:
+          IRIS_REQUIRE: xtensa
+        run: sh build.sh pragma
+
+  reference:
+    name: reference (a binary64 reimplementation, in Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CC: gcc
+      IRIS_REQUIRE_REFERENCE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: the pinned packages
+        run: python3 -m pip install -r tests/reference/requirements.txt
+      - name: python3 tests/reference/run.py --quick, where a skip is a failure
+        run: sh build.sh reference
+
+  ci-ok:
+    name: ci-ok
+    if: ${{ always() }}
+    needs: [test, fuzz-load, cov, arduino, reference]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: every job above passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for r in $RESULTS; do
+            if [ "$r" != success ]; then exit 1; fi
           done

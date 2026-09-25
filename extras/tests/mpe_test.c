@@ -61,13 +61,13 @@ static void cap_clear(cap *c) { c->n = 0; c->nb = 0; c->refused = 0; }
 static char g_why[512];
 static int stream_is(cap *c, const unsigned char *want, int n) {
   int i;
-  if (c->nb != n) { sprintf(g_why, "%d bytes, wanted %d", c->nb, n); return 0; }
+  if (c->nb != n) { snprintf(g_why, sizeof g_why, "%d bytes, wanted %d", c->nb, n); return 0; }
   for (i = 0; i < n; ++i)
     if (c->b[i] != want[i]) {
-      sprintf(g_why, "byte %d is %02X, wanted %02X", i, c->b[i], want[i]);
+      snprintf(g_why, sizeof g_why, "byte %d is %02X, wanted %02X", i, c->b[i], want[i]);
       return 0;
     }
-  sprintf(g_why, "%d bytes, %d messages", c->nb, c->n);
+  snprintf(g_why, sizeof g_why, "%d bytes, %d messages", c->nb, c->n);
   return 1;
 }
 
@@ -509,7 +509,7 @@ int main(void) {
        "channel 1 carries configuration and nothing else");
     ok("no Polyphonic Key Pressure anywhere — it is PROHIBITED on members",
        poly == 0, "0 x 0xAn messages (v1.1 Appendix E)");
-    sprintf(buf, "%d messages, and the FIFO measured on the S3 holds 16 packets", worst);
+    snprintf(buf, sizeof buf, "%d messages, and the FIFO measured on the S3 holds 16 packets", worst);
     ok("worst case in one send() is the 5-message note-on burst",
        worst == IRIS_MPE_MAX_MSGS_PER_VOICE, "%s", buf);
   }

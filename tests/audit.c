@@ -1,9 +1,18 @@
 /* audit.c — does the thing actually work?
-   Each check prints PASS or FAIL and a number you can argue with.
-   Build:  cc -O2 -o audit audit.c -lm && ./audit
-   ./build.sh audit also runs the guards-are-inert A/B (tests/guards_ab.c),
-   which needs two builds of the core and so lives outside this binary. */
+   Each check prints PASS or FAIL and a number you can argue with. The
+   timing tables at the end are a report of this machine's speed and never
+   decide a pass or a fail.
 
+   Build and run from the repository root:
+     sh build.sh audit
+   or by hand (the threads are for check 36, four instruments at once):
+     cc -std=c99 -O2 -Wall -Wextra -pthread -o build/audit tests/audit.c && ./build/audit
+   sh build.sh audit also runs the guards-are-inert comparison
+   (tests/guards_ab.c), which needs two builds of the core and so lives
+   outside this binary. */
+
+/* pthread.h and clock_gettime are POSIX, not C99; ask for them. */
+#define _POSIX_C_SOURCE 200809L
 #include "../iris.h"
 /* This file computes its own demonstrations (truth() below), and the golden
    blob check pins an instrument trained on them. iris.h switches fused
@@ -17,25 +26,15 @@
 #pragma GCC optimize ("fp-contract=off")
 #endif
 
-/* HOST -> ESP32-S3 SCALING. This was a bare 32.0 sprinkled through the cost
-   tables, and it was wrong by ~8x. The ONE on-device training measurement in
-   the repository (hardware/board/BRINGUP-LOG.md:198-209) puts the real ratio
-   near 270x: 600-epoch backprop measured 321.0 ms at 20 examples and 3,204.6 ms
-   at 200 on the board, dead linear at 16.03 ms per example per 600 epochs.
-   At 32x the table below implied ~29 ms where the board measures 321 ms, and a
-   reader would quote our own output back at us.
-
-   EVERY FIGURE IN THE "est. S3" COLUMNS IS A SCALING OF A HOST MEASUREMENT,
-   NOT A READING FROM THE BOARD. Two of these have hardware readings behind
-   them and two do not. backprop-600: 321 ms at 20 examples (BRINGUP-LOG).
-   iris_train: 595 ms at 4 demonstrations and 2.7-3.0 s at 8 to 20, from
-   device_torture test 5, which times iris_train(). iris_train_elm really is
-   UNMEASURED on device.                                                    */
-#define IRIS_S3_SCALE 270.0
+/* <math.h> for NAN only: a not-a-number is written NAN, never 0.0f/0.0f, so
+   the float-divide-by-zero sanitizer can run over this whole file. */
+#include <math.h>
+#include <pthread.h>
+#include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <stdarg.h>
 
 static int failures = 0;
 static void ok(const char *name, int pass, const char *fmt, ...) {
@@ -44,23 +43,14 @@ static void ok(const char *name, int pass, const char *fmt, ...) {
   vprintf(fmt, a); printf("\n"); va_end(a);
   if (!pass) failures++;
 }
-/* Wall clock, portably. clock_gettime(CLOCK_MONOTONIC, ...) is POSIX and is not
-   available under MSVC, which would stop a Windows student running the test
-   suite at all. C89's clock() is in <time.h> everywhere; it measures processor
-   time rather than wall time, which for these single-threaded, CPU-bound
-   benchmarks is the same number to well within the precision we quote.
-   The library itself needs none of this — iris.h includes only <stddef.h> and
-   <stdint.h> and compiles anywhere a C99 compiler exists, MSVC included. */
-#if defined(_WIN32) || !defined(CLOCK_MONOTONIC)
-static double now_ms(void) { return (double)clock() * 1000.0 / (double)CLOCKS_PER_SEC; }
-#else
+/* Wall clock, for the timing report only. */
 static double now_ms(void) {
   struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
-  return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
+  return (double)t.tv_sec * 1000.0 + (double)t.tv_nsec / 1e6;
 }
-#endif
 
-/* fnv1a-32 — the same hash E8 recorded its determinism envelope with. */
+/* FNV-1a, 32 bits (the Fowler-Noll-Vo hash): a short, well-known hash that
+   tells two byte sequences apart, used for every pinned value in this file. */
 static uint32_t fnv1a(const void *p, size_t n) {
   const unsigned char *b = (const unsigned char *)p;
   uint32_t h = 2166136261u;
@@ -94,15 +84,15 @@ static size_t instrument_bytes(unsigned char *buf, size_t n) {
 #define CAP 256
 
 /* The reroll checks (6 and 7) run a deliberately under-constrained model:
-   few hidden units, few examples. experiment.c's sweep marks this corner
-   "<-- lively"; the 12-hidden / 20-example model the rest of the audit uses
-   is at the other end, where every random start converges to the same
-   answer. See docs/adr/0001-reroll-check-probes-the-gaps.md. */
+   8 hidden units, the fewest iris_init accepts, and 5 examples, the corner
+   where different random starts disagree most in the gaps. The 12-hidden /
+   20-example model the rest of the audit uses sits at the other end, where
+   every random start converges to nearly the same answer. */
 #define RR_HID  8
 #define RR_EX   5
 #define RR_EP   800
 #define RR_SEEDS 8
-#define RR_GRID 21                       /* 21 x 21 = 441 probes, as experiment.c */
+#define RR_GRID 21                       /* 21 x 21 = 441 probes */
 
 static unsigned char arena_a[IRIS_ARENA(NI, NH, NO, CAP)];
 static unsigned char arena_b[IRIS_ARENA(NI, NH, NO, CAP)];
@@ -128,8 +118,8 @@ static int state_identical(const iris *a, const iris *b) {
 /* forward: the truth() the corrections perturb is defined just below */
 static void truth(float x, float y, float *o);
 
-/* the E4 10-correction chain: scattered points, each asking +0.15 on a
-   rotating output — a musician reshaping the instrument bit by bit */
+/* a chain of ten corrections: scattered points, each asking +0.15 on a
+   rotating output -- a musician reshaping the instrument bit by bit */
 static void chain_correction(int i, float *nin, float *nout) {
   float x = 0.11f + 0.37f * (float)(i + 1);  x -= (float)(int)x;
   float y = 0.05f + 0.73f * (float)(i + 1);  y -= (float)(int)y;
@@ -146,8 +136,9 @@ static void truth(float x, float y, float *o) {
   o[2] = 0.2f + 0.6f  * (x * y);
 }
 
-/* The same scattered-but-repeatable example set experiment.c uses, so the two
-   programs are measuring the same thing on the same data. */
+/* A scattered but repeatable example set: example i sits at
+   ((7919 i mod 97) / 97, (6131 i mod 89) / 89), so the points fill the square
+   without clumping and every run sees the same ones. */
 static void load_examples(iris *k, int n) {
   iris_clear(k);
   for (int i = 0; i < n; ++i) {
@@ -182,7 +173,7 @@ static float grid_rmse_of(iris *k) {
   return iris_internal_sqrt(se / (float)c);
 }
 
-/* the six hostile scenarios from the E1 campaign, for check 21 -------------- */
+/* six hostile example sets, for check 21 --------------------------------------- */
 static void load_dup256(iris *k) {          /* one point, 256 times */
   iris_clear(k);
   float in[NI] = { 0.5f, 0.5f }, out[NO];
@@ -200,7 +191,7 @@ static void load_clusters(iris *k) {        /* two tight blobs of 25 */
     iris_record(k, in, out);
   }
 }
-static void load_outlier(iris *k) {         /* check-9-style 1e6 outliers */
+static void load_outlier(iris *k) {         /* the 1e6 outliers of check 9 */
   iris_clear(k);
   for (int i = 0; i < 50; ++i) {
     float u = (i % 3 == 0) ? 0.5f : (float)(i % 17) / 17.0f;
@@ -246,9 +237,8 @@ static int nan_scan_of(iris *k) {
    Report it separately for probes that sit on demonstrated ground and probes
    out in the gaps.
 
-   "near demos" and "in the gaps" mean exactly what they mean in experiment.c:
-   novelty below 0.15 and above 0.35 respectively. Same words, same numbers,
-   two programs. If those bands ever move, they move in both files.          */
+   "Near demos" means novelty below 0.15 and "in the gaps" novelty above
+   0.35 (iris_novelty, PART 7); probes in between count as neither.        */
 #define RR_NEAR_BAND 0.15f
 #define RR_FAR_BAND  0.35f
 
@@ -286,15 +276,250 @@ static void reroll_spread(iris *k, float *near_spread, int *near_n,
   *gap_spread  = cf ? sf / (float)cf : -1.0f;
 }
 
-int main(void) {
+/* --- the arena, measured from the pointers iris_init leaves behind --------
+   IRIS_ARENA is the size a caller declares; iris_init carves the structure
+   and twenty arrays out of whatever it is handed. carve_check does not ask
+   the library how big anything is. It takes each pointer iris_init stored,
+   the number of elements that array must hold for this shape (the counts
+   the structure's own comments give), and checks that every array lies
+   wholly inside [mem, mem + bytes), is aligned for its type, and overlaps
+   no other. The furthest byte any array reaches is what iris_init really
+   needed, which *reach returns. */
+typedef struct { const unsigned char *lo; size_t bytes, align; } carve;
+static int carve_check(unsigned char *mem, size_t bytes, int ni, int nh,
+                       int no, int cap, size_t *reach) {
+  iris *k = iris_init(mem, bytes, ni, nh, no, cap, 1u);
+  if (!k) return 0;
+  const size_t F = sizeof(float), I = sizeof(int32_t);
+  const size_t hi_ = (size_t)nh * (size_t)ni, ho_ = (size_t)no * (size_t)nh;
+  const size_t n_in = (size_t)ni, n_hid = (size_t)nh, n_out = (size_t)no, c = (size_t)cap;
+  const carve a[] = {
+    { (const unsigned char *)k,         sizeof(iris), sizeof(void *) },
+    { (const unsigned char *)k->w1,     F * hi_,   F }, { (const unsigned char *)k->b1,    F * n_hid, F },
+    { (const unsigned char *)k->w2,     F * ho_,   F }, { (const unsigned char *)k->b2,    F * n_out, F },
+    { (const unsigned char *)k->v_w1,   F * hi_,   F }, { (const unsigned char *)k->v_b1,  F * n_hid, F },
+    { (const unsigned char *)k->v_w2,   F * ho_,   F }, { (const unsigned char *)k->v_b2,  F * n_out, F },
+    { (const unsigned char *)k->hid,    F * n_hid, F }, { (const unsigned char *)k->out,   F * n_out, F },
+    { (const unsigned char *)k->d_hid,  F * n_hid, F }, { (const unsigned char *)k->d_out, F * n_out, F },
+    { (const unsigned char *)k->in_lo,  F * n_in,  F }, { (const unsigned char *)k->in_hi, F * n_in,  F },
+    { (const unsigned char *)k->out_lo, F * n_out, F }, { (const unsigned char *)k->out_hi,F * n_out, F },
+    { (const unsigned char *)k->ex_res, F * c,     F },
+    { (const unsigned char *)k->ex,     F * c * (n_in + n_out), F },
+    { (const unsigned char *)k->ex_id,  I * c,     I }, { (const unsigned char *)k->order, I * c,     I },
+  };
+  const size_t n = sizeof a / sizeof a[0];
+  size_t far = 0;
+  for (size_t i = 0; i < n; ++i) {
+    if (a[i].lo < mem || a[i].lo + a[i].bytes > mem + bytes) return 0;
+    if ((uintptr_t)a[i].lo % a[i].align) return 0;
+    if ((size_t)(a[i].lo + a[i].bytes - mem) > far) far = (size_t)(a[i].lo + a[i].bytes - mem);
+    for (size_t j = 0; j < i; ++j)
+      if (a[i].lo < a[j].lo + a[j].bytes && a[j].lo < a[i].lo + a[i].bytes) return 0;
+  }
+  *reach = far;
+  return 1;
+}
+
+/* --- four instruments at once (check 36) ----------------------------------
+   One job: build an instrument in its own arena, record, train to the
+   plateau, play XT_PREDS predictions into its own stream, save. A job
+   touches nothing outside its own xt_job. The steps are separate functions
+   so check 36 can also run four jobs interleaved step by step on one
+   thread. */
+#define XT_N 4
+#define XT_PREDS 2000
+typedef struct {
+  unsigned char arena[IRIS_ARENA(NI, NH, NO, CAP)];
+  unsigned char file[16 * 1024];
+  float stream[XT_PREDS][NO];
+  size_t file_n;
+  uint32_t seed;
+  int nex;
+  iris *k;
+} xt_job;
+static xt_job xt_seq[XT_N], xt_rr[XT_N], xt_par[XT_N];
+
+static void xt_start(xt_job *j) {
+  j->k = iris_init(j->arena, sizeof j->arena, NI, NH, NO, CAP, j->seed);
+  j->file_n = 0;
+}
+static void xt_record(xt_job *j, int e) {
+  float u = (float)((e * 7919) % 97) / 97.0f, v = (float)((e * 6131) % 89) / 89.0f;
+  float in[NI] = { u, v }, o[NO];
+  truth(u, v, o);
+  if (j->k && e < j->nex) iris_record(j->k, in, o);
+}
+static void xt_play(xt_job *j, int p) {
+  float in[NI] = { (float)(p % 97) / 97.0f, (float)(p % 89) / 89.0f };
+  if (j->k) iris_predict(j->k, in, j->stream[p]);
+}
+static void xt_finish(xt_job *j) {
+  if (j->k) j->file_n = iris_save(j->k, j->file, sizeof j->file);
+}
+static void xt_work(xt_job *j) {
+  xt_start(j);
+  for (int e = 0; e < j->nex; ++e) xt_record(j, e);
+  if (j->k) iris_train(j->k);
+  for (int p = 0; p < XT_PREDS; ++p) xt_play(j, p);
+  xt_finish(j);
+}
+static int xt_same(const xt_job *a, const xt_job *b) {
+  return memcmp(a->stream, b->stream, sizeof a->stream) == 0 && a->file_n > 0
+      && a->file_n == b->file_n && memcmp(a->file, b->file, a->file_n) == 0;
+}
+
+/* All four threads wait here until the last one arrives, so their work
+   overlaps instead of running one after another. (macOS has no
+   pthread_barrier_t, so it is a mutex and a condition variable.) */
+static pthread_mutex_t xt_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  xt_cv = PTHREAD_COND_INITIALIZER;
+static int xt_waiting;
+static void *xt_thread(void *arg) {
+  pthread_mutex_lock(&xt_mu);
+  if (++xt_waiting == XT_N) pthread_cond_broadcast(&xt_cv);
+  else while (xt_waiting < XT_N) pthread_cond_wait(&xt_cv, &xt_mu);
+  pthread_mutex_unlock(&xt_mu);
+  xt_work((xt_job *)arg);
+  return 0;
+}
+
+/* --- 12. the golden blob: the TRAINING path, pinned to the bit ------------
+   Run the check-5 recipe and hash the saved bytes. Any compiler-flag drift,
+   contraction leak, or accidental math change in train/save fails this
+   check loudly. The hash is taken over the instrument's bytes only (see
+   instrument_bytes), so a change of file format cannot move it, and fnv1a
+   is taken over exactly those bytes, so a wrong length gives a wrong hash:
+   the hash is the check.
+
+   0x6805FB0D is the [-1,+1] input scaling on the contraction-off bit class
+   (docs/adr/0003). It is a function of its own so that sh build.sh
+   determinism can run it alone (./audit golden) under many compiler
+   settings. */
+static void golden_blob(void) {
+  static unsigned char file[64 * 1024];
+  /* fresh instrument: the blob carries example ids, so the recipe must
+     start from iris_init */
+  iris *kb = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 1234);
+  for (int i = 0; kb && i < 20; ++i) {
+    float u = (float)((i * 7919) % 97) / 97.0f;
+    float v = (float)((i * 6131) % 89) / 89.0f;
+    float in[NI] = { u, v }, out[NO];
+    truth(u, v, out);
+    iris_record(kb, in, out);
+  }
+  iris_reseed(kb, 1234); iris_continue(kb, 800);
+  size_t n = iris_save(kb, file, sizeof file);
+  size_t n1 = instrument_bytes(file, n);
+  uint32_t h = fnv1a(file, n1);
+  const uint32_t want = 0x6805FB0Du;
+  ok("golden blob: [-1,+1] training path bit-pinned", n1 > 0 && h == want,
+     "%zu instrument bytes, fnv1a 0x%08X (want 0x%08X)", n1, h, want);
+}
+
+/* --- 36. four instruments at once cannot touch each other ----------------
+   iris keeps no global or static state, so separate instruments may be
+   alive together, and run on separate threads with no locking. Four jobs --
+   four arenas, four seeds, four example counts -- run three ways: one after
+   another; interleaved step by step on one thread (every record, then every
+   prediction, taken round-robin across the four); and on four threads
+   released together. Each job's prediction stream and saved file must be
+   the same, to the bit, all three ways. State carried from one call to the
+   next, or shared between instruments, shows up as a difference in the
+   interleaved run for certain, and in the threaded run whenever the
+   scheduler overlaps the work. It is a function of its own so that
+   sh build.sh threads can run it alone under ThreadSanitizer (./audit four),
+   which reports any unsynchronised access whether or not it changed a bit. */
+static void four_instruments(void) {
+  const uint32_t seed[XT_N] = { 1234u, 99u, 40507u, 7u };
+  const int nex[XT_N] = { 12, 20, 31, 8 };
+  pthread_t th[XT_N];
+  for (int i = 0; i < XT_N; ++i) {
+    xt_seq[i].seed = xt_rr[i].seed = xt_par[i].seed = seed[i];
+    xt_seq[i].nex  = xt_rr[i].nex  = xt_par[i].nex  = nex[i];
+  }
+  for (int i = 0; i < XT_N; ++i) xt_work(&xt_seq[i]);
+  for (int i = 0; i < XT_N; ++i) xt_start(&xt_rr[i]);
+  for (int e = 0; e < 31; ++e) for (int i = 0; i < XT_N; ++i) xt_record(&xt_rr[i], e);
+  for (int i = 0; i < XT_N; ++i) if (xt_rr[i].k) iris_train(xt_rr[i].k);
+  for (int p = 0; p < XT_PREDS; ++p) for (int i = 0; i < XT_N; ++i) xt_play(&xt_rr[i], p);
+  for (int i = 0; i < XT_N; ++i) xt_finish(&xt_rr[i]);
+  xt_waiting = 0;
+  for (int i = 0; i < XT_N; ++i)
+    if (pthread_create(&th[i], 0, xt_thread, &xt_par[i]) != 0) {
+      ok("four instruments at once cannot touch each other", 0,
+         "pthread_create failed");
+      return;
+    }
+  for (int i = 0; i < XT_N; ++i) pthread_join(th[i], 0);
+  int rr = 0, par = 0;
+  for (int i = 0; i < XT_N; ++i) {
+    if (xt_same(&xt_seq[i], &xt_rr[i]))  rr++;
+    if (xt_same(&xt_seq[i], &xt_par[i])) par++;
+  }
+  ok("four instruments at once cannot touch each other",
+     rr == XT_N && par == XT_N,
+     "%d predictions each; interleaved %d/4 and four threads %d/4 equal the "
+     "one-at-a-time run; stream fnv1a 0x%08X 0x%08X 0x%08X 0x%08X",
+     XT_PREDS, rr, par,
+     fnv1a(xt_par[0].stream, sizeof xt_par[0].stream),
+     fnv1a(xt_par[1].stream, sizeof xt_par[1].stream),
+     fnv1a(xt_par[2].stream, sizeof xt_par[2].stream),
+     fnv1a(xt_par[3].stream, sizeof xt_par[3].stream));
+}
+
+int main(int argc, char **argv) {
+  if (argc > 1 && strcmp(argv[1], "four") == 0) {
+    four_instruments();
+    return failures ? 1 : 0;
+  }
+  if (argc > 1 && strcmp(argv[1], "golden") == 0) {
+    golden_blob();
+    return failures ? 1 : 0;
+  }
   printf("\niris v%d.%d.%d — audit\n", IRIS_VERSION_MAJOR, IRIS_VERSION_MINOR, IRIS_VERSION_PATCH);
   printf("--------------------------------------------------------------------------\n");
 
-  /* --- 1. memory: does the compile-time macro cover the runtime size? ----- */
+  /* --- 1. memory: IRIS_ARENA covers what iris_init actually carves --------
+     For several shapes, from the smallest legal one to the largest, and at
+     every starting offset 0 to 7 (a caller's unsigned char array has no
+     alignment promise), an arena of exactly IRIS_ARENA bytes is allocated on
+     the heap -- so under AddressSanitizer one byte past it is a report --
+     and carve_check measures where iris_init put everything.              */
   {
-    size_t macro = sizeof arena_a, fn = iris_size(NI, NH, NO, CAP);
-    ok("arena macro >= runtime size", macro >= fn,
-       "macro %zu B, needed %zu B, slack %zu B", macro, fn, macro - fn);
+    static const int shapes[5][4] = {
+      { NI, NH, NO, CAP }, { 1, 8, 1, 1 }, { 3, 17, 2, 5 }, { 7, 33, 5, 999 },
+      { IRIS_MAX_IN, IRIS_MAX_HID, IRIS_MAX_OUT, IRIS_MAX_EX } };
+    int cases = 0, good = 0, bad_shape = -1, bad_off = -1;
+    size_t least_slack = (size_t)-1, worst_need = 0, worst_bytes = 0;
+    for (int s5 = 0; s5 < 5; ++s5) {
+      const int *sh = shapes[s5];
+      const size_t bytes = IRIS_ARENA(sh[0], sh[1], sh[2], sh[3]);
+      for (size_t off = 0; off < 8; ++off) {
+        unsigned char *base = (unsigned char *)malloc(bytes + off);
+        size_t reach = 0;
+        cases++;
+        if (base && carve_check(base + off, bytes, sh[0], sh[1], sh[2], sh[3], &reach)) {
+          good++;
+          if (bytes - reach < least_slack) {
+            least_slack = bytes - reach; worst_need = reach; worst_bytes = bytes;
+          }
+        } else if (bad_shape < 0) {
+          bad_shape = s5; bad_off = (int)off;
+        }
+        free(base);
+      }
+    }
+    if (good == cases)
+      ok("arena macro covers every array iris_init carves", 1,
+         "%d of %d shape/offset cases inside, aligned, disjoint; tightest: "
+         "reaches %zu of %zu B (slack %zu B)", good, cases, worst_need,
+         worst_bytes, least_slack);
+    else
+      ok("arena macro covers every array iris_init carves", 0,
+         "%d of %d shape/offset cases inside, aligned, disjoint; the first "
+         "that is not: shape %d-%d-%d with %d demonstrations at offset %d",
+         good, cases, shapes[bad_shape][0], shapes[bad_shape][1],
+         shapes[bad_shape][2], shapes[bad_shape][3], bad_off);
   }
 
   iris *k = iris_init(arena_a, sizeof arena_a, NI, NH, NO, CAP, 1234);
@@ -405,17 +630,17 @@ int main(void) {
 
      Either one alone is trivially satisfiable by a broken model: a model that
      learned nothing is lively everywhere, a model that ignores its seed is
-     steady everywhere. Measured at RR_HID hidden / RR_EX examples, the corner
-     experiment.c's sweep marks "<-- lively".                                 */
+     steady everywhere. Measured at RR_HID hidden / RR_EX examples, the
+     under-constrained corner described at RR_HID.                          */
   {
     iris *kr = iris_init(arena_r, sizeof arena_r, NI, RR_HID, NO, RR_EX, 1);
     float near_s = -1.0f, gap_s = -1.0f; int near_n = 0, gap_n = 0;
     if (kr) reroll_spread(kr, &near_s, &near_n, &gap_s, &gap_n);
 
-    /* Measured 0.0399 at the width used here. This corner was width 4
-       until iris_init's floor was raised to 8 to agree with iris_size --
-       8 is now the lowest legal width, so it is the corner. Threshold
-       0.03 leaves 1.3x headroom, tighter than the 2.5x it had at 4. */
+    /* Measured 0.0399 with these seeds; the threshold 0.03 leaves 1.3x
+       headroom. The bound belongs to this seed family: another family of
+       eight seeds can land under it, so a change of seeds is a change of
+       this bound, not a regression. */
     ok("reroll is lively in the gaps", kr && gap_n > 0 && gap_s > 0.03f,
        "%d hidden, %d examples, %d seeds: %d gap probes move by %.4f  (want > 0.0300)",
        RR_HID, RR_EX, RR_SEEDS, gap_n, gap_s);
@@ -487,36 +712,7 @@ int main(void) {
        "on an example %.3f, far away %.3f", n_at, n_far);
   }
 
-  /* --- 12. the golden blob: the TRAINING path, pinned to the bit ----------
-     Run the check-5 recipe and hash the saved bytes. Any compiler-flag drift,
-     contraction leak, or accidental math change in train/save fails this
-     check loudly. The hash is taken over the instrument's bytes only (see
-     instrument_bytes), so a change of file format cannot move it, and fnv1a
-     is taken over exactly those bytes, so a wrong length gives a wrong hash:
-     the hash is the check.
-
-     0x6805FB0D is the [-1,+1] input scaling on the contraction-off bit class
-     (docs/adr/0003). */
-  {
-    static unsigned char file[64 * 1024];
-    /* fresh instrument: the blob carries example ids, so the recipe must
-       start from iris_init */
-    iris *kb = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 1234);
-    for (int i = 0; i < 20; ++i) {
-      float u = (float)((i * 7919) % 97) / 97.0f;
-      float v = (float)((i * 6131) % 89) / 89.0f;
-      float in[NI] = { u, v }, out[NO];
-      truth(u, v, out);
-      iris_record(kb, in, out);
-    }
-    iris_reseed(kb, 1234); iris_continue(kb, 800);
-    size_t n = iris_save(kb, file, sizeof file);
-    size_t n1 = instrument_bytes(file, n);
-    uint32_t h = fnv1a(file, n1);
-    const uint32_t want = 0x6805FB0Du;
-    ok("golden blob: [-1,+1] training path bit-pinned", n1 > 0 && h == want,
-       "%zu instrument bytes, fnv1a 0x%08X (want 0x%08X)", n1, h, want);
-  }
+  golden_blob();
 
   /* --- 13. NaN never reaches the audio path -------------------------------
      Three doors a NaN can come through, all guarded, all REPORTED:
@@ -538,10 +734,10 @@ int main(void) {
     iris_continue(k, 400);
     float probe[NI] = { 0.3f, 0.7f }, before[NO], after[NO];
     iris_predict(k, probe, before);
-    /* THE DOOR REFUSES IT (gap B4 closed 2026-08-27). iris_record now rejects a
-       NaN before it can enter the store: -1 back, status set, n_ex unmoved. */
+    /* THE DOOR REFUSES IT. iris_record rejects a not-a-number before it can
+       enter the store: 0 back, status IRIS_NAN_TRAPPED, n_ex unmoved. */
     int door_refused, n_before = iris_count(k);
-    { float in[NI] = { 0.0f / 0.0f, 0.5f }, out[NO] = { 0.5f, 0.5f, 0.5f };
+    { float in[NI] = { NAN, 0.5f }, out[NO] = { 0.5f, 0.5f, 0.5f };
       door_refused = (iris_record(k, in, out) == 0) && iris_count(k) == n_before
                    && iris_get_status(k) == IRIS_NAN_TRAPPED; }
 
@@ -549,7 +745,7 @@ int main(void) {
        guard: examples also arrive through iris_load, which does not go through
        iris_record. Write the poison straight into the store to exercise the
        pre-scan the way a corrupt file would. */
-    k->ex[0] = 0.0f / 0.0f;
+    k->ex[0] = NAN;
     k->trained = 1;                            /* pretend the fit is current */
     iris_continue(k, 400);
     int refused = door_refused && (iris_get_status(k) == IRIS_NAN_TRAPPED);
@@ -560,13 +756,13 @@ int main(void) {
     /* (b) NaN sensor input at play time: finite outputs + status */
     iris_delete_last(k);
     iris_continue(k, 400);
-    float nan_in[NI] = { 0.0f / 0.0f, 0.4f }, got[NO];
+    float nan_in[NI] = { NAN, 0.4f }, got[NO];
     iris_predict(k, nan_in, got);
     int finite = 1;
     for (int o = 0; o < NO; ++o) if (iris_internal_isbad(got[o])) finite = 0;
     int reported = (iris_get_status(k) == IRIS_NAN_TRAPPED);
 
-    /* (c) hostile lr/momentum sweep on check-9 data + a 1e6 INPUT outlier */
+    /* (c) hostile lr/momentum sweep on check 9's data + a 1e6 INPUT outlier */
     int sweep_nan = 0, sweep_unreported = 0;
     const float lrs[3] = { 0.5f, 1.0f, 2.0f };
     const float moms[2] = { 0.85f, 0.99f };
@@ -718,11 +914,14 @@ int main(void) {
   }
 
   /* --- 20. ELM: same seed, same bits; reroll keeps both promises ----------
-     The instant trainer's determinism is structural (no rng after the
-     frozen draw, fixed accumulation order) — observed here at three widths.
-     Its reroll character is measured at the nh=12 / 5-example config the
-     bands were calibrated on: near <= 0.02, gap >= 0.06 (measured 0.017 /
-     0.110 — steadier at the demos AND livelier in the gaps than backprop). */
+     ELM is the extreme learning machine, the closed-form trainer of PART 8d:
+     it freezes the random first layer and solves the output layer in one
+     step. Its determinism is structural (no random draw after the frozen
+     layer, a fixed order of accumulation), observed here at three widths.
+     Its reroll character is measured at the nh=12 / 5-example configuration
+     the bands were set on: near <= 0.02, gap >= 0.06 (this program measures
+     0.0106 / 0.1123 -- steadier at the demonstrations AND livelier in the
+     gaps than backpropagation's 0.0088 / 0.0399 in checks 6 and 7).       */
   {
     const int nhs[3] = { 12, 24, 48 };
     int all_same = 1;
@@ -779,7 +978,8 @@ int main(void) {
 
   /* --- 21. ELM: the solve cannot fail -------------------------------------
      Six hostile scenarios x five lambdas x three widths. The ridge makes
-     the normal matrix SPD by construction, so the gate is absolute: zero
+     the normal matrix symmetric positive definite by construction, so a
+     Cholesky factorisation always exists and the gate is absolute: zero
      unfixable Cholesky failures, escalation bounded (measured max 2), no
      non-finite output on any probe including outside the input box, and
      escalation is REPORTED (IRIS_RIDGE_ESCALATED), never silent.             */
@@ -812,9 +1012,10 @@ int main(void) {
   }
 
   /* --- 22. ELM: at nh=48 it fits BETTER than backprop ---------------------
-     The E1 headline, reproduced inside the integrated core: nh=48 with
-     lam0=1e-3 beats the 600-epoch backprop on recall AND on the 441-probe
-     grid at 50 examples (measured .0066/.0109 vs .0077/.0116).             */
+     At 48 hidden units and lam0 = 1e-3 the closed-form solve beats 600
+     epochs of backpropagation on recall AND on the 441-probe grid at 50
+     examples (this program measures recall 0.0030 against 0.0059, grid
+     0.0090 against 0.0103).                                                */
   {
     iris *a = iris_init(arena_w1, sizeof arena_w1, NI, 48, NO, CAP, 42);
     load_examples(a, 50);
@@ -831,8 +1032,9 @@ int main(void) {
   }
 
   /* --- 23. k-NN: exact recall at every demonstration ----------------------
-     The property backprop never delivers: standing on a demo returns the
-     demo. Gate at float precision for the blended k=1/k=3 read, and
+     k-NN is the k-nearest-neighbour blend and 1-NN the single nearest
+     neighbour (PART 10). The property backprop never delivers: standing on a
+     demo returns the demo. Gate at float precision for the blended k=1/k=3 read, and
      bit-for-bit for the 1-NN snap (it returns the stored row verbatim).   */
   {
     const int counts[4] = { 5, 20, 50, 200 };
@@ -1000,10 +1202,10 @@ int main(void) {
   }
 
   /* --- 26. hostile queries and poisoned stores cannot corrupt the samplers -
-     Found by adversarial verification of v0.2: a NaN query left every
-     neighbour slot at -1 and the blend read out of bounds; a NaN stored in
-     an example's OUTPUTS sailed through both sampler paths verbatim. Both
-     must now refuse visibly: range-centre substitute + IRIS_NAN_TRAPPED.    */
+     A not-a-number query matches no neighbour at all, and a not-a-number
+     stored in an example's OUTPUTS would be copied straight into the answer
+     by both samplers. Each must refuse visibly instead: the range-centre
+     substitute, and IRIS_NAN_TRAPPED in the status.                        */
   {
     iris *a = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 7);
     iris_clear(a);
@@ -1013,7 +1215,7 @@ int main(void) {
       iris_record(a, in, out);
     }
     iris_internal_fit_ranges(a);
-    float nanq[NI] = { 0.0f/0.0f, 0.5f }, out[NO];
+    float nanq[NI] = { NAN, 0.5f }, out[NO];
     int bad = 0;
     iris_knn_predict(a, nanq, out, 3);
     for (int o = 0; o < NO; ++o) if (iris_internal_isbad(out[o])) bad++;
@@ -1023,7 +1225,7 @@ int main(void) {
     for (int o = 0; o < NO; ++o) if (iris_internal_isbad(out[o])) bad++;
     /* poison one example's OUTPUT, then query sanely through both paths */
     a->status = 0;
-    a->ex[2 * (NI + NO) + NI + 1] = 0.0f/0.0f;
+    a->ex[2 * (NI + NO) + NI + 1] = NAN;
     float sane[NI] = { 0.3f, 0.7f };
     iris_knn_predict(a, sane, out, 8);           /* k=8: poisoned row included */
     for (int o = 0; o < NO; ++o) if (iris_internal_isbad(out[o])) bad++;
@@ -1038,14 +1240,22 @@ int main(void) {
        "%d bad values escaped, statuses reported %d/%d", bad, st_nanq, st_pois);
   }
 
-  /* --- 27. the loader cannot be lied to ------------------------------------
-     Found by adversarial verification of v0.2: a corrupted example-count
-     high byte went NEGATIVE past a signed compare and loaded an instrument
-     with -16 million examples; a plausible count with a truncated body read
-     kilobytes past the caller's buffer. Both must refuse, and a refusal
-     must leave the loaded instrument bit-identical.                        */
+  /* --- 27. the loader cannot be lied to about sizes ------------------------
+     Four lies a file can tell about its size. (a) More demonstrations than
+     the receiving instrument has room for, in a file that is otherwise
+     perfect -- written by iris_save from an instrument one demonstration
+     bigger -- so only the capacity rule can refuse it. (b) A body one word
+     longer than the header describes, the checksum recomputed over the
+     longer file: every field in it is valid, so only the length rule can
+     refuse it. (c) A header count one higher than the body holds, checksum
+     recomputed, in a heap block of exactly the file's length, so that under
+     AddressSanitizer (sh build.sh sanitize) any read past the file is
+     reported. (d) A file cut in half. Each must be refused, and every byte
+     of the receiving arena must be the same afterwards.                     */
   {
+    static unsigned char arena_big[IRIS_ARENA(NI, NH, NO, CAP + 1)];
     iris *a = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 7);
+    iris *big = iris_init(arena_big, sizeof arena_big, NI, NH, NO, CAP + 1, 7);
     iris_clear(a);
     for (int i = 0; i < 6; ++i) {
       float u = 0.15f * (float)i + 0.05f;
@@ -1053,38 +1263,47 @@ int main(void) {
       iris_record(a, in, out);
     }
     iris_reseed(a, 4321); iris_continue(a, 100);
-    static unsigned char blob[8 * 1024], evil[8 * 1024];
+    load_examples(big, CAP + 1);
+    static unsigned char blob[8 * 1024], evil[64 * 1024];
     static unsigned char arena_before[sizeof arena_b];
     size_t n = iris_save(a, blob, sizeof blob);
     memcpy(arena_before, arena_b, sizeof arena_b);
     int refuse = 0, total = 0;
-    /* n_ex is the little-endian word at offset 28 (iris.h, PART 9). The
-       checksum is recomputed after each edit, so the count and length checks
-       decide, not the checksum. */
-    /* (a) n_ex high byte -> huge/negative count */
-    memcpy(evil, blob, n); evil[31] = 0xFF;
-    { uint32_t c = iris_internal_crc32(evil, n - 4);
-      for (int i = 0; i < 4; ++i) evil[n - 4 + i] = (unsigned char)(c >> (8 * i)); }
-    total++; if (!iris_load(a, evil, n)) refuse++;
-    /* (b) plausible n_ex, truncated body */
-    memcpy(evil, blob, n); evil[28] = (unsigned char)200;
-    { uint32_t c = iris_internal_crc32(evil, n - 4);
-      for (int i = 0; i < 4; ++i) evil[n - 4 + i] = (unsigned char)(c >> (8 * i)); }
-    total++; if (!iris_load(a, evil, n)) refuse++;
-    /* (c) body physically cut short */
+    /* (a) CAP + 1 demonstrations, every other rule obeyed */
+    size_t nb = iris_save(big, evil, sizeof evil);
+    total++; if (nb > 0 && !iris_load(a, evil, nb)) refuse++;
+    /* (b) four zero bytes before the checksum, which covers them */
+    memcpy(evil, blob, n - 4); memset(evil + n - 4, 0, 4);
+    { uint32_t c = iris_internal_crc32(evil, n);
+      for (int i = 0; i < 4; ++i) evil[n + (size_t)i] = (unsigned char)(c >> (8 * i)); }
+    total++; if (!iris_load(a, evil, n + 4)) refuse++;
+    /* (c) n_ex, the little-endian word at offset 28 (iris.h, PART 9), one
+       higher than the body holds; checksum recomputed */
+    { unsigned char *exact = (unsigned char *)malloc(n);
+      if (exact) {
+        memcpy(exact, blob, n); exact[28] = (unsigned char)(exact[28] + 1);
+        uint32_t c = iris_internal_crc32(exact, n - 4);
+        for (int i = 0; i < 4; ++i) exact[n - 4 + (size_t)i] = (unsigned char)(c >> (8 * i));
+      }
+      total++; if (exact && !iris_load(a, exact, n)) refuse++;
+      free(exact); }
+    /* (d) body physically cut short */
     memcpy(evil, blob, n);
     total++; if (!iris_load(a, evil, n / 2)) refuse++;
     int intact = memcmp(arena_before, arena_b, sizeof arena_b) == 0 && iris_count(a) == 6;
-    ok("loader refuses corrupt counts and truncated bodies",
-       refuse == total && intact,
-       "%d/%d corruptions refused; instrument intact after refusals: %s",
+    ok("loader refuses a count over capacity or a length unlike its header",
+       nb > 0 && refuse == total && intact,
+       "%d/%d lies refused; receiving arena bit-identical after them: %s",
        refuse, total, intact ? "yes" : "NO");
   }
 
-  /* --- 28. a refused train mutates nothing, ranges included ----------------
-     Found by adversarial verification of v0.2: the SGD path fitted ranges
-     BEFORE its poison scan, so a refused train silently moved the playing
-     instrument's denormalisation. Now every trainer scans first.          */
+  /* --- 28. a refused train changes nothing but the status -----------------
+     Every trainer checks the demonstrations before it reseeds, fits ranges or
+     touches a counter, so a refusal over a poisoned demonstration leaves every
+     byte of the instrument as it was except the status, which reports the
+     not-a-number it found (iris.h, PART 8). iris_record refuses a
+     not-a-number at the door, so the poison is written into the store
+     directly, the way a program writing into the store could.             */
   {
     iris *a = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 7);
     iris_clear(a);
@@ -1094,34 +1313,38 @@ int main(void) {
       iris_record(a, in, out);
     }
     iris_reseed(a, 99); iris_continue(a, 200);
-    float rlo[NO], rhi[NO];
-    for (int o = 0; o < NO; ++o) { rlo[o] = a->out_lo[o]; rhi[o] = a->out_hi[o]; }
-    /* iris_record now refuses NaN at the door (B4), so put the poison into the
-       store directly — this check is about the TRAINER's pre-scan, which must
-       still hold for examples that arrive via iris_load rather than iris_record. */
     float pin[NI] = { 0.9f, 0.9f }, pout[NO] = { 0.5f, 5.0f, 0.5f };
     iris_record(a, pin, pout);                    /* clean row, accepted */
-    a->ex[(size_t)(a->n_ex - 1) * (NI + NO) + NI] = 0.0f/0.0f;  /* now poison it */
-    /* A refusal over a poisoned demonstration changes nothing but the
-       status, which reports the not-a-number it found. */
-    float rr = iris_continue(a, 100);         /* must refuse */
-    int st = (rr == -1.0f) && (a->status == IRIS_NAN_TRAPPED);
-    int ranges_intact = 1;
-    for (int o = 0; o < NO; ++o)
-      if (a->out_lo[o] != rlo[o] || a->out_hi[o] != rhi[o]) ranges_intact = 0;
+    a->ex[(size_t)(a->n_ex - 1) * (NI + NO) + NI] = NAN;  /* now poison it */
+    static unsigned char arena_before[sizeof arena_b];
+    memcpy(arena_before, arena_b, sizeof arena_b);
+    const int32_t st0 = a->status;
+    int refused = 0, untouched = 0;
+    for (int t = 0; t < 4; ++t) {
+      int r = 0;
+      switch (t) {
+        case 0: r = iris_continue(a, 100) == -1.0f; break;
+        case 1: r = iris_continue_to_plateau(a, 0, 0, 0) == -1.0f; break;
+        case 2: r = iris_train(a) == 0; break;
+        default: r = iris_train_begin(a, 0) == 0; break;
+      }
+      if (r && a->status == IRIS_NAN_TRAPPED) refused++;
+      a->status = st0;                            /* every byte but the status */
+      if (memcmp(arena_before, arena_b, sizeof arena_b) == 0) untouched++;
+    }
     iris_delete_last(a);                          /* musician removes the poison */
-    ok("refused train leaves ranges bit-identical",
-       st && ranges_intact,
-       "returned -1 with status IRIS_NAN_TRAPPED %d, out_lo/out_hi unmoved %d", st, ranges_intact);
+    ok("a refused train changes nothing but the status",
+       refused == 4 && untouched == 4,
+       "continue, continue_to_plateau, train, train_begin: %d/4 refused with "
+       "IRIS_NAN_TRAPPED, %d/4 left every other byte unmoved", refused, untouched);
   }
 
-
   /* --- 31. training to convergence, and a progress bar that is not a lie --
-     Three claims. (a) The plateau criterion beats the old 600-epoch
-     recommendation on the very reference task the audit already uses.
-     (b) A run sliced into chunks — which is how a single-threaded UI keeps
-     drawing — is BIT-IDENTICAL to the same run taken in one blocking call,
-     because the shuffle buffer is initialised once and carried across the
+     Three claims. (a) iris_train, which stops at the plateau, fits the
+     reference task far better than a fixed 600-epoch run. (b) The same run
+     sliced into chunks -- which is how a single-threaded UI keeps drawing --
+     is BIT-IDENTICAL to iris_train taken in one blocking call: both check and
+     reseed the same way, and the shuffle buffer is carried across the
      slices. (c) The reported progress never goes backwards and ends at
      exactly 1.0, which is the whole difference between a progress bar and
      an animation.                                                          */
@@ -1221,19 +1444,17 @@ int main(void) {
        "(want < 1e-3)", sc);
   }
 
-  /* --- timing: what will this cost on the S3? ----------------------------- */
-  printf("--------------------------------------------------------------------------\n");
   /* --- 35. THE DIVERGENCE TRAP -------------------------------------------
-     Found 2026-08-27 by running examples/02_fix_a_mistake.c. A contradictory
-     demonstration diverges the weights; the guard clamps and stops. On the
-     NEXT fresh run one pinned weight trips the guard again on epoch 1, so
-     training silently did nothing -- forever -- while reporting a healthy
-     status. The musician deletes the bad take, retrains, and the instrument
-     stays broken with no message. Zeroing the momentum does not help; it is
-     the pinned weight, measured at 1 of 60.
-
-     The examples survive, the weights do not. This pins BOTH halves: the
-     refusal is distinguishable, and a reroll actually recovers.            */
+     A contradictory demonstration drives the weights past IRIS_W_LIMIT; the
+     guard clamps them onto the limit and stops the run. A warm run that
+     continued from those pinned weights would trip the guard again on its
+     first epoch and do nothing, for ever, so the warm trainers refuse with
+     IRIS_DIVERGED_STUCK instead -- on every call, not just the first, because
+     a refusal moves no weight. The demonstrations are fine and the weights
+     are not, so iris_train, which starts over from the instrument's seed, is
+     the way out: after the bad take is deleted it must play exactly what it
+     played before the take, to the bit (the demonstrations are the same
+     fourteen, in the same order, from the same seed).                     */
   {
     iris *d = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 1234);
     for (int i = 0; i < 14; ++i) {
@@ -1246,106 +1467,44 @@ int main(void) {
     iris_predict(d, pr, healthy);
 
     float bin[NI] = { 0.60f, 0.40f }, bout[NO] = { 0.05f, 0.95f, 0.05f };
-    iris_record(d, bin, bout);
+    int bad_id = iris_record(d, bin, bout);
     iris_continue_to_plateau(d, 0, 0, 0);
     int diverged = (iris_get_status(d) == IRIS_TRAINING_DIVERGED);
 
-    float mg = 0.0f; iris_delete_id(d, iris_worst_example_id(d, &mg));
-    float rc = iris_continue_to_plateau(d, 0, 0, 0);
-    int refused = (rc < 0.0f) && (iris_get_status(d) == IRIS_DIVERGED_STUCK);
+    iris_delete_id(d, bad_id);
+    float rc1 = iris_continue_to_plateau(d, 0, 0, 0);
+    int st1 = iris_get_status(d) == IRIS_DIVERGED_STUCK;
+    float rc2 = iris_continue(d, 20);
+    int st2 = iris_get_status(d) == IRIS_DIVERGED_STUCK;
+    int refused = rc1 < 0.0f && st1 && rc2 < 0.0f && st2;
 
-    iris_reseed(d, 1234); iris_continue(d, 600);
+    int trained = iris_train(d);
     float back[NO]; iris_predict(d, pr, back);
     float drift = 0.0f;
     for (int o = 0; o < NO; ++o) {
       float e = back[o] - healthy[o]; if (e < 0) e = -e;
       if (e > drift) drift = e;
     }
-    int recovered = (iris_get_status(d) == IRIS_STATUS_OK) && (drift < 0.02f);
+    int recovered = trained && iris_get_status(d) == IRIS_STATUS_OK
+                 && memcmp(back, healthy, sizeof back) == 0;
 
-    ok("divergence refuses loudly, and a reroll recovers",
+    ok("divergence refuses loudly, and iris_train recovers",
        diverged && refused && recovered,
-       "diverged %d, retrain refused with DIVERGED_STUCK %d, reroll recovered "
-       "%d (worst drift from pre-damage output %.4f)",
+       "diverged %d, two warm runs refused with DIVERGED_STUCK %d, iris_train "
+       "plays the pre-damage output to the bit %d (largest difference %.6f)",
        diverged, refused, recovered, drift);
   }
 
 
-  /* README.md says "Verified: four instruments trained interleaved, 8,000
-     interleaved predictions, zero cross-talk." Until now nothing in this suite
-     verified it -- a line beginning "Verified:" with no evidence attached, in a
-     project whose stated rule is that every claim carries its evidence. This is
-     that evidence, and it re-runs.
+  four_instruments();
 
-     The design is the only one that proves the claim: each instrument must see
-     the IDENTICAL sequence of its own operations in both phases, so that any
-     difference in the saved bytes can only have come from the other three
-     being alive. Four separate arenas, four different seeds, four different
-     example counts. */
-  {
-    static unsigned char xt_a[IRIS_ARENA(NI, NH, NO, CAP)];
-    static unsigned char xt_b[IRIS_ARENA(NI, NH, NO, CAP)];
-    static unsigned char xt_c[IRIS_ARENA(NI, NH, NO, CAP)];
-    static unsigned char xt_d[IRIS_ARENA(NI, NH, NO, CAP)];
-    unsigned char *ar[4] = { xt_a, xt_b, xt_c, xt_d };
-    const size_t arsz[4] = { sizeof xt_a, sizeof xt_b, sizeof xt_c, sizeof xt_d };
-    const unsigned seed[4] = { 1234u, 99u, 40507u, 7u };
-    const int nex[4] = { 12, 20, 31, 8 };
-    uint32_t alone[4], together[4];
-    int preds = 0;
-
-    /* Phase 1: strictly one at a time. Nothing else is alive. */
-    for (int i = 0; i < 4; ++i) {
-      iris *z = iris_init(ar[i], arsz[i], NI, NH, NO, CAP, seed[i]);
-      load_examples(z, nex[i]);
-      iris_train(z);
-      for (int p = 0; p < 2000; ++p) {
-        float in[NI] = { (float)(p % 97) / 97.0f, (float)(p % 89) / 89.0f }, o[NO];
-        iris_predict(z, in, o);
-      }
-      alone[i] = fnv1a(ar[i], iris_save_size(z));
-    }
-
-    /* Phase 2: all four alive at once, every operation interleaved
-       round-robin, same per-instrument sequence as above. */
-    iris *q[4];
-    for (int i = 0; i < 4; ++i)
-      q[i] = iris_init(ar[i], arsz[i], NI, NH, NO, CAP, seed[i]);
-    for (int i = 0; i < 4; ++i) iris_clear(q[i]);
-    for (int e = 0; e < 31; ++e)          /* records, interleaved */
-      for (int i = 0; i < 4; ++i) {
-        if (e >= nex[i]) continue;
-        float u = (float)((e * 7919) % 97) / 97.0f;
-        float v = (float)((e * 6131) % 89) / 89.0f;
-        float in[NI] = { u, v }, o[NO];
-        truth(u, v, o);
-        iris_record(q[i], in, o);
-      }
-    for (int i = 0; i < 4; ++i) iris_train(q[i]);
-    for (int p = 0; p < 2000; ++p)         /* 8,000 predictions, interleaved */
-      for (int i = 0; i < 4; ++i) {
-        float in[NI] = { (float)(p % 97) / 97.0f, (float)(p % 89) / 89.0f }, o[NO];
-        iris_predict(q[i], in, o); ++preds;
-      }
-    for (int i = 0; i < 4; ++i) together[i] = fnv1a(ar[i], iris_save_size(q[i]));
-
-    int same = 1;
-    for (int i = 0; i < 4; ++i) if (alone[i] != together[i]) same = 0;
-    ok("four instruments alive at once cannot touch each other",
-       same,
-       "%d interleaved predictions; saved state alone vs four-alive: "
-       "0x%08X/0x%08X 0x%08X/0x%08X 0x%08X/0x%08X 0x%08X/0x%08X",
-       preds, alone[0], together[0], alone[1], together[1],
-       alone[2], together[2], alone[3], together[3]);
-  }
-
-  printf("TRAINING COST  (this machine; S3 columns below are x270)\n\n");
-  printf("  * S3 columns are the HOST time x270, not board readings.\n"
-         "    Measured on hardware: backprop-600 (321 ms @20 ex,\n"
-         "    BRINGUP-LOG.md:198) and iris_train (595 ms @4 demos, 2.7-3.0 s\n"
-         "    @8-20, device_torture test 5). ELM is UNMEASURED on\n"
-         "    device.\n\n");
-  printf("  examples   backprop-600      S3 x270*  |  ELM nh-12       S3 x270*\n");
+  /* --- what it costs on this machine -------------------------------------
+     A report, never a pass or a fail: these are wall-clock times on whatever
+     computer runs the audit, and they move with its load. Timing on a
+     microcontroller is measured on the microcontroller. */
+  printf("--------------------------------------------------------------------------\n");
+  printf("TRAINING COST on this machine (a report, not a check)\n\n");
+  printf("  examples   backprop-600   |  ELM nh-12\n");
   const int exs[] = { 10, 20, 50, 100, 200 };
   for (int e = 0; e < 5; ++e) {
     iris_clear(k);
@@ -1364,16 +1523,14 @@ int main(void) {
     for (int rep = 0; rep < 200; ++rep)
       iris_train_elm(k, 1e-4f, elm_scratch, sizeof elm_scratch);
     double de = (now_ms() - t2) / 200.0;
-    printf("  %6d   %8.1f ms     ~%5.0f ms   |  %7.4f ms    ~%5.2f ms\n",
-           exs[e], dt, dt * IRIS_S3_SCALE, de, de * IRIS_S3_SCALE);
+    printf("  %6d   %8.1f ms    |  %7.4f ms\n", exs[e], dt, de);
   }
 
-  /* THE PLATEAU TRAINER, iris_train — the default, and the one number a
-     musician actually waits on. Reported separately because it is the only
-     path here whose cost is not a fixed budget: it stops when the error
-     plateaus, so the epochs it spends are part of the measurement. */
-  printf("\n  iris_train (plateau test, ceiling %d) — the default\n", IRIS_CONV_CEILING);
-  printf("  examples   epochs spent      host        S3 x270*    train MSE   (600-epoch MSE)\n");
+  /* THE PLATEAU TRAINER, iris_train -- the default, and the one number a
+     musician actually waits on. It stops when the error plateaus, so the
+     epochs it spends are part of the measurement. */
+  printf("\n  iris_train (plateau test, ceiling %d)\n", IRIS_CONV_CEILING);
+  printf("  examples   epochs spent      time       train MSE   (600-epoch MSE)\n");
   for (int e = 0; e < 5; ++e) {
     iris *kk = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 4242u);
     load_examples(kk, exs[e]);
@@ -1385,11 +1542,10 @@ int main(void) {
     iris *k6 = iris_init(arena_d, sizeof arena_d, NI, NH, NO, CAP, 4242u);
     load_examples(k6, exs[e]);
     float e6 = iris_continue(k6, 600);
-    printf("  %6d   %9d   %8.1f ms   ~%6.1f s     %.3e   (%.3e)\n",
-           exs[e], used, dt, dt * IRIS_S3_SCALE / 1000.0, ec, e6);
+    printf("  %6d   %9d   %8.1f ms    %.3e   (%.3e)\n", exs[e], used, dt, ec, e6);
   }
 
-  /* the correction path — the felt latency of "record one more, fix it" */
+  /* the correction path -- the felt latency of "record one more, fix it" */
   {
     const int cex[2] = { 20, 50 };
     printf("\n");
@@ -1404,12 +1560,12 @@ int main(void) {
       for (int rep = 0; rep < 50; ++rep) unused += iris_continue(k, 20);
       double dc = (now_ms() - t0) / 50.0;
       (void)unused;
-      printf("  one warm correction (iris_continue, 20 epochs) at %3d examples: "
-             "%.3f ms here, ~%.1f ms on the S3\n", cex[e] + 1, dc, dc * IRIS_S3_SCALE);
+      printf("  one warm correction (iris_continue, 20 epochs) at %3d examples: %.3f ms\n",
+             cex[e] + 1, dc);
     }
   }
 
-  /* inference cost — this is the one that must never be slow */
+  /* playing cost -- the one that must never be slow */
   {
     iris_clear(k);
     for (int i = 0; i < 20; ++i) {
@@ -1421,8 +1577,7 @@ int main(void) {
     double t0 = now_ms();
     for (int i = 0; i < 1000000; ++i) { in[0] = (float)(i & 1023) / 1023.0f; iris_predict(k, in, out); }
     double per = (now_ms() - t0) * 1000.0 / 1e6;
-    printf("\n  playing (one prediction): %.3f us here, ~%.1f us on the S3\n", per, per * IRIS_S3_SCALE);
-    printf("  at 1000 gestures/sec that is %.2f%% of one S3 core\n", per * IRIS_S3_SCALE * 1000.0 / 10000.0);
+    printf("\n  playing (one prediction): %.3f us\n", per);
     /* the k-NN read costs O(n_ex) per call; price it at both store sizes */
     const int kex[2] = { 64, 256 };
     for (int e = 0; e < 2; ++e) {
@@ -1434,8 +1589,7 @@ int main(void) {
         iris_knn_predict(k, in, out, 3);
       }
       double pk = (now_ms() - t1) * 1000.0 / 2e5;
-      printf("  k-NN prediction at %3d examples: %.3f us here, ~%.1f us on the S3\n",
-             kex[e], pk, pk * IRIS_S3_SCALE);
+      printf("  k-NN prediction at %3d examples: %.3f us\n", kex[e], pk);
     }
   }
 

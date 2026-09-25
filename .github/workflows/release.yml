@@ -1,0 +1,30 @@
+name: release
+
+# When a tag v<version> is pushed: every file must name that version, and
+# the whole of ci.yml must pass on the tagged commit.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  version:
+    name: one version everywhere
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: the tag, iris.h, library.properties, CITATION.cff and CHANGELOG.md agree
+        run: sh tools/version-check.sh "$GITHUB_REF_NAME"
+
+  ci:
+    name: ci on the tagged commit
+    needs: version
+    uses: ./.github/workflows/ci.yml

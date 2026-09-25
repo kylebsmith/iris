@@ -36,6 +36,11 @@ on. The exit status is 1 if any check failed and 2 if the export could not be
 built or run. The task table is a report and never fails the run. It writes
 nothing into the repository. The times above were measured on an Apple M4 Max.
 
+`sh build.sh reference` runs the quick form. When `python3` cannot import numpy
+and scikit-learn it prints SKIP and succeeds, unless the environment variable
+`CI` or `IRIS_REQUIRE_REFERENCE` is set, when the skip is a failure. Continuous
+integration runs the quick form on every push and the full run nightly.
+
 ## The files
 
 - `export.c` builds an instrument from a recipe read on standard input, every

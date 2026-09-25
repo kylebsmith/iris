@@ -1,20 +1,16 @@
 /* SPDX-License-Identifier: BSD-3-Clause
    Copyright (c) 2026 Kyle Smith */
 /* ============================================================================
-   regressions.c — one test per defect found by an independent review.
+   regressions.c — one test per known defect of iris.h, each holding the
+   behaviour that defect broke, plus five small properties of the interface
+   that a change could break silently (Q to U): the arena bound, the width
+   floor, the shuffle buffer, smoothing in a saved file, and iris_train's
+   refusal.
 
-   Every one of these was written BEFORE its fix and watched to fail. That is
-   the only way to know a test can fail at all, which this project has had to
-   learn three times: a guards check that compared two identical builds, a
-   version check that counted one place while the file contradicted itself, and
-   a continuous-integration job that grepped for a word matching both PASS and
-   FAIL.
-
-   One of these tests was itself wrong when written: F sized its arena for 12
-   hidden units and asked for 16, so iris_init correctly refused and the test
-   read a null instrument -- reporting the library broken when the library was
-   right. It is recorded here rather than quietly corrected, because a test
-   suite that hides its own history teaches nothing.
+   Each test states the behaviour it holds and fails on a header that lacks
+   that behaviour; breaking the behaviour and watching the test go red is the
+   only way to know a test can fail at all. A test that passes whether or not the behaviour is there is
+   worse than none, because it is counted as evidence.
 
      sh build.sh regressions
    ========================================================================= */
@@ -22,10 +18,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+/* <math.h> for NAN only: a not-a-number is written NAN, never 0.0f/0.0f, so
+   the float-divide-by-zero sanitizer can run over this file. */
 #include <math.h>
-static int fails = 0;
+static int fails = 0, checks = 0;
 static void check(const char *name, int ok, const char *detail) {
   printf("  [%s] %-46s %s\n", ok ? "PASS" : "FAIL", name, detail);
+  checks++;
   if (!ok) fails++;
 }
 static unsigned char A[IRIS_ARENA(2,16,3,64)];   /* widest shape any test uses */
@@ -71,7 +70,10 @@ int main(void){
     check("C null guards match each function's convention",
           io_null==io_bad && ia_null==ia_bad && st_null!=IRIS_STATUS_OK, d); }
 
-  /* D — a loaded file with a degenerate range must not produce not-a-number. */
+  /* D — a loaded file with a zero-width input range must load, and play.
+         An input whose range has zero width is a still input (iris.h,
+         PART 5): the file format accepts it, and the instrument ignores that
+         input and keeps responding to the others. */
   { iris *k=iris_init(A,sizeof A,2,12,3,64,7); demos(k,8);
     iris_train(k);
     static unsigned char f[8192];
@@ -99,7 +101,7 @@ int main(void){
     int responds = ok && (hi-lo) > 1e-4f;
     snprintf(d,sizeof d,"load=%d  output span across the live channel %.6f  status %d",
              ok, hi-lo, iris_get_status(k2));
-    check("D a loaded zero-width range leaves a working instrument", !ok || responds, d); }
+    check("D a loaded zero-width range leaves a working instrument", ok && responds, d); }
 
   /* E — asking for advice must leave every reported field as it found it. */
   { iris *k=iris_init(A,sizeof A,2,12,3,64,7); demos(k,10);
@@ -117,11 +119,10 @@ int main(void){
     check("E advice restores the instrument completely", same, d); }
 
   /* F — the collapse detector must fire on a real collapse and stay quiet on a
-         mapping that only varies away from the corners.
-     NOTE: this test previously sized its arena for 12 hidden units and asked
-     for 16, so iris_init correctly returned null and the test read a null
-     instrument -- reporting the library broken when the library was right.
-     Every instrument here is now checked. */
+         mapping that only varies away from the corners. Every instrument is
+         checked for null first: an arena too small for the shape asked for
+         makes iris_init refuse, and reading that null instrument would blame
+         the library for the test's mistake. */
   { static float scr[65536];
     iris *k=iris_init(A,sizeof A,2,16,3,64,5);
     if(!k){ check("F collapse detector",0,"iris_init refused -- arena too small"); goto done; }
@@ -144,15 +145,20 @@ int main(void){
           flagged_collapse && quiet_on_bump, d); }
 
   /* G — one rule for "did the call work": 0 means it did nothing. Identifiers
-         start at 1, so a successful iris_record is naturally non-zero. */
+         start at 1, so a successful iris_record is naturally non-zero. Every
+         one of 64 records into a store of 32 is counted, so one record past
+         the capacity cannot hide behind the last return value. */
   { iris *k=iris_init(B,sizeof B,1,12,1,32,1);
     float in=0.5f,o=0.5f;
-    int good=iris_record(k,&in,&o);
-    int bad=0;
-    for(int i=0;i<64;i++) bad=iris_record(k,&in,&o);   /* past capacity 32 */
-    snprintf(d,sizeof d,"first record returned %d, a full store returned %d", good, bad);
+    int accepted=0, refused=0, ids_in_order=1;
+    for(int i=0;i<64;i++){
+      int r=iris_record(k,&in,&o);
+      if(r>0){ accepted++; if(r!=accepted) ids_in_order=0; }
+      else if(r==0) refused++; }
+    snprintf(d,sizeof d,"64 records into a store of 32: %d accepted (ids 1..%d in order %d), "
+             "%d refused, count %d", accepted, accepted, ids_in_order, refused, iris_count(k));
     check("G a refused record returns 0, a good one returns its id",
-          good>0 && bad==0, d); }
+          accepted==32 && refused==32 && ids_in_order && iris_count(k)==32, d); }
 
   /* H — iris_train(k) exists and needs no arguments a beginner cannot explain. */
   { iris *k=iris_init(B,sizeof B,1,12,1,32,1);
@@ -181,7 +187,7 @@ int main(void){
       float bad_in[2]={0.5f,0.5f}, bad_out[1]={0.95f};
       int id=iris_record(r,bad_in,bad_out); iris_train(r);
       iris_delete_id(r,id); iris_train(r);
-      if (iris_get_status(r)!=IRIS_STATUS_OK) continue;
+      if (iris_get_status(r)!=IRIS_STATUS_OK) continue;   /* counted: runs < 40 fails */
       float a2=0; { int n=0; for(int a=0;a<=10;a++) for(int c2=0;c2<=10;c2++){
         float in[2]={a/10.0f,c2/10.0f},got[1];
         float want=0.15f+0.7f*0.5f*(in[0]+in[1]);
@@ -189,9 +195,9 @@ int main(void){
         a2/=n; }
       runs++; sum_before+=b; sum_after+=a2; if (a2 > b*1.5f) worse++;
     }
-    snprintf(d,sizeof d,"%d of %d runs left the gaps worse; mean ratio %.1fx",
-             worse, runs, (double)(sum_after/sum_before));
-    check("I delete-and-retrain restores the instrument", worse==0, d); }
+    snprintf(d,sizeof d,"%d of %d healthy runs (want 40) left the gaps worse; mean ratio %.2fx",
+             worse, runs, runs ? (double)(sum_after/sum_before) : 0.0);
+    check("I delete-and-retrain restores the instrument", runs==40 && worse==0, d); }
 
   /* J — iris_delete_nearest must obey the rule its three siblings obey. */
   { snprintf(d,sizeof d,"index %d  id %d  last %d  nearest %d",
@@ -213,9 +219,9 @@ int main(void){
     check("K out-of-range channel index is refused, not computed",
           bad_in==0.0f && bad_out==0.0f && bad_den==0.0f, d); }
 
-  /* M — D5: a refused record must say WHICH of its three reasons applied. */
+  /* M — a refused record must say WHICH of its reasons applied. */
   { iris *k=iris_init(B,sizeof B,1,12,1,32,1);
-    float in=0.5f,o=0.5f, nan=0.0f/0.0f;
+    float in=0.5f,o=0.5f, nan=NAN;
     iris_record(k,&in,&o);
     int s_full=0, s_nan=0;
     iris_record(k,&nan,&o); s_nan=(int)iris_get_status(k);
@@ -227,7 +233,7 @@ int main(void){
     check("M a refused record distinguishes its reasons",
           s_nan==IRIS_NAN_TRAPPED && s_full==IRIS_STORE_FULL, d); }
 
-  /* N — D16: a non-positive slice budget must do nothing, not 2,000 epochs. */
+  /* N — a non-positive slice budget must do nothing, not 2,000 epochs. */
   { iris *k=iris_init(B,sizeof B,1,12,1,32,1);
     for(int i=0;i<6;i++){ float in=i/5.0f,o=i/5.0f; iris_record(k,&in,&o); }
     iris_train_begin(k,20000);
@@ -237,7 +243,7 @@ int main(void){
     snprintf(d,sizeof d,"slice(0) advanced the epoch count by %d", after-before);
     check("N a zero slice budget does nothing", after==before, d); }
 
-  /* O — D14: training an instrument with nothing in it must not report success. */
+  /* O — training an instrument with nothing in it must not report success. */
   { iris *k=iris_init(B,sizeof B,1,12,1,32,1);
     for(int i=0;i<6;i++){ float in=i/5.0f,o=i/5.0f; iris_record(k,&in,&o); }
     iris_train(k);
@@ -267,15 +273,12 @@ int main(void){
              acc,(long)(bits*(bits-1)/2));
     check("P no two-bit corruption survives on a 1-in/1-out file", acc==0, d); }
 
-  /* Q-U — five properties the mutation harness proved had NO working check.
-     The harness itself was broken (it grepped its own output for "failing", a
-     word this file printed unconditionally), so its 100% score was decoration.
-     Fixed, the honest score was 70%: six survivors. Five are below. The sixth,
-     "ignore an unsizeable shape in iris_init", is UNREACHABLE on a 64-bit host
-     by construction -- iris_init validates every dimension against its maximum
-     before calling iris_internal_bytes, so the product cannot overflow a 64-bit
-     size_t and `need` is never 0. It fires only where size_t is 16 bits. Not
-     writing a test that cannot fail. */
+  /* Q-U — five small properties of the interface. A sixth, "iris_init
+     refuses a shape whose size cannot be computed", cannot be broken on a
+     host whose size_t is 32 bits or wider: iris_init checks every dimension
+     against its maximum before it sizes the arena, so the product cannot
+     overflow and the size is never 0. It can matter only where size_t is 16
+     bits, so no test is written for it here. */
 
   /* Q — the arena bound. An arena one byte short must be refused. */
   { size_t need = iris_size(1,12,1,32);
@@ -334,10 +337,10 @@ int main(void){
     check("U iris_train reports the trainer's refusal", trained == 0, d); }
 
 done:
-  /* Do not print the word "failing" when nothing failed. Any tool that reads
-     this output -- tools/mutate.sh did -- cannot tell the two apart otherwise.
-     The exit code below is the real answer; this line is for humans. */
-  if (fails) printf("\n  %d of 20 FAILING\n", fails);
-  else       printf("\n  all 20 pass\n");
+  /* The exit status is the answer; this line is for a person. It does not
+     print the word "failing" when nothing failed, so a tool reading the
+     output cannot mistake one outcome for the other. */
+  if (fails) printf("\n  %d of %d FAILING\n", fails, checks);
+  else       printf("\n  all %d pass\n", checks);
   return fails ? 1 : 0;
 }
