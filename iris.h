@@ -273,14 +273,24 @@
       ESP32-S3 compiler emits no fused instruction in this file with it and
       dozens without it (tests/pragma_leak.sh prints the count).
 
-      BOTH ARE SCOPED TO THIS FILE. float_control(push) saves clang's whole
-      floating-point state and push_options saves GCC's optimisation
-      settings; the matching pops are the last lines of this file. Code after
-      the #include therefore compiles exactly as it would without iris.h,
-      contraction included where the compiler's default allows it.
-      tests/pragma_leak.sh checks both halves on the generated assembly: a*b+c
-      in a function after the include still becomes a fused multiply-add, and
-      no iris function contains one.
+      BOTH ARE SCOPED TO THIS FILE. push_options saves GCC's optimisation
+      settings, and pop_options, the last line of this file, restores them.
+      On clang, float_control(push) saves the whole floating-point state and
+      float_control(pop) at the end restores it. Just before that pop,
+      STDC FP_CONTRACT DEFAULT puts contraction back to what the command
+      line asks for, because clang honours float_control only on processors
+      it supports strict floating point for (64-bit ARM, x86, RISC-V and
+      PowerPC among them) and ignores it on the rest (32-bit ARM,
+      WebAssembly, Xtensa and AVR among them, measured with clang 22), with
+      a warning that the diagnostic lines around it keep out of your build.
+      Code after the #include therefore compiles as it would without
+      iris.h, contraction included where the compiler's default allows it,
+      with one exception: on those other clang targets a contraction pragma
+      of your own that comes BEFORE the #include gives way to the command
+      line's setting, so put yours after it. tests/pragma_leak.sh checks this
+      on the generated assembly: a*b+c in a function after the include still
+      becomes a fused multiply-add, no iris function contains one, and on a
+      laptop your own pragma before the include survives it.
 
       Two consequences. GCC does not inline a function that carries an
       optimize setting into a function whose settings differ, so when your
@@ -291,7 +301,10 @@
       laptop and a board, say) switches contraction off in its own code too,
       as tests/audit.c does.                                                */
 #if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wignored-pragmas"
 #pragma float_control(push)
+#pragma clang diagnostic pop
 #pragma STDC FP_CONTRACT OFF
 #elif defined(__GNUC__)
 #pragma GCC push_options
@@ -3341,11 +3354,16 @@ IRIS_API int iris_classify_1nn(const iris *k, const float *in, float *out) { if 
   return k->ex_id[best];
 }
 
-/* The end of the floating-point scope opened in the determinism contract at
-   the top of this file: code after the #include compiles as if iris.h had
-   never touched the compiler's settings. */
+/* The end of the floating-point scope opened by defence 3 of the determinism
+   contract at the top of this file, which explains each line: code after the
+   #include gets back the contraction setting it had before it, or on the
+   clang targets named there, the command line's. */
 #if defined(__clang__)
+#pragma STDC FP_CONTRACT DEFAULT
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wignored-pragmas"
 #pragma float_control(pop)
+#pragma clang diagnostic pop
 #elif defined(__GNUC__)
 #pragma GCC pop_options
 #endif

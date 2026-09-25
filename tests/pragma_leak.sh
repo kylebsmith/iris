@@ -12,7 +12,10 @@
 # different instrument. iris.h therefore switches contraction off -- clang's
 # #pragma STDC FP_CONTRACT OFF, GCC's #pragma GCC optimize ("fp-contract=off")
 # -- inside a push/pop pair, so that code after the #include is compiled as
-# if the header had not been there.
+# if the header had not been there. Clang honours its push/pop pair,
+# float_control, only on some processors (64-bit ARM and x86 among them);
+# on the rest (32-bit ARM among them) iris.h ends its scope with
+# #pragma STDC FP_CONTRACT DEFAULT, the command line's setting, instead.
 #
 # This script compiles one translation unit to assembly: iris.h, then one
 # wrapper per public function (the wrappers do no arithmetic of their own),
@@ -23,7 +26,12 @@
 #     alone, and that default contracts a*b+c;
 #   - every other function to contain none: no iris arithmetic is fused,
 #     whether it was inlined into a wrapper (clang) or kept out of line
-#     (GCC does not inline across a change of optimize settings).
+#     (GCC does not inline across a change of optimize settings);
+#   - no warning of any kind from the compiler;
+#   - where the push/pop pair is honoured (every GCC build, and clang on
+#     this machine), a contraction-off pragma of the includer's own placed
+#     BEFORE the #include to survive it: built that way, user_fma must
+#     contain no fused instruction.
 #
 # THE BUILDS. Apple clang (cc), Homebrew clang 22 and gcc-15, at -O2, as C
 # and as C++, on this machine's processor. Clang contracts a*b+c by default;
@@ -33,7 +41,9 @@
 # baseline x86-64 instruction set has no fused multiply-add to emit. When
 # installed, the ESP32-S3 compiler (xtensa-esp32s3-elf-gcc, at -Os, the
 # Arduino core's level) and a Cortex-M4 compiler (arm-none-eabi-gcc) are
-# checked the same way, in the Arduino core's GNU modes.
+# checked the same way, in the Arduino core's GNU modes, and so is clang
+# for a Cortex-M7, a 32-bit ARM core with a fused multiply-add where clang
+# ignores float_control.
 #
 # POSITIVE CONTROL. Every build is repeated against a copy of iris.h with its
 # two contraction pragmas deleted, and there the iris functions MUST contain
@@ -48,6 +58,13 @@ sed -e '/#pragma STDC FP_CONTRACT OFF/d' \
     -e '/#pragma GCC optimize ("fp-contract=off")/d' \
     "$ROOT/iris.h" > "$T/stripped/iris.h"
 cat > "$T/unit.c" <<'UNIT'
+#ifdef USER_OFF_FIRST
+#if defined(__clang__)
+#pragma STDC FP_CONTRACT OFF
+#else
+#pragma GCC optimize ("fp-contract=off")
+#endif
+#endif
 #include "iris.h"
 #define NI 2
 #define NH 12
@@ -149,9 +166,10 @@ X86_RE='^[[:space:]]+vfn?m(add|sub)(sub|add)?[0-9][0-9][0-9][ps][sd][[:space:]]'
 XT_RE='^[[:space:]]+(madd|msub|maddn|msubn)[.]s[[:space:]]'
 CM_RE='^[[:space:]]+vfn?m[as][.]f(32|64)[[:space:]]'
 
-# leg <label> <format> <regex> <compiler> <flags...>
+# leg <label> <keep|nokeep> <format> <regex> <compiler> <flags...>
+# keep: also check that the includer's own pragma before the #include survives
 leg() {
-  label=$1; fmt=$2; re=$3; cc=$4; shift 4
+  label=$1; keep=$2; fmt=$3; re=$4; cc=$5; shift 5
   if ! command -v "$cc" >/dev/null 2>&1; then
     printf '  SKIP  %-44s not installed\n' "$label"; return
   fi
@@ -159,11 +177,19 @@ leg() {
     printf '  FAIL  %-44s did not compile: %s\n' "$label" "$(head -1 "$T/err")"; fail=1; return
   fi
   "$cc" "$@" -I"$T/stripped" -S "$T/unit.c" -o "$T/strip.s" 2> /dev/null || : > "$T/strip.s"
+  kept=0
+  if [ "$keep" = keep ]; then
+    "$cc" "$@" -DUSER_OFF_FIRST -I"$ROOT" -S "$T/unit.c" -o "$T/keep.s" 2> /dev/null || : > "$T/keep.s"
+    set -- $(scan "$T/keep.s" "$fmt" "$re")
+    kept=$1
+  fi
   set -- $(scan "$T/real.s" "$fmt" "$re")
   u=$1; o=$2; nf=$3; worst=$4
   set -- $(scan "$T/strip.s" "$fmt" "$re")
   ctl=$2
-  if [ "$nf" -ne "$WRAPPERS" ]; then
+  if grep -q 'warning:' "$T/err"; then
+    printf '  FAIL  %-44s warning: %s\n' "$label" "$(grep -m1 'warning:' "$T/err" | sed 's/.*warning: //')"; fail=1
+  elif [ "$nf" -ne "$WRAPPERS" ]; then
     printf '  FAIL  %-44s %s of the %s wrappers found in the assembly\n' "$label" "$nf" "$WRAPPERS"; fail=1
   elif [ "$ctl" -eq 0 ]; then
     printf '  FAIL  %-44s positive control: no fused instruction even without the pragmas\n' "$label"; fail=1
@@ -171,9 +197,12 @@ leg() {
     printf '  FAIL  %-44s user_fma not fused: the pragma leaks into the includer\n' "$label"; fail=1
   elif [ "$o" -ne 0 ]; then
     printf '  FAIL  %-44s %s fused in iris code (most in %s)\n' "$label" "$o" "$worst"; fail=1
+  elif [ "$kept" -ne 0 ]; then
+    printf '  FAIL  %-44s the includer'"'"'s own pragma before the #include was undone\n' "$label"; fail=1
   else
-    printf '  PASS  %-44s user_fma %s, iris 0 (%s without the pragmas)\n' \
-      "$label" "$u" "$ctl"
+    [ "$keep" = keep ] && note=", own pragma kept" || note=""
+    printf '  PASS  %-44s user_fma %s, iris 0 (%s without the pragmas)%s\n' \
+      "$label" "$u" "$ctl" "$note"
   fi
 }
 
@@ -188,19 +217,28 @@ echo "fused multiply-add: in the includer's code, not in iris's"
 if [ -n "$HRE" ]; then
   for pair in "cc:cc" "clang 22:$LLVM"; do
     name=${pair%%:*}; cc=${pair#*:}
-    leg "$name, C   -std=c99 -O2"     $HOSTFMT "$HRE" "$cc" -x c -std=c99 -O2 $HFLAGS
-    leg "$name, C++ -std=c++17 -O2"   $HOSTFMT "$HRE" "$cc" -x c++ -std=c++17 -O2 $HFLAGS
+    leg "$name, C   -std=c99 -O2"   keep $HOSTFMT "$HRE" "$cc" -x c -std=c99 -O2 $HFLAGS
+    leg "$name, C++ -std=c++17 -O2" keep $HOSTFMT "$HRE" "$cc" -x c++ -std=c++17 -O2 $HFLAGS
   done
-  leg "gcc-15, C   -std=gnu99 -O2"     $HOSTFMT "$HRE" gcc-15 -x c -std=gnu99 -O2 $HFLAGS
-  leg "gcc-15, C++ -std=gnu++17 -O2"   $HOSTFMT "$HRE" gcc-15 -x c++ -std=gnu++17 -O2 $HFLAGS
+  leg "gcc-15, C   -std=gnu99 -O2"   keep $HOSTFMT "$HRE" gcc-15 -x c -std=gnu99 -O2 $HFLAGS
+  leg "gcc-15, C++ -std=gnu++17 -O2" keep $HOSTFMT "$HRE" gcc-15 -x c++ -std=gnu++17 -O2 $HFLAGS
 fi
 XT=$HOME/Library/Arduino15/packages/esp32/tools/esp-x32/2507/bin/xtensa-esp32s3-elf-gcc
 CM=/Applications/ARM/bin/arm-none-eabi-gcc
-leg "ESP32-S3, C   -std=gnu17 -Os"     elf "$XT_RE" "$XT" -x c -std=gnu17 -Os -mlongcalls
-leg "ESP32-S3, C++ -std=gnu++2a -Os"   elf "$XT_RE" "$XT" -x c++ -std=gnu++2a -Os -mlongcalls
-leg "Cortex-M4, C   -std=gnu17 -O2"    elf "$CM_RE" "$CM" -x c -std=gnu17 -O2 \
+leg "ESP32-S3, C   -std=gnu17 -Os"   keep elf "$XT_RE" "$XT" -x c -std=gnu17 -Os -mlongcalls
+leg "ESP32-S3, C++ -std=gnu++2a -Os" keep elf "$XT_RE" "$XT" -x c++ -std=gnu++2a -Os -mlongcalls
+leg "Cortex-M4, C   -std=gnu17 -O2"  keep elf "$CM_RE" "$CM" -x c -std=gnu17 -O2 \
     -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
-leg "Cortex-M4, C++ -std=gnu++17 -O2"  elf "$CM_RE" "$CM" -x c++ -std=gnu++17 -O2 \
+leg "Cortex-M4, C++ -std=gnu++17 -O2" keep elf "$CM_RE" "$CM" -x c++ -std=gnu++17 -O2 \
     -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
+# clang ignores float_control here, so the includer's own earlier pragma is
+# not kept (iris.h says so); the rest must hold, with no warning
+for pair in "cc:cc" "clang 22:$LLVM"; do
+  name=${pair%%:*}; cc=${pair#*:}
+  leg "$name, Cortex-M7, C   -O2"   nokeep elf "$CM_RE" "$cc" -x c -std=c99 -O2 \
+      --target=thumbv7em-none-eabihf -mcpu=cortex-m7 -mfloat-abi=hard -ffreestanding
+done
+leg "clang 22, Cortex-M7, C++ -O2" nokeep elf "$CM_RE" "$LLVM" -x c++ -std=c++17 -O2 \
+    --target=thumbv7em-none-eabihf -mcpu=cortex-m7 -mfloat-abi=hard -ffreestanding -nostdinc++
 [ "$fail" = 0 ] && echo "  pragma scope holds" || echo "  PRAGMA SCOPE BROKEN"
 exit $fail

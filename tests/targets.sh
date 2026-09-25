@@ -14,7 +14,11 @@
 # worth having if it fires where it should and nowhere else, so this script
 # compiles one small translation unit (the playing and training calls a sketch
 # makes) for each target below.
-#   BUILDS   must compile, with no error.
+#   BUILDS   must compile with no error and no warning under -Wall -Wextra.
+#            The warning half matters: clang ignores some pragmas on some
+#            processors (float_control on 32-bit ARM, WebAssembly and AVR)
+#            and says so in every build, so the clang cross targets are here
+#            too.
 #   REFUSES  must fail, and the failure must be iris's own #error -- a build
 #            that fails for any other reason (a missing target, a missing
 #            header) is reported as a failure of this script, not as a pass.
@@ -48,8 +52,12 @@ target() {
   if ! command -v "$cc" >/dev/null 2>&1; then
     printf '  SKIP  %-8s %-58s not installed\n' "$want" "$label"; return
   fi
-  if "$cc" -ffreestanding "$@" -I"$ROOT" -c "$T/unit.c" -o "$T/unit.o" > "$T/out" 2>&1; then
+  if "$cc" -ffreestanding -Wall -Wextra "$@" -I"$ROOT" -c "$T/unit.c" -o "$T/unit.o" > "$T/out" 2>&1; then
     got=BUILDS
+    if grep -q 'warning:' "$T/out"; then
+      printf '  FAIL  %-8s %-58s warning: %s\n' "$want" "$label" \
+        "$(grep -m1 'warning:' "$T/out" | sed 's/.*warning: //')"; fail=1; return
+    fi
   elif grep -q "$MSG" "$T/out"; then
     got=REFUSES
   else
@@ -84,6 +92,11 @@ target BUILDS  "xtensa-esp32s3-elf-gcc, C"                  "$XT" -mlongcalls -x
 target BUILDS  "xtensa-esp32s3-elf-gcc, C++ (Arduino mode)" "$XT" -mlongcalls -x c++ -std=gnu++2a -Os
 target BUILDS  "avr-gcc 7.3.0, ATmega328P, C"               "$AVR" -mmcu=atmega328p -x c -std=gnu11 -Os
 target BUILDS  "avr-gcc 7.3.0, ATmega328P, C++"             "$AVR" -mmcu=atmega328p -x c++ -std=gnu++11 -Os
+target BUILDS  "clang 22, Cortex-M7, C"                     "$LLVM" --target=thumbv7em-none-eabihf -mcpu=cortex-m7 -mfloat-abi=hard -x c -std=c99 -O2
+target BUILDS  "clang 22, Cortex-M7, C++"                   "$LLVM" --target=thumbv7em-none-eabihf -mcpu=cortex-m7 -mfloat-abi=hard -x c++ -nostdinc++ -O2
+target BUILDS  "Apple clang, Cortex-M7, C"                  cc --target=thumbv7em-none-eabihf -mcpu=cortex-m7 -mfloat-abi=hard -x c -std=c99 -O2
+target BUILDS  "clang 22, 32-bit RISC-V (rv32imafc)"        "$LLVM" --target=riscv32-unknown-elf -march=rv32imafc -mabi=ilp32f -x c -std=c99 -O2
+target BUILDS  "clang 22, ATmega328P"                       "$LLVM" --target=avr -mmcu=atmega328p -x c -std=c99 -Os
 target REFUSES "clang 22, 32-bit x86 with x87 arithmetic"   "$LLVM" --target=i686-linux-gnu -mno-sse -mfpmath=387 -x c -std=c99 -O2
 target REFUSES "Apple clang, 32-bit x86 with x87 arithmetic" cc --target=i686-linux-gnu -mno-sse -mfpmath=387 -x c -std=c99 -O2
 target REFUSES "clang 22, -ffp-eval-method=double"          "$LLVM" -ffp-eval-method=double -x c -std=c99 -O2
