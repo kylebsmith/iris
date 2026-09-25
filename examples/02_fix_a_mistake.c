@@ -25,11 +25,28 @@
 static unsigned char memory[IRIS_ARENA(2, 12, 3, 64)];
 static const float probe[2] = { 0.60f, 0.40f };
 
+/* The status values by name, for printing: the header keeps no table of
+   names, so a program that prints a status carries its own. The meaning of
+   each is beside its value in the header, at the iris_status enum. */
+static const char *status_name(iris_status s) {
+  switch (s) {
+    case IRIS_STATUS_OK:         return "IRIS_STATUS_OK";
+    case IRIS_TRAINING_DIVERGED: return "IRIS_TRAINING_DIVERGED";
+    case IRIS_NAN_TRAPPED:       return "IRIS_NAN_TRAPPED";
+    case IRIS_RIDGE_ESCALATED:   return "IRIS_RIDGE_ESCALATED";
+    case IRIS_NOT_FITTED:        return "IRIS_NOT_FITTED";
+    case IRIS_DIVERGED_STUCK:    return "IRIS_DIVERGED_STUCK";
+    case IRIS_STORE_FULL:        return "IRIS_STORE_FULL";
+    case IRIS_SOLVE_COLLAPSED:   return "IRIS_SOLVE_COLLAPSED";
+  }
+  return "an unknown status";
+}
+
 static void play(iris *k, const char *label) {
   float out[3];
   iris_predict(k, probe, out);
-  printf("  %-26s %.3f  %.3f  %.3f   (status %d)\n",
-         label, out[0], out[1], out[2], (int)iris_get_status(k));
+  printf("  %-26s %.3f  %.3f  %.3f   (%s)\n",
+         label, out[0], out[1], out[2], status_name(iris_get_status(k)));
 }
 
 int main(void) {
@@ -59,9 +76,9 @@ int main(void) {
         It never enters the store, so it can never poison a fit. */
   { const float bad[2] = { NAN, 0.5f }, any[3] = { 0.5f, 0.5f, 0.5f };
     int id = iris_record(k, bad, any);
-    int status = (int)iris_get_status(k);
+    const char *status = status_name(iris_get_status(k));
     int count = iris_count(k);
-    printf("  glitched frame -> id %d, status %d, still %d demonstrations\n\n",
+    printf("  glitched frame -> id %d, %s, still %d demonstrations\n\n",
            id, status, count); }
 
   if (!iris_train(k)) { printf("training refused\n"); return 1; }
@@ -87,6 +104,9 @@ int main(void) {
                        IRIS_STRESS_MIN_EX); return 1; }
   printf("\n  the residual ledger says: id %d is fighting the others"
          " (margin %.2f, flag threshold %.2f)\n", id, (double)margin, (double)IRIS_STRESS_FLAG);
+  if (margin < IRIS_STRESS_FLAG)
+    printf("  below the flag threshold, so a hint to listen to that take again, not an\n"
+           "  accusation; here we recorded the bad take ourselves, so it goes\n");
 
   /* 6. DELETE IT, AND TRAIN AGAIN. The delete removes the take from the
         store, but not from the weights: they were bent by it, and here one
@@ -96,9 +116,9 @@ int main(void) {
         keep the take's influence. */
   iris_delete_id(k, id);
   { float e = iris_continue(k, 100);
-    int status = (int)iris_get_status(k);
+    const char *status = status_name(iris_get_status(k));
     printf("  deleted id %d, %d demonstrations remain\n", id, iris_count(k));
-    printf("  iris_continue (warm) returns %.0f, status %d\n", (double)e, status); }
+    printf("  iris_continue (warm) returns %.0f, %s\n", (double)e, status); }
 
   /* 7. THE CURE IS iris_train. It starts over from the instrument's own seed
         and fits only the demonstrations stored now, so the deleted take
