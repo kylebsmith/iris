@@ -50,6 +50,11 @@ Interface:
   take `iris *`, not `const iris *`: the first three write the status, and the
   neighbour functions and `iris_novelty` fit the ranges of an instrument never
   fitted.
+- `iris_novelty` returns -1, not 0, for a null instrument and for a shape too
+  big for the translation unit, and `iris_example_stress` returns -1, not 0,
+  for a null instrument, an index out of range, and before any training run or
+  solve: 0 is a real answer from both (exactly on a take; never missed), so a
+  refusal read as one.
 - `iris_train_begin` now reseeds from the instrument's seed, as `iris_train`
   does, so a sliced run is bit-identical to `iris_train`.
 - `iris_suggest_smoothing` needs `IRIS_ARENA(n_in, n_hid, n_out, cap)` bytes of

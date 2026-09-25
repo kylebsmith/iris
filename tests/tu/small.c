@@ -51,7 +51,7 @@ int main(void) {
   out[0] = out[1] = -1.0f;
   check("iris_classify_1nn refuses and writes the range centre",
         iris_classify_1nn(k, in, out) == -1 && out[0] == c0 && out[1] == c1);
-  check("iris_novelty refuses", iris_novelty(k, in) == 0.0f);
+  check("iris_novelty refuses with -1", iris_novelty(k, in) == -1.0f);
   check("iris_delete_nearest refuses", iris_delete_nearest(k, in) == 0);
   check("iris_train refuses", iris_train(k) == 0);
   check("iris_train_begin refuses", iris_train_begin(k, 0) == 0);

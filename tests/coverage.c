@@ -72,11 +72,12 @@ int main(void) {
     if (iris_get_smoothing(0)  != 0.0f) bad++;
     if (iris_delete_nearest(0, in) != 0) bad++;
     if (iris_delete_last(0)    != 0)    bad++;
-    if (iris_novelty(0, in)    != 0.0f) bad++;
+    if (iris_novelty(0, in)    != -1.0f) bad++;
+    if (iris_example_stress(0, 0) != -1.0f) bad++;
     if (iris_loo_error(0, 100) != -1.0f) bad++;
     if (iris_train_elm(0, 1e-4f, SCR, sizeof SCR) != -1) bad++;
     if (iris_classify_1nn(0, in, out) != -1) bad++;
-    snprintf(d, sizeof d, "%d of 18 calls answered wrongly", bad);
+    snprintf(d, sizeof d, "%d of 19 calls answered wrongly", bad);
     check("a null instrument refuses across the whole surface", bad == 0, d); }
 
   /* ---- iris_predict on a null instrument writes nothing -----------------
@@ -141,10 +142,17 @@ int main(void) {
     float oob_lo = iris_example_stress(k, -1);
     float oob_hi = iris_example_stress(k, 999);
     float real   = iris_example_stress(k, 0);
-    snprintf(d, sizeof d, "untrained %.2f, idx -1 %.2f, idx 999 %.2f, real %.2f",
-             (double)before, (double)oob_lo, (double)oob_hi, (double)real);
-    check("example_stress is 0 before training and out of range",
-          before == 0.0f && oob_lo == 0.0f && oob_hi == 0.0f && real > 0.0f, d); }
+    /* a load empties the ledger, so a loaded instrument has none to read */
+    static unsigned char file[4096];
+    const size_t fn = iris_save(k, file, sizeof file);
+    iris *kl = iris_init(B, sizeof B, 2, 12, 2, 32, 1u);
+    const int loaded = fn > 0 && iris_load(kl, file, fn);
+    float after_load = iris_example_stress(kl, 0);
+    snprintf(d, sizeof d, "untrained %.2f, idx -1 %.2f, idx 999 %.2f, loaded %.2f, real %.2f",
+             (double)before, (double)oob_lo, (double)oob_hi, (double)after_load, (double)real);
+    check("example_stress refuses with -1: untrained, out of range, loaded",
+          before == -1.0f && oob_lo == -1.0f && oob_hi == -1.0f && loaded
+          && after_load == -1.0f && real > 0.0f, d); }
 
   /* ---- worst_example below the crowd threshold -------------------------- */
   { iris *k = filled(A, sizeof A, 4);           /* under IRIS_STRESS_MIN_EX */

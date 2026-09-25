@@ -351,13 +351,14 @@
      int   iris_classify_1nn(k, in, out)  the nearest demonstration's outputs
                                           exactly; its identifier, or -1
      float iris_novelty(k, in)            0 on a demonstration, rising to 1
-                                          away from them
+                                          away from them; -1 if refused
 
    DIAGNOSTICS
      iris_status iris_get_status(k)       is the INSTRUMENT unwell? 0 is
                                           healthy
      float iris_example_stress(k, idx)    how hard one demonstration fought
-                                          the others; 1.0 is ordinary
+                                          the others; 1.0 is ordinary, -1 if
+                                          refused
      int   iris_worst_example(k, margin)  position of the one that fought
                                           hardest, or -1
      int   iris_worst_example_id(k, margin)  its identifier, or -1
@@ -1240,19 +1241,18 @@ struct iris {
        the measurement on success, -1 on refusal.
    That covers iris_continue, iris_continue_to_plateau, iris_train_elm,
    iris_loo_error, iris_suggest_smoothing, iris_worst_example,
-   iris_worst_example_id, iris_index_of, iris_id_at and iris_classify_1nn.
-   These cannot use rule 1 because 0 is often a good answer: a training
-   error of 0 is a perfect fit, and no ridge doublings is the best a solve
-   can do.
+   iris_worst_example_id, iris_index_of, iris_id_at, iris_classify_1nn,
+   iris_novelty and iris_example_stress. These cannot use rule 1 because 0 is
+   often a good answer: a training error of 0 is a perfect fit, no ridge
+   doublings is the best a solve can do, and a novelty of 0 means the
+   reading is exactly on a demonstration.
 
    THE READERS cannot fail and so answer every question: iris_count,
    iris_capacity, iris_seed, iris_is_trained, iris_last_error,
-   iris_train_progress, iris_train_busy, iris_train_epochs_done,
-   iris_get_smoothing, iris_novelty and iris_example_stress answer a null
-   instrument with 0 (iris_get_status with IRIS_NOT_FITTED, iris_novelty an
-   empty store with 1), and iris_example_stress answers an index out of
-   range with 0. iris_train_slice returns 1 while its run has more to do and
-   0 once the run is over, whatever ended it.
+   iris_train_progress, iris_train_busy, iris_train_epochs_done and
+   iris_get_smoothing answer a null instrument with 0 (iris_get_status with
+   IRIS_NOT_FITTED). iris_train_slice returns 1 while its run has more to do
+   and 0 once the run is over, whatever ended it.
 
    And a separate question, with a separate answer: is the INSTRUMENT in
    trouble? That is iris_get_status, below. A call can succeed on an
@@ -2058,10 +2058,15 @@ IRIS_API void iris_predict(iris *k, const float *in, float *out) { if (!k) retur
    A reading that is not finite reads as 1, as far from home as it gets, and
    is answered before any fitting, so then iris_novelty writes nothing, the
    status included. An empty store reads 1 as well.
+
+   It refuses with -1, rule 2 of the failure rules above iris_get_status, for
+   a null instrument and for a shape too big for this translation unit's
+   working arrays (iris_internal_shape_fits). A distance is never negative,
+   so a refusal cannot be mistaken for 0, a reading exactly on a take.
    ========================================================================== */
 
-IRIS_API float iris_novelty(iris *k, const float *in) { if (!k) return 0.0f;
-  if (!iris_internal_shape_fits(k)) return 0.0f;
+IRIS_API float iris_novelty(iris *k, const float *in) { if (!k) return -1.0f;
+  if (!iris_internal_shape_fits(k)) return -1.0f;
   if (k->n_ex == 0) return 1.0f;
   for (int i = 0; i < k->n_in; ++i) if (iris_internal_isbad(in[i])) return 1.0f;
   if (!k->fitted) iris_internal_fit_ranges(k);
@@ -3224,9 +3229,14 @@ IRIS_API float iris_suggest_smoothing(iris *k, void *scratch, size_t scratch_byt
 /* Relative stress of one demonstration: its integrated training error
    divided by the mean over all of them, so 1.0 is an ordinary one. This is
    a RANKING, and it is meaningful at any count; only the decision to speak
-   needs a crowd. 0.0f before any training, or for an index out of range. */
-IRIS_API float iris_example_stress(const iris *k, int idx) { if (!k) return 0.0f;
-  if (idx < 0 || idx >= k->n_ex || k->res_epochs == 0 || k->n_ex == 0) return 0.0f;
+   needs a crowd. It refuses with -1 (rule 2 of the failure rules) for a null
+   instrument, for an index out of range, and when there is no ledger to
+   read: no training run or solve since the instrument was made or loaded.
+   A stress is never negative, so a refusal cannot be mistaken for 0, a
+   demonstration the network never missed. It is 0 for every demonstration
+   when none was ever missed at all. */
+IRIS_API float iris_example_stress(const iris *k, int idx) { if (!k) return -1.0f;
+  if (idx < 0 || idx >= k->n_ex || k->res_epochs == 0) return -1.0f;
   {
     float sum = 0.0f;
     for (int i = 0; i < k->n_ex; ++i) sum += k->ex_res[i];
