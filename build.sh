@@ -29,7 +29,7 @@
 #                iris.h declares the iris_status values in value order; then
 #                tests/guards_ab.c built with and without -DIRIS_NO_GUARDS:
 #                every healthy line must match and every control line differ
-#   regressions  tests/regressions.c, one test per reviewed defect
+#   regressions  tests/regressions.c, one test per known defect
 #   coverage     tests/coverage.c, the refusal paths (cov measures coverage)
 #   load         tests/load.c, the save format attacked as a parser
 #   train        tests/train.c, the trainers and their refusals
@@ -52,7 +52,9 @@
 #                build with -Werror, CONTRIBUTING.md lists exactly this
 #                script's arms, and
 #                tests/version_check.sh holds tools/version-check.sh to its
-#                rule (a release date only on a release tag)
+#                rule (on a release tag, the CHANGELOG.md heading and
+#                CITATION.cff's date-released must both give the release
+#                date)
 #
 # The whole suite under a tool
 #   sanitize     every test program and example above under
@@ -412,10 +414,10 @@ arm_fuzz_load() {
 # tests in small functions called millions of times, such as
 # iris_internal_norm_in's index check -- and moved by one or two outcomes
 # from run to run.
-# THE THRESHOLDS sit under what the suite measures. Lines: 1,208 of 1,208
+# The thresholds sit under what the suite measures. Lines: 1,219 of 1,219
 # with Apple clang 17 and Homebrew clang 22 alike. Branch outcomes depend on
-# the LLVM version, which decides how many there are: 932 of 1,004 (92.83%)
-# with Apple clang 17, 956 of 1,052 (90.87%) with clang 22, the same in every
+# the LLVM version, which decides how many there are: 943 of 1,016 (92.81%)
+# with Apple clang 17, 967 of 1,064 (90.88%) with clang 22, the same in every
 # run. The clang of the Linux runners is not measured here. So:
 # lines at least 98.0%, branch outcomes at least 88.5%. COV_MIN_LINES and
 # COV_MIN_BRANCHES override them.

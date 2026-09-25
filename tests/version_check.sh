@@ -22,7 +22,7 @@ trap 'rm -rf "$T"' EXIT
 V=$(sed -n 's/^#define IRIS_VERSION_STRING "\(.*\)"$/\1/p' "$ROOT/iris.h")
 fail=0
 
-# a fresh copy of the five files, as committed
+# a fresh copy of the five files, as they stand in the working tree
 fresh() {
   rm -rf "$T/r"
   mkdir -p "$T/r/tools"
@@ -35,8 +35,10 @@ heading() {
   awk -v v="$V" -v t="$1" '!done && /^## [0-9]/ { print "## " v " \342\200\224 " t; done = 1; next } { print }' \
     "$T/r/CHANGELOG.md" > "$T/c" && mv "$T/c" "$T/r/CHANGELOG.md"
 }
-# released <date>: CITATION.cff gains date-released
+# released <date>: CITATION.cff's date-released becomes <date>
 released() { grep -v '^date-released:' "$T/r/CITATION.cff" > "$T/c"; echo "date-released: $1" >> "$T/c"; mv "$T/c" "$T/r/CITATION.cff"; }
+# undated: CITATION.cff loses date-released
+undated() { grep -v '^date-released:' "$T/r/CITATION.cff" > "$T/c"; mv "$T/c" "$T/r/CITATION.cff"; }
 # expect PASS|FAIL <ref type> <label>
 expect() {
   if GITHUB_REF_TYPE=$2 sh "$T/r/tools/version-check.sh" "v$V" > "$T/out" 2>&1; then got=PASS; else got=FAIL; fi
@@ -50,13 +52,13 @@ expect() {
 }
 
 echo "tools/version-check.sh, version $V"
-fresh;                                    expect PASS branch "the files as committed, off a tag"
+fresh;                                    expect PASS branch "the files as they stand, off a tag"
 fresh; heading unreleased;                expect PASS branch "an unreleased heading, off a tag"
 fresh; heading unreleased;                expect FAIL tag    "an unreleased heading, on a tag"
 fresh; heading 2026-10-01;                expect PASS branch "a dated heading, off a tag"
 fresh; heading 2026-10-01; released 2026-10-01
                                           expect PASS tag    "a dated heading and the same date-released, on a tag"
-fresh; heading 2026-10-01;                expect FAIL tag    "a dated heading and no date-released, on a tag"
+fresh; heading 2026-10-01; undated;       expect FAIL tag    "a dated heading and no date-released, on a tag"
 fresh; heading 2026-10-01; released 2026-10-02
                                           expect FAIL tag    "a date-released that is not the heading's, on a tag"
 fresh; heading soon;                      expect FAIL branch "a heading that is neither a date nor unreleased"
