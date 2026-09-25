@@ -240,7 +240,7 @@ It stops at the first failure and says which check failed. One check at a time:
 | `sh build.sh reference` | an independent double-precision reference in Python (skips without numpy, Python's numerical library, and scikit-learn, its machine-learning library) |
 | `sh build.sh mpe`, `sh build.sh sinks` | the output ports in [`extras/`](extras/) |
 | `sh build.sh tiny` | [`docs/tiny.c`](docs/tiny.c), `iris_train` written out again by hand, which must agree with the library to the bit |
-| `sh build.sh docs` | `keywords.txt` lists every public function and type, the programs in [`docs/`](docs/) build with `-Werror`, and `CONTRIBUTING.md` lists every command |
+| `sh build.sh docs` | `keywords.txt` lists every public function and type, the programs in [`docs/`](docs/) build with `-Werror`, `CONTRIBUTING.md` lists every command, and the release version check keeps its rule |
 | `sh build.sh bench` | the browser benchmark in [`extras/bench/`](extras/bench/) |
 | `sh build.sh clean` | remove `build/` |
 

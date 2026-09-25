@@ -111,7 +111,7 @@ jobs:
       - name: tiny (iris_train written again, agreeing to the bit)
         if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
         run: sh build.sh tiny
-      - name: docs (keywords.txt, the programs in docs/, CONTRIBUTING's commands)
+      - name: docs (keywords.txt, the programs in docs/, CONTRIBUTING's commands, the version check)
         if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
         run: sh build.sh docs
       - name: noheap (zero allocator calls, with positive controls)

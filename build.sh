@@ -51,7 +51,9 @@
 #   docs         the files that describe the code, held to it: keywords.txt
 #                (the Arduino IDE's highlighting) lists every public
 #                function and type, the study programs in docs/ build with
-#                -Werror, and CONTRIBUTING.md lists exactly this script's arms
+#                -Werror, CONTRIBUTING.md lists exactly this script's arms,
+#                and tests/version_check.sh holds tools/version-check.sh to
+#                its rule (a release date only on a release tag)
 #
 # THE WHOLE SUITE UNDER A TOOL
 #   sanitize     every test program and example above under
@@ -217,6 +219,7 @@ arm_docs() {
     fail "docs: the commands in CONTRIBUTING.md are not exactly the arms of build.sh"
   fi
   say "PASS  CONTRIBUTING.md lists exactly the $(wc -l < build/docs_arms | tr -d ' ') arms of build.sh"
+  sh tests/version_check.sh
 }
 
 arm_sanitize() {

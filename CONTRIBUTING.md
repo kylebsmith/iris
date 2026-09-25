@@ -78,7 +78,7 @@ sh build.sh examples       # every example, with -Werror, run
 sh build.sh tiny           # docs/tiny.c, iris_train written again, against the library to the bit
 sh build.sh mpe            # the polyphonic-expression output port
 sh build.sh sinks          # the control-change and Open Sound Control ports
-sh build.sh docs           # keywords.txt, the programs in docs/, and this list, against the code
+sh build.sh docs           # keywords.txt, the programs in docs/, this list and the version check, against the code
 
 # the whole suite under a tool
 sh build.sh sanitize       # every test program and example under AddressSanitizer and UndefinedBehaviorSanitizer
