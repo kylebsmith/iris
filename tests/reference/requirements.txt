@@ -1,0 +1,9 @@
+# The versions every number in README.md was measured with, on Python 3.12.
+# numpy runs the reference; scikit-learn is the neighbour and task-level
+# comparison; the other three are scikit-learn's own dependencies, pinned so
+# that an install reproduces the measured environment rather than today's.
+numpy==2.2.4
+scikit-learn==1.8.0
+scipy==1.16.1
+joblib==1.5.3
+threadpoolctl==3.6.0
