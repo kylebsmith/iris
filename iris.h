@@ -3103,9 +3103,9 @@ IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int k
   if (!k->fitted && k->n_ex > 0) iris_fit_ranges((iris *)k);
   const int NIn = k->n_in, NOut = k->n_out;
   if (k->n_ex == 0) { for (int o = 0; o < NOut; ++o) out[o] = 0.0f; return; }
-  if (kk < 1) kk = 1;
-  if (kk > IRIS_KNN_MAXK) kk = IRIS_KNN_MAXK;
   if (kk > k->n_ex) kk = k->n_ex;
+  if (kk > IRIS_KNN_MAXK) kk = IRIS_KNN_MAXK;
+  if (kk < 1) kk = 1;
 
   /* precompute 1/range so the scan does no divisions */
   float inv[IRIS_MAX_IN];
