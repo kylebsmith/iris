@@ -37,17 +37,20 @@ int main(void) {
   const int32_t st = k->status;
   float in[8], out[2] = { -1.0f, -1.0f };
   for (int j = 0; j < 8; ++j) in[j] = 0.3f;
+  /* the substitute: the centre of each demonstrated output range */
+  const float c0 = 0.5f * k->out_lo[0] + 0.5f * k->out_hi[0];
+  const float c1 = 0.5f * k->out_lo[1] + 0.5f * k->out_hi[1];
 
   iris_predict(k, in, out);
   check("iris_predict refuses and writes the range centre",
-        iris_get_status(k) == IRIS_NOT_FITTED && out[0] != -1.0f && out[1] != -1.0f);
+        iris_get_status(k) == IRIS_NOT_FITTED && out[0] == c0 && out[1] == c1);
   out[0] = out[1] = -1.0f;
   iris_knn_predict(k, in, out, 3);
   check("iris_knn_predict refuses and writes the range centre",
-        iris_get_status(k) == IRIS_NOT_FITTED && out[0] != -1.0f && out[1] != -1.0f);
+        iris_get_status(k) == IRIS_NOT_FITTED && out[0] == c0 && out[1] == c1);
   out[0] = out[1] = -1.0f;
   check("iris_classify_1nn refuses and writes the range centre",
-        iris_classify_1nn(k, in, out) == -1 && out[0] != -1.0f && out[1] != -1.0f);
+        iris_classify_1nn(k, in, out) == -1 && out[0] == c0 && out[1] == c1);
   check("iris_novelty refuses", iris_novelty(k, in) == 0.0f);
   check("iris_delete_nearest refuses", iris_delete_nearest(k, in) == 0);
   check("iris_train refuses", iris_train(k) == 0);
