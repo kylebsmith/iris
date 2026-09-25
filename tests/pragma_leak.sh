@@ -47,7 +47,11 @@
 # Arduino core's level) and a Cortex-M4 compiler (arm-none-eabi-gcc) are
 # checked the same way, in the Arduino core's GNU modes, and so is clang
 # for a Cortex-M7, a 32-bit ARM core with a fused multiply-add where clang
-# ignores float_control.
+# ignores float_control. The two ARM microcontroller builds are
+# -ffreestanding: iris.h needs only <stddef.h> and <stdint.h>, which the
+# compiler itself provides that way, and a bare-metal compiler can be
+# installed without a C library (Debian and Ubuntu package newlib, the usual
+# one for arm-none-eabi-gcc, separately).
 #
 # POSITIVE CONTROL. Every build is repeated against a copy of iris.h with its
 # two contraction pragmas deleted, and there the iris functions MUST contain
@@ -257,9 +261,9 @@ leg "ESP32-S3, C   -std=gnu17 -Os"   keep elf "$XT_RE" "$XT" -x c -std=gnu17 -Os
 leg "ESP32-S3, C++ -std=gnu++2a -Os" keep elf "$XT_RE" "$XT" -x c++ -std=gnu++2a -Os -mlongcalls
 FAMILY=arm-none-eabi
 leg "Cortex-M4, C   -std=gnu17 -O2"  keep elf "$CM_RE" "$CM" -x c -std=gnu17 -O2 \
-    -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
+    -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 -ffreestanding
 leg "Cortex-M4, C++ -std=gnu++17 -O2" keep elf "$CM_RE" "$CM" -x c++ -std=gnu++17 -O2 \
-    -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
+    -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 -ffreestanding
 # clang ignores float_control on a Cortex-M7, so the includer's own earlier
 # pragma is not kept there (iris.h says so); the rest must hold, with no
 # warning. Every clang among the host compilers is checked, and a clang with
