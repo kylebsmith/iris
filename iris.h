@@ -1837,13 +1837,22 @@ IRIS_API void iris_internal_span(const iris *k, int c, float *lo, float *hi) {
    is trained toward it and the output scaling divides by the width. The rule:
 
        an output's width is at least max(1e-5 * |lo|, 1e-6), where lo is the
-       smallest value it was shown; a narrower output gets hi = lo + that.
+       smallest value it was shown; a narrower output gets hi = lo + that,
+       or, when lo + that would pass the largest float, lo = hi - that.
 
    That floor is relative for the reason above: an absolute 1e-6 added to a
    value above 32 changes nothing in 32-bit floating point, because the gap
    between representable numbers there is already wider, so the width would
    stay zero and every prediction would be not-a-number. An absolute floor
    works up to 31.77 and fails from 32.72.
+
+   The widening goes downward only at the very top of the float range: an
+   output shown nothing below about 3.40279e38, within 1e-5 of the largest
+   float, would get hi = infinity, and then the output scaling, the
+   substitute a playing function writes (the centre of the range) and the
+   saved file would all hold an infinity. Widened downward, both ends stay
+   finite and lo < hi, so the instrument plays finite numbers and saves
+   (tests/playing.c trains one with each trainer at the largest float).
 
    A LIMIT, STATED RATHER THAN GUARDED. A width is a float, so demonstrations
    that span more than the largest float, about 3.4e38 end to end (values
@@ -1870,7 +1879,11 @@ IRIS_API void iris_internal_fit_ranges(iris *k) { if (!k) return;
     float lo, hi;
     iris_internal_span(k, k->n_in + o, &lo, &hi);
     float w = iris_internal_absf(lo) * 1e-5f;  if (w < 1e-6f) w = 1e-6f;
-    if (hi - lo < w) hi = lo + w;
+    if (hi - lo < w) {
+      const float up = lo + w;
+      if (up <= IRIS_FLT_MAX) hi = up;   /* upward, unless it overflows: */
+      else lo = hi - w;                  /* then downward, see above     */
+    }
     k->out_lo[o] = lo; k->out_hi[o] = hi;
   }
 }

@@ -654,10 +654,12 @@ int main(void) {
   /* ---- the output floor: max(1e-5 * |lo|, 1e-6) -------------------------
      An output shown one value keeps a width, relative to that value with an
      absolute floor near zero, exactly as PART 5 states it. The ranges are
-     fitted by the first neighbour call on a never-fitted instrument. */
-  { const float los[5] = { 500.0f, 0.0f, -2e7f, 3e-3f, 1e30f };
+     fitted by the first neighbour call on a never-fitted instrument. At the
+     largest float the width goes below the value instead, since above it
+     would be infinity. */
+  { const float los[6] = { 500.0f, 0.0f, -2e7f, 3e-3f, 1e30f, 3.4028235e38f };
     int wrong = 0; char first[120] = "";
-    for (int c = 0; c < 5; ++c) {
+    for (int c = 0; c < 6; ++c) {
       static unsigned char M[IRIS_ARENA(1, 8, 1, 8)];
       iris *k = iris_init(M, sizeof M, 1, 8, 1, 8, 3u);
       for (int i = 0; i < 3; ++i) { const float in = (float)i, out = los[c]; iris_record(k, &in, &out); }
@@ -665,15 +667,64 @@ int main(void) {
       iris_knn_predict(k, &q, &o, 2);
       float w = (los[c] < 0.0f ? -los[c] : los[c]) * 1e-5f;
       if (w < 1e-6f) w = 1e-6f;
-      if (k->out_lo[0] != los[c] || k->out_hi[0] != los[c] + w) {
+      const float want_lo = c == 5 ? los[c] - w : los[c], want_hi = c == 5 ? los[c] : los[c] + w;
+      if (k->out_lo[0] != want_lo || k->out_hi[0] != want_hi) {
         wrong++;
-        if (!first[0]) snprintf(first, sizeof first, " -- at %g: hi %.9g, want %.9g",
-                                (double)los[c], (double)k->out_hi[0], (double)(los[c] + w));
+        if (!first[0]) snprintf(first, sizeof first, " -- at %g: %.9g to %.9g, want %.9g to %.9g",
+                                (double)los[c], (double)k->out_lo[0], (double)k->out_hi[0],
+                                (double)want_lo, (double)want_hi);
       }
     }
-    snprintf(d, sizeof d, "%d of 5 constant outputs (500, 0, -2e7, 3e-3, 1e30) off the floor%s",
-             wrong, first);
+    snprintf(d, sizeof d, "%d of 6 constant outputs (500, 0, -2e7, 3e-3, 1e30, the largest "
+             "float) off the floor%s", wrong, first);
     check("an output that never moved gets max(1e-5*|lo|, 1e-6)", wrong == 0, d); }
+
+  /* ---- an output held at the largest float plays and saves ---------------
+     Four demonstrations whose second output is always the largest float,
+     fitted by each trainer. Its range must stay finite, so that a sweep of
+     readings plays only finite numbers inside the range, and the instrument
+     must save and load and play the same bits. With the range widened
+     upward, hi is infinity: the sweep plays infinity and iris_save refuses
+     the instrument. */
+  { int wrong = 0; char first[200] = "";
+    for (int t = 0; t < 2; ++t) {
+      static unsigned char M[IRIS_ARENA(1, 12, 2, 8)], L[IRIS_ARENA(1, 12, 2, 8)];
+      static unsigned char S[IRIS_ELM_SCRATCH(12, 2)], F[1024];
+      iris *k = iris_init(M, sizeof M, 1, 12, 2, 8, 5u);
+      for (int i = 0; i < 4; ++i) {
+        const float in = (float)i, out[2] = { (float)(i * i), 3.4028235e38f };
+        iris_record(k, &in, out);
+      }
+      const int fit = t == 0 ? iris_train(k) == 1 : iris_train_elm(k, 1e-4f, S, sizeof S) >= 0;
+      int bad = 0;
+      for (int i = -200; i <= 500; ++i) {
+        const float q = (float)i / 100.0f;
+        float o[2];
+        iris_predict(k, &q, o);
+        if (!(o[1] >= k->out_lo[1] && o[1] <= k->out_hi[1] && o[1] <= 3.4028235e38f)) bad++;
+      }
+      const size_t n = iris_save(k, F, sizeof F);
+      iris *l = iris_init(L, sizeof L, 1, 12, 2, 8, 9u);
+      const int loaded = n > 0 && iris_load(l, F, n);
+      int same = loaded;
+      for (int i = -20; loaded && i <= 50; ++i) {
+        const float q = (float)i / 10.0f;
+        float a[2], b[2];
+        iris_predict(k, &q, a);
+        iris_predict(l, &q, b);
+        same &= memcmp(a, b, sizeof a) == 0;
+      }
+      const int ok = fit && bad == 0 && n == iris_save_size(k) && same;
+      wrong += !ok;
+      if (!ok && !first[0])
+        snprintf(first, sizeof first, " -- %s: fitted %d, range %g to %g, %d of 701 readings "
+                 "not finite or outside it, saved %d bytes, loads and plays the same %d",
+                 t ? "closed form" : "iris_train", fit, (double)k->out_lo[1],
+                 (double)k->out_hi[1], bad, (int)n, same);
+    }
+    snprintf(d, sizeof d, "%d of 2 trainers left an instrument that plays infinity or will "
+             "not save%s", wrong, first);
+    check("an output at the largest float plays finite numbers and saves", wrong == 0, d); }
 
   /* ---- the playing functions take a non-const instrument -----------------
      The pointers above only compile against the non-const signatures; this
