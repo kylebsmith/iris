@@ -366,7 +366,7 @@ def main():
     ap.add_argument("--seed", type=int, default=20260924, help="the sampling seed (20260924)")
     ap.add_argument("--floor", type=int, default=3, help="at least this many from each PART (3)")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 2, help="mutants run at once")
-    ap.add_argument("--timeout", type=int, default=240, help="seconds allowed each arm (240)")
+    ap.add_argument("--timeout", type=int, default=60, help="seconds allowed each arm (60)")
     ap.add_argument("--arms", default=DEFAULT_ARMS, help="build.sh arms run against each mutant")
     ap.add_argument("--baseline", default=os.path.join(ROOT, "tools", "mutation-baseline.txt"))
     ap.add_argument("--write-baseline", action="store_true", help="rewrite the baseline from this run")
