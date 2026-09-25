@@ -1143,6 +1143,10 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
   #undef IRIS_TAKE
 
   k->ex_id = (int32_t *)p; p += sizeof(int32_t) * (size_t)cap;
+  /* order[] is carved last, and iris_suggest_smoothing's snapshot of the
+     instrument ends where it ends: an array carved after it must extend that
+     snapshot. tests/train.c compares the whole arena after a suggestion, so
+     an array the snapshot misses fails there. */
   k->order = (int32_t *)p;
   /* FILL IT. This was a pointer into memory nobody had written, and the
      trainer's shuffle both reads and writes through it: recording a
