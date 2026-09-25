@@ -51,7 +51,8 @@
 # THE WHOLE SUITE UNDER A TOOL
 #   sanitize     every test program above under AddressSanitizer and
 #                UndefinedBehaviorSanitizer, with float-divide-by-zero and
-#                float-cast-overflow, stopping at the first report
+#                float-cast-overflow, stopping at the first report; the
+#                examples are the exception, built and run by their own arm
 #   threads      tests/threads.c and audit check 36 under ThreadSanitizer;
 #                the same-instrument positive control must be reported
 #   noheap       tests/noheap.c under the allocator interposer
@@ -209,6 +210,9 @@ arm_sanitize() {
   sanitized fuzz 2000 -- tests/fuzz.c
   sanitized threads separate -- tests/threads.c
   sanitized tiny -- docs/tiny.c
+  sanitized mpe -- extras/tests/mpe_test.c extras/ports/mpe/iris_mpe.c extras/ports/mpe/iris_mpe_wire.c
+  sanitized cc -- extras/tests/cc_test.c extras/ports/cc/iris_cc.c
+  sanitized osc -- extras/tests/osc_test.c extras/ports/osc/iris_osc.c
 }
 
 arm_threads() {
