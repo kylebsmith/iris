@@ -1241,14 +1241,17 @@ int main(int argc, char **argv) {
   }
 
   /* --- 27. the loader cannot be lied to about sizes ------------------------
-     Two lies a file can tell about its own size, each told alone so that only
-     the rule it breaks can refuse it: (a) more demonstrations than the
-     receiving instrument has room for, in a file that is otherwise perfect --
-     written by iris_save from an instrument one demonstration bigger; (b) a
-     count one higher than the body holds, with the checksum recomputed so the
-     checksum cannot be what refuses it. (c) is a file cut in half. Each must
-     be refused, and every byte of the receiving arena must be the same
-     afterwards.                                                             */
+     Four lies a file can tell about its size. (a) More demonstrations than
+     the receiving instrument has room for, in a file that is otherwise
+     perfect -- written by iris_save from an instrument one demonstration
+     bigger -- so only the capacity rule can refuse it. (b) A body one word
+     longer than the header describes, the checksum recomputed over the
+     longer file: every field in it is valid, so only the length rule can
+     refuse it. (c) A header count one higher than the body holds, checksum
+     recomputed, in a heap block of exactly the file's length, so that under
+     AddressSanitizer (sh build.sh sanitize) any read past the file is
+     reported. (d) A file cut in half. Each must be refused, and every byte
+     of the receiving arena must be the same afterwards.                     */
   {
     static unsigned char arena_big[IRIS_ARENA(NI, NH, NO, CAP + 1)];
     iris *a = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 7);
@@ -1269,17 +1272,26 @@ int main(int argc, char **argv) {
     /* (a) CAP + 1 demonstrations, every other rule obeyed */
     size_t nb = iris_save(big, evil, sizeof evil);
     total++; if (nb > 0 && !iris_load(a, evil, nb)) refuse++;
-    /* (b) n_ex, the little-endian word at offset 28 (iris.h, PART 9), one
+    /* (b) four zero bytes before the checksum, which covers them */
+    memcpy(evil, blob, n - 4); memset(evil + n - 4, 0, 4);
+    { uint32_t c = iris_internal_crc32(evil, n);
+      for (int i = 0; i < 4; ++i) evil[n + (size_t)i] = (unsigned char)(c >> (8 * i)); }
+    total++; if (!iris_load(a, evil, n + 4)) refuse++;
+    /* (c) n_ex, the little-endian word at offset 28 (iris.h, PART 9), one
        higher than the body holds; checksum recomputed */
-    memcpy(evil, blob, n); evil[28] = (unsigned char)(evil[28] + 1);
-    { uint32_t c = iris_internal_crc32(evil, n - 4);
-      for (int i = 0; i < 4; ++i) evil[n - 4 + i] = (unsigned char)(c >> (8 * i)); }
-    total++; if (!iris_load(a, evil, n)) refuse++;
-    /* (c) body physically cut short */
+    { unsigned char *exact = (unsigned char *)malloc(n);
+      if (exact) {
+        memcpy(exact, blob, n); exact[28] = (unsigned char)(exact[28] + 1);
+        uint32_t c = iris_internal_crc32(exact, n - 4);
+        for (int i = 0; i < 4; ++i) exact[n - 4 + (size_t)i] = (unsigned char)(c >> (8 * i));
+      }
+      total++; if (exact && !iris_load(a, exact, n)) refuse++;
+      free(exact); }
+    /* (d) body physically cut short */
     memcpy(evil, blob, n);
     total++; if (!iris_load(a, evil, n / 2)) refuse++;
     int intact = memcmp(arena_before, arena_b, sizeof arena_b) == 0 && iris_count(a) == 6;
-    ok("loader refuses a count over capacity or wrong for its body",
+    ok("loader refuses a count over capacity or a length unlike its header",
        nb > 0 && refuse == total && intact,
        "%d/%d lies refused; receiving arena bit-identical after them: %s",
        refuse, total, intact ? "yes" : "NO");
