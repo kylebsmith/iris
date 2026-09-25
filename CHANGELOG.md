@@ -209,12 +209,28 @@ Behaviour changes on the playing path:
   the mutations reach the content rules), `tests/train.c`, `tests/elm.c`, `tests/playing.c`,
   `tests/portability.c`, `tests/starter_recipes.c`, and the scripts
   `tests/freestanding.sh`, `tests/targets.sh` and `tests/pragma_leak.sh`.
+- More tests: `tests/noheap.c` with `tests/noheap_interpose.c` (every public
+  function called under an allocator interposer, which must count zero calls
+  from iris), `tests/threads.c` (instruments on separate threads under
+  ThreadSanitizer, with a positive control), `tests/version_check.sh`, and
+  `tests/reference/`, a second implementation of the model in 64-bit floating
+  point, written in Python from the header's description, that iris is
+  compared with epoch by epoch.
 - `tools/sqrt_exhaustive.c` compares the header's square root with the host's
-  for every 32-bit pattern.
-- `sh build.sh` runs every host check and stops at the first failure; the
-  README lists each check. The `claims`, `bloat`, `sketches`, `golden` and
-  `experiment` arms are gone, with `tools/check-claims.sh` and
-  `tools/bloat.sh`.
+  for every 32-bit pattern; `tools/coverage.py` takes line and branch coverage
+  of `iris.h` as a union over the test programs; `tools/mutate.py` runs seeded
+  mutants of `iris.h` against the fast arms, as a report;
+  `tools/version-check.sh` checks on a release tag that every file names the
+  tag's version and the release date.
+- `sh build.sh` has one arm per test program and runs every host arm, stopping
+  at the first failure; the README and CONTRIBUTING.md list each arm, and
+  `sh build.sh docs` checks that CONTRIBUTING.md lists exactly those.
+  Continuous integration runs every arm as its own step on Linux (64-bit x86
+  and ARM) and macOS with gcc and clang, plus libFuzzer on `iris_load`,
+  coverage, the Arduino builds and the reference; a nightly workflow fuzzes
+  for an hour and runs the full reference and the mutation report. The
+  `claims`, `bloat`, `sketches`, `golden` and `experiment` arms are gone, with
+  `tools/check-claims.sh`, `tools/bloat.sh` and `tools/mutate.sh`.
 
 ### Documentation
 
