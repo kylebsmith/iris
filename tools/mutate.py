@@ -125,9 +125,10 @@ def tokenize(s):
 
 
 def parts(lines):
+    """The PART headings of iris.h, lines of the form '   PART 8d -- Title'."""
     marks = [(0, "top")]
     for i, l in enumerate(lines, 1):
-        m = re.match(r"\s+PART (\S+) —", l)
+        m = re.match(r"\s+PART (\S+) -- ", l)
         if m:
             marks.append((i, "PART " + m.group(1)))
     return marks
@@ -252,9 +253,12 @@ def variant(site, rng):
         return "(void)0"
     m = re.match(r"(0[xX][0-9a-fA-F]+|[\d.]+(?:[eE][+-]?\d+)?)([uUlLfF]*)$", o)
     body, suf = m.group(1), m.group(2)
+    # A negative integer is an expression, not a literal: it is written in
+    # parentheses with the suffix inside, so 0u becomes (-1u), which is C for
+    # 0u - 1u, and a minus sign before the site cannot join it into --.
     if body.lower().startswith("0x"):
         v = int(body, 16) + rng.choice([1, -1])
-        return (hex(v) if v >= 0 else "-" + hex(-v)) + suf
+        return hex(v) + suf if v >= 0 else "(-" + hex(-v) + suf + ")"
     if "." in body or "e" in body.lower() or "f" in suf.lower():
         v = float(body)
         r = repr(1.0 if v == 0.0 else v * rng.choice([0.5, 2.0]))
@@ -262,7 +266,7 @@ def variant(site, rng):
             r += ".0"
         return r + suf
     v = int(body) + rng.choice([1, -1])
-    return (str(v) if v >= 0 else "(" + str(v) + ")") + suf
+    return str(v) + suf if v >= 0 else "(" + str(v) + suf + ")"
 
 
 def plan(src, n, seed, floor):
@@ -396,6 +400,10 @@ def main():
     a = ap.parse_args()
     cc = os.environ.get("CC", "cc")
     src = open(os.path.join(ROOT, "iris.h")).read()
+    if len(parts(src.split("\n"))) == 1:
+        print("FAIL  no PART heading found in iris.h (a line such as '   PART 1 -- Title'), "
+              "so the sample cannot be spread over the parts")
+        return 1
     every, by, chosen = plan(src, a.sample, a.seed, a.floor)
     print(f"{len(every)} mutation sites in iris.h; {len(chosen)} sampled with seed {a.seed}")
     for p, ss in by.items():

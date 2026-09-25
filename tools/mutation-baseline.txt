@@ -1,23 +1,21 @@
 # Known survivors of tools/mutate.py, one per line: function | class | original | mutated | site.
 # Written with --sample 100 --seed 20260924.
-# iris.h sha1 ee8aaea7e6913f1eaff0ce94a2d9716c56a3019b
-iris_get | relational | < | != | b2989862
+# iris.h sha1 3f324f237e87e201feaad577b0e11e1e209a108d
+iris_delete_index | arithmetic | + | - | 95e6fa29
+iris_delete_index | constant | 0 | (-1) | c3ed79fb
+iris_id_at | relational | < | > | 3302e703
 iris_init | deletion | k->order[i] = i | (void)0 | cb12da9a
 iris_internal_clampf | relational | > | >= | fc69c2f9
-iris_internal_distance2_far | relational | == | <= | e9889568
-iris_internal_file_ok | constant | 1 | 2 | b639ab24
-iris_internal_nearest | constant | 0 | 1 | 8ef5c213
-iris_internal_nearest | constant | 1 | 2 | adf75c01
 iris_internal_set_l2 | constant | 0.3f | 0.6f | aac5937c
 iris_internal_train_elm_ex | constant | 0.0f | 1.0f | 7c76c32d
-iris_internal_train_elm_ex | constant | 1 | 2 | ffea615f
+iris_internal_train_elm_ex | constant | 1 | 2 | 99fb2dd3
 iris_internal_train_elm_ex | deletion | p += ((uintptr_t)p & (sizeof(float) - 1u)) ? sizeof(float) - (size_t)((uintptr_t)p & (sizeof(float) - 1u)) : 0u | (void)0 | 004c1596
 iris_internal_train_elm_ex | relational | < | != | f9eb216f
 iris_internal_train_run | arithmetic | /= | *= | 96aaa642
 iris_internal_train_run | deletion | k->tr_running = 0 | (void)0 | 47bcece7
 iris_internal_train_run | relational | < | != | 2b88765e
 iris_internal_trap_nan | constant | 0 | (-1) | 6dda98d8
-iris_knn_predict | relational | < | != | e1ce58d5
+iris_knn_predict | relational | < | <= | e1ce58d5
 iris_novelty | constant | 1e30f | 2e+30f | 26b5f9e9
 iris_reseed | constant | 1 | 0 | 0e1d7fc7
 iris_train_slice | constant | 0 | (-1) | 7de07517
