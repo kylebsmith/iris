@@ -170,9 +170,20 @@
                   result, so this file forbids it in its own code (the
                   determinism contract below). CONTRACTION is the compiler
                   turning a*b + c into one.
+     GEOMETRIC MEAN  the average of a set of ratios taken by multiplying
+                  them and taking the root, so that twice as good and twice
+                  as bad cancel. The comparisons below that give one average
+                  ratios of errors this way.
      GOLDEN HASH  the FNV-1a hash of the bits a fixed recipe produces,
                   compared in the tests, so any change to the arithmetic
                   fails a check. tests/audit.c pins 0x6805FB0D.
+     GRADIENT     for each weight, how much the error would change if that
+                  weight moved a little. Training steps every weight against
+                  its gradient, which is downhill (PART 8).
+     HELD-OUT ERROR  the error at points the instrument was not trained on,
+                  measured against the target a test knows is true: how well
+                  it fills the gaps between your takes, which is what you
+                  play. Compare RECALL.
      HIDDEN LAYER  the middle layer of the network, between the inputs and
                   the outputs (PART 6); its units are HIDDEN UNITS.
      IDE          integrated development environment: the Arduino IDE is the
@@ -205,8 +216,15 @@
                   demonstrated range, every output onto 0.1..0.9 (PART 5).
      ODR          the one-definition rule: C and C++ require a thing to be
                   defined identically everywhere it appears.
+     PLATEAU      the stretch of a training run where the error has stopped
+                  falling by much; iris_train stops when it reaches one
+                  (PART 8).
      PRE-ACTIVATION  the weighted sum a unit computes before its squashing
                   function is applied.
+     RECALL       how closely a trained instrument plays back its own
+                  demonstrations: the error at the demonstrated points.
+                  Good recall with a poor HELD-OUT ERROR means the network
+                  has fitted the noise in the takes rather than the mapping.
      RIDGE        a small number added down the diagonal of the normal matrix
                   before solving it, which stops the solve failing when two
                   demonstrations nearly repeat and pulls the answer toward
@@ -215,6 +233,9 @@
                   AddressSanitizer at an out-of-bounds memory access,
                   UndefinedBehaviorSanitizer at an operation C leaves
                   undefined (a misaligned access, a signed overflow).
+     SATURATE     a squashing function saturates when its input is so far
+                  from zero that its output sits at, or nearly at, its limit,
+                  where a small change to the input no longer moves it.
      SEED         the number the random starting weights are drawn from. The
                   same seed always gives the same weights; a new seed is a
                   reroll. A seed of 0 is taken as 1.
@@ -258,9 +279,9 @@
    Forty-one functions, three types, and the macros listed at the end. `k` is
    the instrument. `in` and `out` are plain float arrays you own: `in` holds
    n_in floats and `out` n_out, and nothing checks their length, so an array
-   shorter than the instrument's shape is written past its end. Anything
-   named iris_internal_ is part of how the file works, not of what it
-   promises, and can change in any release.
+   shorter than the instrument's shape is read or written past its end.
+   Anything named iris_internal_ is part of how the file works, not of what
+   it promises, and can change in any release.
 
    LIFECYCLE
      size_t   iris_size(n_in, n_hid, n_out, cap)   arena bytes for a shape; 0
@@ -540,7 +561,7 @@
    the shape you asked for: iris_internal_train_run alone reserves
    float x[IRIS_MAX_IN] and float t[IRIS_MAX_OUT], 192 bytes, whether your
    instrument has 32 inputs or 2. avr-gcc 7.3.0 -mmcu=atmega328p -Os
-   -fstack-usage gives iris_internal_train_run a frame of 286 bytes and
+   -fstack-usage gives iris_internal_train_run a frame of 288 bytes and
    iris_predict 164. An Uno has 2 KB of memory in total and a sketch leaves a
    few hundred bytes of it for the stack, so the defaults do not fit it with
    room to spare.
@@ -553,9 +574,10 @@
        #define IRIS_MAX_HID 12
        #include "iris.h"
 
-   With the same compiler and flags the deepest frame on the
-   record/train/predict path falls from 308 bytes to 148, a saving of 160;
-   a bare caller with no locals of its own measures 288 and 128. These are
+   With the same compiler and flags iris_internal_train_run, the deepest
+   frame on the record/train/predict path, falls from 288 bytes to 128, a
+   saving of 160, and iris_predict from 164 to 52; a caller into which the
+   compiler inlines that whole path measures 280 and 120. These are
    single frames as the compiler reports them, not a measured run-time
    stack depth. The only rule is that the maxima must be at least the n_in,
    n_out and n_hid you pass to iris_init, which iris_init checks.
@@ -887,7 +909,8 @@ IRIS_API int iris_internal_isbad(float x) {
    [-1, +1]), and it is under-scaled by 2.4-3.3% in aggregate
    (docs/MATH-FIXES.md, defect 1). Training with the exact derivative instead
    makes no measurable difference on the same 2,304 pairs (geometric mean of
-   held-out error 0.997, with a 95% interval of 0.988 to 1.005).
+   held-out error 0.997, with a 95% confidence interval, the range the true
+   ratio lies in at 95% confidence, of 0.988 to 1.005).
 
    The +/-1e9 test keeps x*(27+x^2) finite; it is not where p saturates,
    which is |x| = 3. It is needed because iris_predict does not clamp its
@@ -1198,7 +1221,10 @@ struct iris {
    largest float can span, say), it reseeds to a finite start, sets
    IRIS_NAN_TRAPPED and returns 1.0, with iris_is_trained 0. iris_is_trained
    reads one flag that every trainer sets on success and none sets otherwise,
-   so it gives the same answer whichever door you came in by.
+   so it gives the same answer whichever door you came in by. What it
+   answers is whether the fit matches the demonstrations stored now: a call
+   refused for a mistake in its arguments changes nothing, so an instrument
+   trained before that call still reads 1 after it.
 
    RULE 1, for a call that either works or does not:
        0 means the call did nothing. Non-zero means it worked.
@@ -1432,7 +1458,8 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
 
    AND THE ONE READOUT A SCREEN CAN SHOW POINTS BACKWARDS. At noise 0.10,
    across 7 learning rates on each of the 24 tasks, training error and
-   held-out error move in opposite directions (mean rank correlation -0.63),
+   held-out error move in opposite directions (mean rank correlation -0.63,
+   where -1 would mean every step down in one is a step up in the other),
    and the setting with the lowest training error is the worst or
    second-worst instrument in 14 of the 24. A student tuning by the error
    readout picks the worst setting on offer.
@@ -2389,7 +2416,9 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
          measurable difference (PART 1).
 
          WHAT IS TRADED AWAY. One alternative does beat this: a cross-entropy
-         gradient with the targets left in [0.1, 0.9] wins 32 of 32 seeds at
+         gradient (the gradient of the logarithmic loss usually paired with a
+         sigmoid output, which is the miss alone, with no y*(1-y) factor)
+         with the targets left in [0.1, 0.9] wins 32 of 32 seeds at
          20 demonstrations by about 5%, and about 12% at a tuned learning
          rate. It loses at 10 demonstrations (1.094 times worse), the regime a
          musician actually demonstrates in, and it widens the reroll spread in
@@ -2930,7 +2959,7 @@ IRIS_API double iris_internal_out_span(const iris *k, int n, int j) {
    n. It also scores 600-epoch fits, not the plateau run you play. Treat it
    as a coarse ranking: it tells you whether to smooth and roughly how much,
    not the exact optimum. Its absolute value is NOT comparable to a held-out
-   error (the columns above differ by three to seven times), so use it only
+   error (the columns above differ by three to eight times), so use it only
    to compare settings with each other.
 
    Every fold trains from the SAME seed, so the folds differ only by which
@@ -4406,10 +4435,10 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
    has no finite distance to any take. For a classifier task store the class
    label in out[0]; this then follows the rules of desktop Wekinator's
    default for discrete outputs, Weka's IBk nearest-neighbour classifier with
-   k=1: distance normalised by each input's range, Euclidean, the
-   first-recorded demonstration winning a tie. Like
-   iris_knn_predict it writes the status and the ranges of a never-fitted
-   instrument, so it takes a non-const one. */
+   k=1: distance normalised by each input's range, Euclidean (straight-line),
+   the first-recorded demonstration winning a tie. Like iris_knn_predict it
+   writes the status and the ranges of a never-fitted instrument, so it takes
+   a non-const one. */
 /* LENGTHS, same rule as iris_predict and just as unchecked.
    Reads exactly n_in floats from `in` and writes exactly n_out into `out`;
    `out` may be null when only the identifier is wanted. */
