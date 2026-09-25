@@ -5,7 +5,9 @@ checks the library against that author's expectations. This directory checks it
 against something it did not write. `reference.py` is the model of iris written
 a second time, in NumPy, from the description of the model (the masthead and the
 part comments of `iris.h`, and a written specification of the model) and not
-from `iris.h`'s code. `export.c` runs a recipe through iris and prints every
+from `iris.h`'s code, with three exceptions, taken from the code when the
+description was silent and since stated in the header's prose: they are the
+last three items under What the description left open. `export.c` runs a recipe through iris and prints every
 number iris computed. `run.py` replays the recipe in the reference and compares.
 
 The reference computes in binary64, the 64-bit floating-point format with 53
@@ -211,9 +213,25 @@ rounding bound.
   place passes all of them. Measured on scratch copies of `iris.h`: the
   learning rate or the momentum one unit up fails the exact constants check
   and the golden hash and nothing else; the output band's 0.9 one unit up, or
-  every hidden activation one unit up, fails the golden hash alone. A
-  one-unit error made at every weight update does accumulate, and fails
-  checks (a)1 and (a)2 (the table at the end).
+  every hidden activation one unit up, fails the golden hash alone; and the
+  output scaling's divisor, 0.8, a unit up passes every check here. The
+  forward-pass check resolves a systematic error in the output scaling of
+  about 40 units in the last place, and the constants check reads the stored
+  learning rate and momentum, not the arithmetic that uses them. The playing
+  path is pinned bit for bit elsewhere: `tests/load.c` plays the committed
+  instrument's 625 predictions and `tests/starter_recipes.c` hashes two
+  recipes' predictions, and both fail on that divisor. A one-unit error made
+  at every weight update does accumulate, and fails checks (a)1 and (a)2 (the
+  table at the end).
+- Late training defects, finely. The per-epoch bound is set by rounding at the
+  scale of the weights, (2 + d) × n × u × max(|w|, 1), not by the size of each
+  step, so it sees an error in the update rule only while the steps are large
+  against it. On scratch copies of `iris.h`, a relative error in one output
+  weight's update is caught from epoch 1 at 1e-4 but not at 3e-5, and from
+  epoch 1,001 at 1e-2 but not at 1e-3, when the steps have shrunk. The 1e-3
+  case also passes `tests/audit.c`, `tests/train.c` and the starter recipes,
+  whose pinned hashes cover 800 epochs or fewer: it moves the instrument by
+  less than rounding does, but no test pins training that long.
 
 The golden recipe's demonstrations are computed in `run.py` with the header's
 rational function evaluated in binary32. That is how the data is made, not part
@@ -224,26 +242,28 @@ of the model, and the matching hash confirms the data is tests/audit.c's.
 Each is settled by an experiment the harness runs against the library, not by
 the library's code.
 
+The first three were open when the reference was written and are now stated in
+the header; the experiments that settled them stay as confirmation.
+
 1. **The starting weights' scale.** "Dividing by the square root of the number
    of inputs" has two binary32 evaluations, draw / √n and draw × (1 / √n),
-   which round differently. The library multiplies by the rounded reciprocal:
-   that form matches every starting weight of every recipe (75 of 75 at 2-12-3,
-   115 of 115 at 3-16-3, 49 of 49 at 2-12-1), and the quotient form matches only
-   48 to 50 of 75, 85 of 115 and 33 of 49. The exact check prints both counts.
-2. **The shuffle.** "Fisher-Yates" leaves the direction open, and no one place
-   says when the order starts again. The reference takes the usual descending
-   form (for each position i from the last down to 1, swap it with position
-   draw mod (i + 1)), the order carrying from one epoch to the next within a
-   training session and starting from the identity at the start of each
-   session. Every blocking call is a session of its own, so every
-   `iris_continue(k, 1)` starts from the identity. Every epoch of every run
-   re-derives this way.
-3. **The output floor.** The header says an output that never moved keeps a
-   small width, relative to its value, without giving the formula. The
-   reference takes max(1e-5 × |lo|, 1e-6), the input rule's thresholds applied
-   to the output, and the two recipes with a constant output (64 and 440)
-   confirm it bit for bit. An output that moved by less than the floor is not
-   exercised.
+   which round differently. The header now says it multiplies by the rounded
+   reciprocal (at `iris_reseed`), and that form matches every starting weight
+   of every recipe (75 of 75 at 2-12-3, 115 of 115 at 3-16-3, 49 of 49 at
+   2-12-1), where the quotient form matches only 48 to 50 of 75, 85 of 115 and
+   33 of 49. The exact check prints both counts.
+2. **The shuffle.** "Fisher-Yates" leaves the direction open. The reference
+   takes the usual descending form (for each position i from the last down to
+   1, swap it with position draw mod (i + 1)), the order carrying from one
+   epoch to the next within a training session and starting from the identity
+   at the start of each session. The header now says when the order starts
+   again ("EVERY CALL IS A SESSION OF ITS OWN", above `iris_continue`), so
+   every `iris_continue(k, 1)` starts from the identity. Every epoch of every
+   run re-derives this way.
+3. **The output floor.** The header now gives the formula, max(1e-5 × |lo|,
+   1e-6) (PART 5), which is what the reference takes, and the two recipes with
+   a constant output (64 and 440) confirm it bit for bit. An output that moved
+   by less than the floor is not exercised.
 4. **Which value of each constant.** The description gives decimals (0.10, 0.85,
    0.1, 0.9, 0.10) and iris holds their binary32 values; the reference takes the
    binary32 values, because those are the numbers the model is defined by. It
@@ -255,6 +275,25 @@ the library's code.
    from binary32. The checks that ask whether iris obeys its own rule therefore
    evaluate the comparison in binary32: the plateau test on iris's errors, and
    the neighbour distances in the tie check.
+
+These three were taken from `iris.h`'s code, where the description said nothing,
+so a mistake in any of them would be shared by both. The header's prose now
+states each.
+
+6. **The decay's learning-rate factor.** The description said the decay is
+   0.3 × smoothing scaled by 1/n_ex; the code multiplies by the learning rate
+   too, wd = l2 × lr / n_ex, and `run.py` does the same. The weight-decay note
+   in PART 8 now says so. It is observable: with the factor removed from a
+   scratch copy of `iris.h`, noisy-smoothing fails every epoch replayed (16,200
+   times its bound), the epoch's error and the whole run.
+7. **The decay's order.** The decay is taken after the velocity step, from the
+   weight that step produced: w += v, then w −= wd × w. The same note in PART 8
+   now gives that order, and the table below shows it is observable (decay
+   before the velocity fails every epoch replayed, 23.6 times its bound).
+8. **The generator's zero state.** The docstring of `reference.py`'s generator
+   replaces a zero result with 0x9E3779B9, as the code does. The comment at
+   xorshift32 in PART 1 now states it. From a nonzero state xorshift32 never
+   reaches zero, so no recipe can observe it.
 
 ## Tolerances
 

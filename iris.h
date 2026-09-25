@@ -1048,7 +1048,10 @@ IRIS_API float iris_internal_clampf(float v, float lo, float hi) {
    what makes "reroll" a real control rather than a shrug: you can go back.
    Each step mixes the 32-bit state with shifted copies of itself; a state
    of 0 would stay 0 for ever, which is why iris_reseed takes a seed of 0 as
-   1. */
+   1. From any other state the step never reaches 0, so the replacement below
+   of a 0 result by 0x9E3779B9 (2^32 divided by the golden ratio) is never
+   taken by an instrument this file made; it keeps a zeroed generator handed
+   in from outside from returning 0 for ever. */
 typedef struct { uint32_t s; } iris_internal_rng;
 
 IRIS_API uint32_t iris_internal_rand_u32(iris_internal_rng *r) {
@@ -2649,10 +2652,18 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
       /* Each weight's velocity is 0.85 of the last one minus the learning
          rate times its gradient; the weight moves by its velocity.
 
-         WEIGHT DECAY, when asked for. `wd` is zero unless iris_set_smoothing
-         set it, and at zero `w[h] - 0.0f * w[h]` subtracts an exact zero, so
-         the update is the undecayed one bit for bit; the default path pays
-         one multiply and one subtraction per weight for it.
+         WEIGHT DECAY, when asked for. In full, per weight and per
+         demonstration visited:
+             v = momentum * v - lr * gradient      (flushed)
+             w = w + v
+             w = w - wd * w                        (flushed)
+         with wd = l2 * lr / n_ex, where l2 is 0.3 times the smoothing
+         setting. So the decay is taken after the velocity step, from the
+         weight that step produced, and it is scaled by the learning rate as
+         the gradient step is. `wd` is zero unless iris_set_smoothing set it,
+         and at zero `w[h] - 0.0f * w[h]` subtracts an exact zero, so the
+         update is the undecayed one bit for bit; the default path pays one
+         multiply and one subtraction per weight for it.
 
          The decayed weight is flushed like the velocities (IRIS_FLUSH). A
          weight with no gradient -- one from an input that never moved, say
