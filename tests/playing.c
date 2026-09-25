@@ -253,30 +253,34 @@ int main(void) {
           bad == 0 && status_far == IRIS_STATUS_OK && mean_ok, d); }
 
   /* ---- takes recorded far outside the fitted ranges ----------------------
-     Trained on two takes spanning 0..1, then two takes recorded at 1e20 and
-     1e21 (a still input beside them at 7 throughout) and the first two
-     deleted: the ranges stay the fitted ones, so an ordinary reading of 0.5
-     is 1e20 ranges from every take and the square of that overflows. The
-     neighbour functions must still answer from the takes: the k-nearest
-     blend inside their outputs, 0.25 to 0.75, with a healthy status; the
-     classifier the earliest take, since at that distance both count the same
-     (10^15 ranges); and iris_delete_nearest that same take. */
-  { static unsigned char M[IRIS_ARENA(2, 8, 1, 8)];
-    iris *k = iris_init(M, sizeof M, 2, 8, 1, 8, 1u);
-    float a[2] = { 0.0f, 7.0f }, ya = 0.0f, b[2] = { 1.0f, 7.0f }, yb = 1.0f;
-    float f1[2] = { 1e20f, 7.0f }, y1 = 0.25f, f2[2] = { 1e21f, 7.0f }, y2 = 0.75f;
+     Trained on two takes spanning 0..1 on two inputs, with a third input
+     still at 7, then two takes recorded far outside those ranges and the
+     first two deleted: B at (1e20, 1e20) recorded first, A at (1e21, 0.5)
+     second, both with the still input at 3e38. A reading of (0.5, 0.5) is
+     1e20 or more ranges from each, so every ordinary squared distance
+     overflows, and the still input's difference from -3e38 overflows too.
+     Counted in the far distance -- at most 10^15 ranges per input, still
+     input skipped -- A is nearer (one input far, against two), so the
+     classifier must name A although B is earlier, iris_delete_nearest must
+     delete A, and the two-neighbour blend must weight A's 0.25 above B's
+     0.75, inside them, with a healthy status. */
+  { static unsigned char M[IRIS_ARENA(3, 8, 1, 8)];
+    iris *k = iris_init(M, sizeof M, 3, 8, 1, 8, 1u);
+    float a[3] = { 0.0f, 0.0f, 7.0f }, ya = 0.0f, b[3] = { 1.0f, 1.0f, 7.0f }, yb = 1.0f;
+    float fb[3] = { 1e20f, 1e20f, 3e38f }, y_b = 0.75f;
+    float fa[3] = { 1e21f, 0.5f, 3e38f }, y_a = 0.25f;
     iris_record(k, a, &ya); iris_record(k, b, &yb);
     iris_train(k);
-    iris_record(k, f1, &y1); iris_record(k, f2, &y2);
+    iris_record(k, fb, &y_b); iris_record(k, fa, &y_a);   /* identifiers 3 and 4 */
     iris_delete_index(k, 0); iris_delete_index(k, 0);
-    const float q[2] = { 0.5f, 7.0f };
+    const float q[3] = { 0.5f, 0.5f, -3e38f };
     float o = -1.0f, c = -1.0f;
     iris_knn_predict(k, q, &o, 2);
-    const int knn_ok = o >= 0.25f && o <= 0.75f && iris_get_status(k) == IRIS_STATUS_OK;
+    const int knn_ok = o > 0.25f && o < 0.5f && iris_get_status(k) == IRIS_STATUS_OK;
     const int id = iris_classify_1nn(k, q, &c);
-    const int one_ok = id == 3 && c == 0.25f && iris_get_status(k) == IRIS_STATUS_OK;
+    const int one_ok = id == 4 && c == 0.25f && iris_get_status(k) == IRIS_STATUS_OK;
     const int deleted = iris_delete_nearest(k, q);
-    const int del_ok = deleted == 1 && iris_count(k) == 1 && iris_id_at(k, 0) == 4;
+    const int del_ok = deleted == 1 && iris_count(k) == 1 && iris_id_at(k, 0) == 3;
     snprintf(d, sizeof d, "k-NN %g (status %d), 1-NN id %d playing %g, delete_nearest %d "
              "leaving id %d", (double)o, (int)iris_get_status(k), id, (double)c, deleted,
              iris_id_at(k, 0));
