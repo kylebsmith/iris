@@ -95,10 +95,12 @@ clang's coverage-guided fuzzer.
 
 Prerequisites: a C99 compiler (C as standardised in 1999) for everything
 `sh build.sh` runs by default; clang with libFuzzer for `fuzz-load`; clang's
-coverage tools (`llvm-cov`) for `cov`; Python with numpy for `reference`; and
-the cross-compilers (the ESP32-S3 Arduino core, `arm-none-eabi-gcc`, avr-gcc)
-for the cross-target rows of `freestanding`, `targets` and `pragma`, which
-print SKIP when a compiler is missing. A SKIP is not a pass for that target.
+coverage tools (`llvm-cov`) for `cov`; Python for `mutate`, and Python with
+numpy for `reference`; the cross-compilers (the ESP32-S3 Arduino core,
+`arm-none-eabi-gcc`, avr-gcc) for the cross-target rows of `freestanding`,
+`targets` and `pragma`; and Docker with a Debian image holding gcc and clang,
+named in `IRIS_LINUX_IMAGE`, for the Linux rows of `freestanding`. A row whose
+tool is missing prints SKIP, and a SKIP is not a pass for that target.
 
 ## The rule: prove every check can fail
 

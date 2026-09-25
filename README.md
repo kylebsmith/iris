@@ -236,7 +236,7 @@ It stops at the first failure and says which check failed. One check at a time:
 | `sh build.sh fuzz-load [seconds]` | coverage-guided fuzzing of `iris_load`: mutated files, steered toward code not yet reached (needs clang's libFuzzer) |
 | `sh build.sh determinism` | the golden hash across optimisation levels and contraction settings |
 | `sh build.sh cov` | line and branch coverage of `iris.h` across the test programs, with thresholds (needs clang's `llvm-cov`) |
-| `sh build.sh mutate` | an advisory mutation run; it reports, it never fails the build |
+| `sh build.sh mutate` | an advisory mutation run; it reports, it never fails the build (needs Python) |
 | `sh build.sh reference` | an independent double-precision reference in Python (skips without numpy, Python's numerical library) |
 | `sh build.sh mpe`, `sh build.sh sinks` | the output ports in [`extras/`](extras/) |
 | `sh build.sh tiny` | [`docs/tiny.c`](docs/tiny.c), the network and update rule written out by hand |
