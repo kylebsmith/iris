@@ -9,7 +9,10 @@ What each document here is. Three kinds live side by side:
   header and the README say so and quote the replicated one.
 - **Predecessor**: written inside the unpublished instrument application iris
   was extracted from. Its paths point into that application's tree and will
-  not resolve here.
+  not resolve here, and it uses that application's vocabulary: its own name
+  for the library, its file extensions and magic words (`.ewek`, `EWEK`), its
+  source paths (`core/store.c`), and "the glass" for its touch screen.
+  [DESIGN.md](DESIGN.md) and several Historical records use the same words.
 
 For what is true now, read [`../iris.h`](../iris.h) and
 [`../README.md`](../README.md) first.

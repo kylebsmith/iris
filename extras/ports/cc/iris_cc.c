@@ -37,8 +37,8 @@ static int cc__put(iris_cc *m, unsigned num, unsigned val) {
 }
 
 /* ---- the quantiser, D-CC-2 ------------------------------------------------
-   The rails bypass hysteresis: 0.0 and 1.0 must always be reachable, or a
-   mapping trained to the edge of the glass could never get there. */
+   The rails bypass hysteresis: 0.0 and 1.0 must always be reachable, or an
+   output trained to the top or bottom of its range could never get there. */
 int iris_cc_quant(float v, int last, int max) {
   float s;
   int q;

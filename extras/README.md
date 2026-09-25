@@ -13,6 +13,11 @@ their way into it:
   the rest show that the boundary is real.
 - `iris_sink.h`, `iris_source.h` — the two port interfaces those implement.
 - `bench/` — the same core compiled to WebAssembly, running in a browser.
+  The page comes from the application iris was extracted from and keeps its
+  vocabulary ("the glass" is the page's drawing canvas). Its file loader
+  still expects that application's files (the magic word `EWEK`, formats 1
+  and 2), so it refuses the format 7 files the page itself saves, under the
+  name `.ewk`. Training and playing in the page do not touch files.
 - `tests/` — the tests for the above. Run them with `sh build.sh mpe` and
   `sh build.sh sinks` from the repository root.
 

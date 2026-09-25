@@ -131,10 +131,10 @@
    hue fixed by the index (360*index/n, so it scales to any N and is the same
    colour every time), and the whole screen is multiplied by
    0.25 + 0.75*level. The screen therefore breathes in exact lock-step with
-   the CC being emitted: "the glass is pulsing" IS "that CC is moving", which
+   the CC being emitted: "the screen is pulsing" IS "that CC is moving", which
    is the only fact the user needs while their other hand clicks Learn. On
-   DONE the field returns to full colour and blooms once (EWA_A_PULSE).
-   Zero text, zero widgets, and the shape on the glass tells the student what
+   DONE the field returns to full colour and blooms once.
+   Zero text, zero widgets, and the shape on the screen tells the student what
    that output actually does across the pad before they ever map it.
 
    ============================================================================ */
