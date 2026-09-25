@@ -1215,40 +1215,84 @@ IRIS_API void iris_clear(iris *k) {
 #define IRIS_OUT_LO 0.1f
 #define IRIS_OUT_HI 0.9f
 
-IRIS_API void iris_fit_ranges(iris *k) { if (!k) return;
+/* The largest finite float, which <float.h> calls FLT_MAX. This file includes
+   no library headers, so it spells the number out. */
+#define IRIS_FLT_MAX 3.40282347e+38f
+
+/* The smallest and largest value that column c of the example store takes
+   across the demonstrations (c counts the inputs first, then the outputs).
+
+   The search starts from the largest finite float rather than from a big round
+   number, so every finite value takes part however large it is; a not-a-number
+   compares false with everything and never takes part. With no demonstrations
+   the answer is lo > hi, and no caller uses it. */
+IRIS_API void iris_internal_span(const iris *k, int c, float *lo, float *hi) {
   const int stride = k->n_in + k->n_out;
-  if (k->n_ex == 0) return;
-  for (int i = 0; i < k->n_in;  ++i) { k->in_lo[i]  =  1e30f; k->in_hi[i]  = -1e30f; }
-  for (int i = 0; i < k->n_out; ++i) { k->out_lo[i] =  1e30f; k->out_hi[i] = -1e30f; }
+  float a = IRIS_FLT_MAX, b = -IRIS_FLT_MAX;
   for (int r = 0; r < k->n_ex; ++r) {
-    const float *row = k->ex + (size_t)r * stride;
-    for (int i = 0; i < k->n_in; ++i) {
-      if (row[i] < k->in_lo[i]) k->in_lo[i] = row[i];
-      if (row[i] > k->in_hi[i]) k->in_hi[i] = row[i];
-    }
-    for (int i = 0; i < k->n_out; ++i) {
-      float v = row[k->n_in + i];
-      if (v < k->out_lo[i]) k->out_lo[i] = v;
-      if (v > k->out_hi[i]) k->out_hi[i] = v;
-    }
+    const float v = k->ex[(size_t)r * stride + c];
+    if (v < a) a = v;
+    if (v > b) b = v;
   }
-  /* A dimension where every example is identical has zero range. Dividing by
-     that is how you get NaN into an audio buffer. Give it a floor. */
-  /* The floor has to be RELATIVE. Adding an absolute 1e-6 to a value above 32
-     changes nothing at all in 32-bit floating point -- the gap between
-     representable numbers there is already wider than 1e-6 -- so the range
-     stayed exactly zero, the normalisation divided zero by zero, and every
-     prediction became not-a-number, which the guards then replaced with the
-     middle of the range. A light sensor reads 0..4095 and a distance sensor
-     reads millimetres, so ANY of those channels sitting still killed the whole
-     instrument silently. Measured: worked to 31.77, dead from 32.72. */
-  for (int i = 0; i < k->n_in;  ++i) {
-    float w = iris_absf(k->in_lo[i]) * 1e-5f;  if (w < 1e-6f) w = 1e-6f;
-    if (k->in_hi[i]  - k->in_lo[i]  < w) k->in_hi[i]  = k->in_lo[i]  + w;
+  *lo = a; *hi = b;
+}
+
+/* THE RANGES. Every input and every output gets the smallest and largest value
+   the demonstrations gave it. Every trainer calls this before it starts; the
+   neighbour functions call it on an instrument that has never been fitted
+   (PART 10). With no demonstrations it leaves the ranges as they are.
+
+   AN INPUT THAT NEVER MOVED IS IGNORED. A switch left in one position, a
+   sensor resting against its rail, a light sensor under steady light: an input
+   that read the same in every demonstration tells the instrument nothing about
+   what you want, and dividing by its width would turn the smallest wobble at
+   play time into an enormous number. So the rule is:
+
+       an input is STILL when its width, hi - lo, is at most 1e-5 of its
+       magnitude (the larger of |lo| and |hi|), or at most 1e-6.
+
+   A still input is stored with zero width (in_hi = in_lo), and iris_norm_in
+   gives it the value 0 -- in training and in playing, whatever it reads, so
+   moving it cannot change what the instrument plays. A float carries about
+   seven significant digits, so 1e-5 of the magnitude is fewer than 170 steps
+   of the float's own resolution: a range that narrow is rounding and sensor
+   noise, not a gesture. The 1e-6 covers inputs resting near zero, where a
+   relative test alone would demand an exact zero.
+
+   Why ignore it rather than give it a small width. Dividing by a width that
+   small magnifies any movement at play time: an input held at 500 in every
+   demonstration and given a width of 0.005 normalises to about 400 when it
+   reads 501, where the demonstrations taught the network only [-1,+1].
+   Measured with such a floor in place, on the six demonstrations
+   tests/playing.c uses with the still input at 500: a sweep of the other
+   input produced an output span of 9.97 (of the 10 demonstrated) with the
+   still input at 500, and 0.0000 with it at 501 -- every hidden unit
+   saturated and the instrument became a constant.
+
+   AN OUTPUT THAT NEVER MOVED keeps a small nonzero width, because the network
+   is trained toward it and the output scaling divides by the width. That floor
+   is relative for the reason above: an absolute 1e-6 added to a value above 32
+   changes nothing in 32-bit floating point, because the gap between
+   representable numbers there is already wider, so the width stayed zero and
+   every prediction became not-a-number. Measured: an absolute floor worked up
+   to 31.77 and failed from 32.72. */
+IRIS_API void iris_fit_ranges(iris *k) { if (!k) return;
+  if (k->n_ex == 0) return;
+  for (int i = 0; i < k->n_in; ++i) {
+    float lo, hi;
+    iris_internal_span(k, i, &lo, &hi);
+    const float mag = iris_absf(lo) > iris_absf(hi) ? iris_absf(lo) : iris_absf(hi);
+    float negligible = mag * 1e-5f;
+    if (negligible < 1e-6f) negligible = 1e-6f;
+    k->in_lo[i] = lo;
+    k->in_hi[i] = (hi - lo <= negligible) ? lo : hi;     /* still: zero width */
   }
-  for (int i = 0; i < k->n_out; ++i) {
-    float w = iris_absf(k->out_lo[i]) * 1e-5f; if (w < 1e-6f) w = 1e-6f;
-    if (k->out_hi[i] - k->out_lo[i] < w) k->out_hi[i] = k->out_lo[i] + w;
+  for (int o = 0; o < k->n_out; ++o) {
+    float lo, hi;
+    iris_internal_span(k, k->n_in + o, &lo, &hi);
+    float w = iris_absf(lo) * 1e-5f;  if (w < 1e-6f) w = 1e-6f;
+    if (hi - lo < w) hi = lo + w;
+    k->out_lo[o] = lo; k->out_hi[o] = hi;
   }
 }
 
@@ -1262,9 +1306,16 @@ IRIS_API void iris_fit_ranges(iris *k) { if (!k) return;
    does with normalizeAttributes on, the setting Wekinator ships. Measured on
    the 8-output reference task at 600 epochs, against the same network fed
    [0,1] inputs: training mean squared error 5.94e-4 -> 6.38e-5 (9.3x), grid
-   root-mean-square error 0.0129 -> 0.0084 (1.54x). */
+   root-mean-square error 0.0129 -> 0.0084 (1.54x).
+
+   A STILL INPUT (zero width, see iris_fit_ranges) maps to 0 for every finite
+   reading. It is written v - v rather than 0 so that a reading which is not
+   finite -- a disconnected or broken sensor -- still comes out as
+   not-a-number, and the guards downstream still report it. */
 IRIS_API float iris_norm_in (const iris *k, int i, float v) { if (!k || i < 0 || i >= k->n_in) return 0.0f;
-  const float t = (v - k->in_lo[i]) / (k->in_hi[i] - k->in_lo[i]);
+  const float w = k->in_hi[i] - k->in_lo[i];
+  if (w <= 0.0f) return v - v;
+  const float t = (v - k->in_lo[i]) / w;
   return 2.0f * t - 1.0f;
 }
 
@@ -2936,17 +2987,15 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
   for (int i = 0; i < k->n_ex; ++i) k->ex_id[i] = ids[i];
 
   /* THE RANGES COME OUT OF THE FILE UNCHECKED. iris_fit_ranges floors a
-     degenerate range so that dividing by its width cannot produce
+     degenerate OUTPUT range so that dividing by its width cannot produce
      not-a-number, but that floor only ran when ranges were FITTED. A file can
      carry a zero-width range -- written by an older build, or corrupted within
-     a valid checksum, or saved from an instrument whose sensor never moved --
-     and the loaded instrument then divided by zero on every prediction and
-     played the middle of its range for ever. Same floor, same reason, at the
-     other door. */
-  for (int i = 0; i < k->n_in; ++i) {
-    float w = iris_absf(k->in_lo[i]) * 1e-5f;  if (w < 1e-6f) w = 1e-6f;
-    if (k->in_hi[i]  - k->in_lo[i]  < w) k->in_hi[i]  = k->in_lo[i]  + w;
-  }
+     a valid checksum -- and the loaded instrument then divided by zero on
+     every prediction and played the middle of its range for ever. Same floor,
+     same reason, at the other door. An INPUT range of zero width is left as
+     it is: it marks an input that never moved, which iris_norm_in reads as 0
+     (PART 5), and widening it would bring back the enormous gain that rule
+     exists to prevent. */
   for (int i = 0; i < k->n_out; ++i) {
     float w = iris_absf(k->out_lo[i]) * 1e-5f; if (w < 1e-6f) w = 1e-6f;
     if (k->out_hi[i] - k->out_lo[i] < w) k->out_hi[i] = k->out_lo[i] + w;
@@ -3054,6 +3103,19 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
 #define IRIS_KNN_MAXK 8          /* stack bound; k above this is clamped */
 #define IRIS_KNN_GUARD 1e-9f     /* zero-distance guard for the weights */
 
+/* THE NEIGHBOUR SCALE: one multiplier per input, 1/width of its range, so a
+   distance counts each input in fractions of its demonstrated range. A still
+   input (zero width, PART 5) gets 0 and adds nothing to any distance, except
+   that a reading which is not finite still makes the distance not-a-number,
+   which the callers report. Taking the reciprocals once keeps divisions out of
+   the scan. */
+IRIS_API void iris_internal_neighbour_scale(const iris *k, float *inv) {
+  for (int i = 0; i < k->n_in; ++i) {
+    const float w = k->in_hi[i] - k->in_lo[i];
+    inv[i] = (w <= 0.0f) ? 0.0f : 1.0f / w;
+  }
+}
+
 /* k-NN inverse-squared-distance-weighted regression. k neighbours (default
    choice: 3), weight 1/(d^2 + guard) each. Standing exactly on a
    demonstration gives that row a weight of ~1e9 — recall exact to float
@@ -3077,9 +3139,8 @@ IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int k
   if (kk > IRIS_KNN_MAXK) kk = IRIS_KNN_MAXK;
   if (kk > k->n_ex) kk = k->n_ex;
 
-  /* precompute 1/range so the scan does no divisions */
   float inv[IRIS_MAX_IN];
-  for (int i = 0; i < NIn; ++i) inv[i] = 1.0f / (k->in_hi[i] - k->in_lo[i]);
+  iris_internal_neighbour_scale(k, inv);
 
   const int stride = NIn + NOut;
   /* Every slot is filled, not only the first kk. The scan and the blend touch
@@ -3195,7 +3256,7 @@ IRIS_API int iris_classify_1nn(const iris *k, const float *in, float *out) { if 
   const int NIn = k->n_in, NOut = k->n_out;
   if (k->n_ex == 0) return -1;
   float inv[IRIS_MAX_IN];
-  for (int i = 0; i < NIn; ++i) inv[i] = 1.0f / (k->in_hi[i] - k->in_lo[i]);
+  iris_internal_neighbour_scale(k, inv);
   const int stride = NIn + NOut;
   int best = -1; float best_d = 1e30f;
   for (int r = 0; r < k->n_ex; ++r) {
