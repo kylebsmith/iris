@@ -93,7 +93,9 @@ static void forward(const float *x) {
 }
 
 /* A velocity this small can never move a weight again; it is set to zero,
-   as the ESP32-S3's floating-point unit would round it. */
+   as iris.h does, so that a host with gradual underflow and the ESP32-S3,
+   whose floating-point unit flushes denormal numbers to zero, compute the
+   same bits. */
 static float flush(float v) { return (v < 1e-30f && v > -1e-30f) ? 0.0f : v; }
 
 int main(void) {
