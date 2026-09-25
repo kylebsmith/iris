@@ -19,14 +19,14 @@
 
    THE SKETCHES USE IRIS 0.1.0'S NAMES. device_torture calls
    iris_train_epochs(k, 800), which is iris_continue(k, 800) here.
-   determinism_check calls iris_retrain_new(k, 1234, 800), which refused a
-   store no trainer accepts, then reseeded and ran iris_train_epochs, so on
-   these demonstrations it is iris_reseed(k, 1234) followed by
-   iris_continue(k, 800). Checked on a header carrying both forms: they
-   leave every byte of the instrument and every counter identical (Apple
-   clang, clang 22 and gcc-15, as C and C++, at -O0, -O2 and -Os), and the
-   0.1.0 header copied into the kit gives both hashes below from the
-   sketches' own calls.
+   determinism_check calls iris_retrain_new(k, 1234, 800). In 0.1.0 that
+   function checks it has demonstrations and a positive epoch count, then
+   reseeds and runs iris_train_epochs, so on these demonstrations it is
+   iris_reseed(k, 1234) followed by iris_continue(k, 800). Checked on a
+   header carrying both forms: they leave every byte of the instrument and
+   every counter identical (Apple clang, clang 22 and gcc-15, as C and C++,
+   at -O0, -O2 and -Os), and the 0.1.0 header copied into the kit gives both
+   hashes below from the sketches' own calls.
 
    CONTRACTION. The demonstrations are computed here, and device_torture's
    are a*b+c (1 - 0.03 i). iris.h switches fused multiply-add contraction off
