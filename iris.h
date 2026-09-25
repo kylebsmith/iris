@@ -1315,17 +1315,15 @@ IRIS_API int iris_record(iris *k, const float *in, const float *out) { if (!k) r
   if (k->next_id >= 0x7FFFFFFF) return 0;
 
 #ifndef IRIS_NO_GUARDS
-  /* REFUSE A POISONED DEMONSTRATION AT THE DOOR. A NaN or Inf from a glitched
-     or unplugged sensor used to be accepted here silently — valid id returned,
-     status OK — and was caught three doors later by the trainer's pre-scan,
-     which then refused to train at all. One bad frame therefore blocked every
-     subsequent training run until the musician worked out which example to
-     delete, with nothing telling them.
-
-     Refusing here is strictly better: the store never holds a value that can
-     poison a fit, the instrument keeps playing, and the caller finds out
-     immediately. The trainer's pre-scan stays as defence in depth — it also
-     covers examples that arrived through iris_load. Added 2026-08-27 (gap B4). */
+  /* REFUSE A POISONED DEMONSTRATION AT THE DOOR. A not-a-number or an
+     infinity from a glitched or unplugged sensor, once stored, makes every
+     trainer refuse (see iris_internal_trainable), so one bad frame would
+     block every training run until the musician worked out which take to
+     delete. Refused here, the store never holds a value that can poison a
+     fit, the instrument keeps playing, and the caller finds out at once, from
+     the return value and IRIS_NAN_TRAPPED. iris_load refuses such a value
+     too; the trainers' own test stays as defence in depth, for a store
+     written some other way. */
   {
     for (int i = 0; i < k->n_in;  ++i)
       if (iris_isbad(in[i]))  { k->status = IRIS_NAN_TRAPPED; return 0; }
