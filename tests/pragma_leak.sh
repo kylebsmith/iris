@@ -3,9 +3,12 @@
 # and for nobody else's.
 #
 # RUN (from anywhere; it writes only to a temporary directory):
-#     sh tests/pragma_leak.sh
+#     sh tests/pragma_leak.sh            or   sh build.sh pragma
 # The exit status is non-zero if any check fails. A compiler that is not
-# installed prints SKIP; a SKIP is not a pass for that compiler.
+# installed prints SKIP; a SKIP is not a pass for that compiler. IRIS_REQUIRE
+# lists compiler families that must be present, so continuous integration
+# fails rather than skips when an install step breaks: any of "xtensa",
+# "arm-none-eabi" and "cross-clang".
 #
 # WHAT IT CHECKS. A fused multiply-add computes a*b+c with one rounding
 # instead of two, so a build that fuses where another does not makes a
@@ -33,8 +36,9 @@
 #     BEFORE the #include to survive it: built that way, user_fma must
 #     contain no fused instruction.
 #
-# THE BUILDS. Apple clang (cc), Homebrew clang 22 and gcc-15, at -O2, as C
-# and as C++, on this machine's processor. Clang contracts a*b+c by default;
+# THE BUILDS. On this machine's processor, at -O2, as C and as C++: CC alone
+# when it is set, and otherwise each distinct compiler among cc, Homebrew's
+# clang, clang, gcc-15 and gcc. Clang contracts a*b+c by default;
 # GCC does in its GNU modes and in C++, so gcc-15 is run with -std=gnu99 and
 # -std=gnu++17 (in ISO C, -std=c99, GCC leaves contraction off and user_fma
 # could not show anything). On x86-64 the builds add -mfma, because the
@@ -166,10 +170,16 @@ CM_RE='^[[:space:]]+vfn?m[as][.]f(32|64)[[:space:]]'
 
 # leg <label> <keep|nokeep> <format> <regex> <compiler> <flags...>
 # keep: also check that the includer's own pragma before the #include survives
+requires() { case " ${IRIS_REQUIRE:-} " in *" $1 "*) return 0 ;; esac; return 1; }
 leg() {
   label=$1; keep=$2; fmt=$3; re=$4; cc=$5; shift 5
-  if ! command -v "$cc" >/dev/null 2>&1; then
-    printf '  SKIP  %-44s not installed\n' "$label"; return
+  if [ -z "$cc" ] || ! command -v "$cc" >/dev/null 2>&1; then
+    if requires "$FAMILY"; then
+      printf '  FAIL  %-44s not installed, and IRIS_REQUIRE asks for it\n' "$label"; fail=1
+    else
+      printf '  SKIP  %-44s not installed\n' "$label"
+    fi
+    return
   fi
   if ! "$cc" "$@" -I"$ROOT" -S "$T/unit.c" -o "$T/real.s" 2> "$T/err"; then
     printf '  FAIL  %-44s did not compile: %s\n' "$label" "$(head -1 "$T/err")"; fail=1; return
@@ -211,32 +221,64 @@ case $(uname -m) in
   *) echo "  SKIP  host processor $(uname -m): no fused-instruction pattern known"; HRE="" ;;
 esac
 LLVM=/opt/homebrew/opt/llvm/bin/clang
-echo "fused multiply-add: in the includer's code, not in iris's"
-if [ -n "$HRE" ]; then
-  for pair in "cc:cc" "clang 22:$LLVM"; do
-    name=${pair%%:*}; cc=${pair#*:}
-    leg "$name, C   -std=c99 -O2"   keep $HOSTFMT "$HRE" "$cc" -x c -std=c99 -O2 $HFLAGS
-    leg "$name, C++ -std=c++17 -O2" keep $HOSTFMT "$HRE" "$cc" -x c++ -std=c++17 -O2 $HFLAGS
+is_clang() { "$1" --version 2>/dev/null | grep -qi clang; }
+is_apple() { "$1" --version 2>/dev/null | head -1 | grep -q '^Apple clang'; }
+label_of() { case "$1" in /opt/homebrew/*) echo "Homebrew $(basename "$1")" ;; *) basename "$1" ;; esac; }
+# the host compilers: CC alone, or each distinct installed compiler
+if [ -n "${CC:-}" ]; then HOSTCC=$CC; else
+  HOSTCC=""; seen=""
+  for c in cc "$LLVM" clang gcc-15 gcc; do
+    command -v "$c" >/dev/null 2>&1 || continue
+    v=$("$c" --version 2>/dev/null | head -1)
+    case "$seen" in *"|$v|"*) continue ;; esac
+    seen="$seen|$v|"; HOSTCC="$HOSTCC $c"
   done
-  leg "gcc-15, C   -std=gnu99 -O2"   keep $HOSTFMT "$HRE" gcc-15 -x c -std=gnu99 -O2 $HFLAGS
-  leg "gcc-15, C++ -std=gnu++17 -O2" keep $HOSTFMT "$HRE" gcc-15 -x c++ -std=gnu++17 -O2 $HFLAGS
 fi
-XT=$HOME/Library/Arduino15/packages/esp32/tools/esp-x32/2507/bin/xtensa-esp32s3-elf-gcc
-CM=/Applications/ARM/bin/arm-none-eabi-gcc
+echo "fused multiply-add: in the includer's code, not in iris's"
+FAMILY=host
+if [ -n "$HRE" ]; then
+  for cc in $HOSTCC; do
+    n=$(label_of "$cc")
+    if is_clang "$cc"; then
+      leg "$n, C   -std=c99 -O2"   keep $HOSTFMT "$HRE" "$cc" -x c -std=c99 -O2 $HFLAGS
+      leg "$n, C++ -std=c++17 -O2" keep $HOSTFMT "$HRE" "$cc" -x c++ -std=c++17 -O2 $HFLAGS
+    else
+      leg "$n, C   -std=gnu99 -O2"   keep $HOSTFMT "$HRE" "$cc" -x c -std=gnu99 -O2 $HFLAGS
+      leg "$n, C++ -std=gnu++17 -O2" keep $HOSTFMT "$HRE" "$cc" -x c++ -std=gnu++17 -O2 $HFLAGS
+    fi
+  done
+fi
+XT=$(find "$HOME/Library/Arduino15/packages/esp32/tools" "$HOME/.arduino15/packages/esp32/tools" \
+       -name 'xtensa-esp32s3-elf-gcc' -type f 2>/dev/null | sort | tail -1)
+CM=$(command -v arm-none-eabi-gcc 2>/dev/null || true)
+[ -z "$CM" ] && [ -x /Applications/ARM/bin/arm-none-eabi-gcc ] && CM=/Applications/ARM/bin/arm-none-eabi-gcc
+FAMILY=xtensa
 leg "ESP32-S3, C   -std=gnu17 -Os"   keep elf "$XT_RE" "$XT" -x c -std=gnu17 -Os -mlongcalls
 leg "ESP32-S3, C++ -std=gnu++2a -Os" keep elf "$XT_RE" "$XT" -x c++ -std=gnu++2a -Os -mlongcalls
+FAMILY=arm-none-eabi
 leg "Cortex-M4, C   -std=gnu17 -O2"  keep elf "$CM_RE" "$CM" -x c -std=gnu17 -O2 \
     -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
 leg "Cortex-M4, C++ -std=gnu++17 -O2" keep elf "$CM_RE" "$CM" -x c++ -std=gnu++17 -O2 \
     -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
-# clang ignores float_control here, so the includer's own earlier pragma is
-# not kept (iris.h says so); the rest must hold, with no warning
-for pair in "cc:cc" "clang 22:$LLVM"; do
-  name=${pair%%:*}; cc=${pair#*:}
-  leg "$name, Cortex-M7, C   -O2"   nokeep elf "$CM_RE" "$cc" -x c -std=c99 -O2 \
+# clang ignores float_control on a Cortex-M7, so the includer's own earlier
+# pragma is not kept there (iris.h says so); the rest must hold, with no
+# warning. Every clang among the host compilers is checked, and a clang with
+# the ARM code generator when none of them is one.
+FAMILY=cross-clang
+XCS=""
+for cc in $HOSTCC; do is_clang "$cc" && XCS="$XCS $cc"; done
+if [ -z "$XCS" ]; then
+  for c in "$LLVM" clang; do
+    if command -v "$c" >/dev/null 2>&1 && is_clang "$c"; then XCS=$c; break; fi
+  done
+fi
+[ -z "$XCS" ] && leg "clang, Cortex-M7" nokeep elf "$CM_RE" ""
+for cc in $XCS; do
+  n=$(label_of "$cc")
+  leg "$n, Cortex-M7, C   -O2"   nokeep elf "$CM_RE" "$cc" -x c -std=c99 -O2 \
       --target=thumbv7em-none-eabihf -mcpu=cortex-m7 -mfloat-abi=hard -ffreestanding
+  is_apple "$cc" || leg "$n, Cortex-M7, C++ -O2" nokeep elf "$CM_RE" "$cc" -x c++ -std=c++17 -O2 \
+      --target=thumbv7em-none-eabihf -mcpu=cortex-m7 -mfloat-abi=hard -ffreestanding -nostdinc++
 done
-leg "clang 22, Cortex-M7, C++ -O2" nokeep elf "$CM_RE" "$LLVM" -x c++ -std=c++17 -O2 \
-    --target=thumbv7em-none-eabihf -mcpu=cortex-m7 -mfloat-abi=hard -ffreestanding -nostdinc++
 [ "$fail" = 0 ] && echo "  pragma scope holds" || echo "  PRAGMA SCOPE BROKEN"
 exit $fail
