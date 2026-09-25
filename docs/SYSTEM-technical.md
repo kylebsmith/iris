@@ -3,7 +3,8 @@
 **Version 0.2.0.** BSD 3-Clause, `Copyright (c) 2026, Kyle Smith`. One header,
 no build system: `cc -std=c99 -O2 -I. -o hello examples/01_hello.c`. This page
 summarises the design for a technical reader; [`iris.h`](../iris.h) is the
-authority, and every figure below names the check or recipe that produces it.
+authority. A figure below names the check or recipe that produces it, or says
+that it comes from a study whose program is not in this repository.
 The plain-language companion is [SYSTEM-plain-english.md](SYSTEM-plain-english.md).
 
 ## 1. System
@@ -13,8 +14,8 @@ iris is a supervised-learning runtime for the Wekinator interaction loop
 microcontroller. `struct iris` is 248 bytes on a 64-bit host and 168 on the
 ESP32-S3; everything else lives in a caller-supplied arena whose size a macro
 computes at compile time. `IRIS_ARENA(2,12,3,256)` is 9,264 bytes on a 64-bit
-host and equals `iris_size()` exactly (`tests/audit.c`, "arena macro >= runtime
-size"). No allocator is ever called: `sh build.sh noheap` interposes the
+host and equals `iris_size()` exactly (`tests/audit.c`, "arena macro covers
+every array iris_init carves"). No allocator is ever called: `sh build.sh noheap` interposes the
 allocator family, drives every entry point, and requires zero calls, with a
 positive control that must be counted. Hard limits: 32 inputs, 16 outputs, 64
 hidden units (8 minimum), and 4,096 demonstrations (255 where `size_t` is 16
@@ -96,7 +97,9 @@ the accurate functions give 1.3% higher held-out error as a geometric mean
 (the [7/6] rational) to 53% (the C library's `tanhf`) more per epoch. The
 backward pass uses the true-tanh derivative, a surrogate; the exact derivative
 of the rational makes no measurable difference (geometric mean 0.997, 95%
-interval 0.988 to 1.005). The nonlinearity is frozen because saved instruments
+interval 0.988 to 1.005). The maximum error is in
+[`docs/MATH-FIXES.md`](MATH-FIXES.md); the other figures in this paragraph come
+from studies whose programs are not in this repository. The nonlinearity is frozen because saved instruments
 depend on it.
 
 ## 3. Trainers
@@ -117,7 +120,7 @@ scaled by `1/n_ex`.
   more rules end a run: an absolute floor of 1e-6 on the mean squared error,
   which sits outside the plateau test and at 10 or fewer demonstrations is
   usually what stops the run, and the divergence clamp at |w| > 16.
-  `examples/01_hello.c` stops at 2,557 epochs with error 9.98e-7: not a
+  `examples/01_hello.c` stops at 2,557 epochs with error 9.89e-7: not a
   multiple of 2,000, so the floor stopped it.
 - **`iris_train_begin` / `iris_train_slice`** run the same training in slices
   and are bit-identical to `iris_train` (`tests/train.c`).
@@ -126,7 +129,8 @@ scaled by `1/n_ex`.
   fixed-epoch recursion the golden hash pins. After a deleted bad take they keep
   its influence: on 20 demonstrations of a smooth target plus one contradictory
   take, trained, deleted and trained again, continuing leaves the instrument 14
-  times further from the true mapping than `iris_train` (40 of 40 seeds). While
+  times further from the true mapping than `iris_train` (40 of 40 seeds, from a
+  study whose program is not in this repository). While
   a weight sits exactly on ±16 they refuse with `IRIS_DIVERGED_STUCK` on every
   call; `iris_train` is the way out.
 - **`iris_train_elm`**, the closed-form trainer (an extreme learning machine):
@@ -190,7 +194,7 @@ identity impossible in principle.
 
 Wekinator has nine algorithm families; iris implements the multilayer
 perceptron and nearest-neighbour. The largest hole is dynamic time warping
-(FastDTW), 6,662 lines there and no temporal machinery here: `iris_predict` is a
+(FastDTW), 6,662 lines in Wekinator's source and no temporal machinery here: `iris_predict` is a
 pure function of the current frame. Linear regression is the hardest omission
 to defend, being index 1 of the numeric registry, inside the mode iris
 reconstructs. Also absent: per-output input subsetting, a settable k on the
@@ -262,13 +266,15 @@ These are load-bearing, not caveats.
    plateau rule, not the ledger's premise.
 4. **The weight limit flags good fits**: 40 of 2,304 default fits, nearly all
    on sharp targets at 50 demonstrations, report `IRIS_TRAINING_DIVERGED`
-   although they play as well as the healthy ones.
+   although they play as well as the healthy ones (a study whose program is
+   not in this repository).
 5. **Hardware figures** are as scoped in section 6: no representative
    training time on the board, and no recorded log for any board figure.
 6. **Recording order matters a little.** Recording the same demonstrations in
    a different order gives a bit-different instrument, because the shuffle
    works on positions: over 60 random orders the largest difference on the
-   probe grid is 0.0037, against a median of 0.0116 for a change of seed. So
+   probe grid is 0.0037, against a median of 0.0116 for a change of seed (a
+   study whose program is not in this repository). So
    deleting and re-recording a take does not return exactly the instrument you
    would have had.
 7. The save format records no trainer, so a file cannot say which trainer
