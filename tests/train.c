@@ -27,6 +27,9 @@
         demonstrations whose width overflows -- makes the trainer return -1
         (iris_train 0) and leaves the seed's unfitted start, the ledger empty
         and the status IRIS_NAN_TRAPPED.
+     7. iris_last_error means one thing: after iris_train, every slice,
+        iris_continue and the closed-form solve it equals, to the bit, what a
+        load of the saved instrument reports.
 
    Not-a-number and infinity are built with __builtin_nanf and __builtin_inff,
    never by dividing by zero, so -fsanitize=float-divide-by-zero can run over
@@ -521,6 +524,50 @@ int main(void) {
     snprintf(d, sizeof d, "%d of 4 gradient trainers returned -1 (iris_train 0) and left the "
              "seed's unfitted start%s", right, wrong);
     check("a not-a-number partway returns -1 and resets to the seed", right == 4, d);
+  }
+
+  /* ---- 7. iris_last_error has one meaning --------------------------------
+     The training error of the weights the instrument holds, measured when
+     the trainer finishes. So the figure a trainer leaves must be the figure
+     a load of its save reports, to the bit -- after iris_train, after every
+     slice of a sliced run, after iris_continue (whose return value it also
+     is) and after the closed-form solve -- and it is not the last epoch's
+     running error, which the plateau test reads. */
+  {
+    static unsigned char file[16384], LB[sizeof A];
+    static unsigned char scr[IRIS_ELM_SCRATCH(12, 3)];
+    int agree = 0, total = 0, differs_from_run = 0;
+    char first[200] = "";
+#define AGREES(label) do {                                                    \
+      const size_t fn = iris_save(k, file, sizeof file);                      \
+      iris *l = iris_init(LB, sizeof LB, 2, 12, 3, 32, 5u);                    \
+      const int same = fn > 0 && iris_load(l, file, fn)                       \
+                    && iris_last_error(l) == iris_last_error(k);              \
+      total++; agree += same;                                                 \
+      if (!same && !first[0])                                                 \
+        snprintf(first, sizeof first, " -- %s: %.9g, loaded %.9g", label,     \
+                 (double)iris_last_error(k), (double)iris_last_error(l));     \
+    } while (0)
+    iris *k = iris_init(A, sizeof A, 2, 12, 3, 32, 4242u);
+    record_n(k, 20, 31337ul);
+    iris_train(k);
+    AGREES("iris_train");
+    differs_from_run += iris_last_error(k) != k->tr_err;
+    iris_train_begin(k, 0);
+    for (int n = 0; n < 5 && iris_train_slice(k, 700); ++n) AGREES("a slice");
+    const float ret = iris_continue(k, 300);
+    AGREES("iris_continue");
+    const int ret_is_it = ret == iris_last_error(k);
+    const int elm = iris_train_elm(k, 1e-4f, scr, sizeof scr);
+    AGREES("iris_train_elm");
+    iris_clear(k);
+    const int cleared = iris_last_error(k) == 1.0f;
+#undef AGREES
+    snprintf(d, sizeof d, "%d of %d trainer results equal their load to the bit; iris_continue "
+             "returned it %d; not the running error %d; solve %d; 1 after iris_clear %d%s",
+             agree, total, ret_is_it, differs_from_run, elm, cleared, first);
+    check("iris_last_error is the same after a trainer and a load", agree == total && ret_is_it
+          && differs_from_run && elm >= 0 && cleared, d);
   }
 
   if (fails) printf("\n  %d FAILING\n", fails);

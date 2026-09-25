@@ -111,10 +111,15 @@ ties the export to the instrument `tests/audit.c` pins.
    iris's weights and velocities after epoch e − 1, runs epoch e in binary64
    with iris's order, and compares every weight and velocity with iris's after
    epoch e. This is the check that iris computes the documented update. The
-   same replay's mean squared error for the epoch is compared with the error
-   iris reports for it: the number `iris_continue` returns and the error floor
-   and the plateau test read. Run for all epochs at once, it covers every
-   epoch of every run: 22,050 of them in 0.2 s for golden-plateau.
+   same replay's mean squared error for the epoch, added up while the weights
+   move, is compared with the error iris adds up for it: the number the error
+   floor and the plateau test read, which `export.c` reads from the
+   structure. Run for all epochs at once, it covers every epoch of every run:
+   22,050 of them in 0.2 s for golden-plateau.
+   *The training error after every epoch.* `iris_last_error` after each epoch
+   (one forward pass over the demonstrations with the weights the epoch ended
+   with, which is also what `iris_continue` returns) is compared with the
+   binary64 mean squared error of the same weights.
 2. *The whole run, free-running.* From iris's starting weights the reference
    trains alone, in binary64, for as many epochs as iris ran, with iris's
    shuffle orders, and every epoch's weights are compared. Every 1,000 epochs
@@ -274,6 +279,13 @@ n × m squares in binary32 and dividing adds up to (n × m + 1)u relative. The
 constant is measured: at worst 1.39 (grid, where the error sits near the
 floor), so 8 leaves 5.8 times.
 
+**The training error after each epoch (derived form, calibrated constant).**
+Within 8u(√err + n × m × err), for the same reasons as the epoch's error, with
+no update in between: the forward pass and the target scaling put each y − t
+a few u from its binary64 value, and the sum of n × m squares adds up to
+(n × m + 1)u relative. The constant is measured: at worst 1.36 (grid, near the
+floor), so 8 leaves 5.9 times.
+
 **The whole run (calibrated).** With d(e) the largest weight difference after e
 epochs relative to max(1, largest weight),
 
@@ -416,6 +428,8 @@ harness:
 | output error signal y(1 − y) → y(1.001 − y) | golden | every epoch replayed, 170 times its bound, and its error 12.6 times; the whole run, 203 times; the golden hash |
 | epoch error divided by the demonstration count alone, not by demonstrations times outputs | every recipe | every epoch's error, 44,300 to 65,300 times its bound, on the six recipes with three outputs; nothing else |
 | epoch error divided by one more than demonstrations times outputs | every recipe | every epoch's error, 243 to 15,700 times its bound, on all seven trained recipes; nothing else |
+| training error (`iris_last_error`) divided by one more than demonstrations times outputs | every recipe | the training error after every epoch, 236 to 15,000 times its bound, on all seven trained recipes; nothing else |
+| `iris_last_error` set to the epoch's running error instead of measured after it | golden | the training error after every epoch, 24,700 times its bound |
 | plateau tolerance 0.10 → 0.12 | plateau-edge | iris stops at epoch 6,000, where its documented rule does not; the reference's margin there is 0.015, against 4 × 1e-6 |
 | error floor 1e-6 → 2e-6 | grid | iris stops at epoch 5,213, where its documented rule does not; margin 0.99 |
 | neighbour guard 1e-9 → 1e-6 | classes | the 3-, 5- and 8-nearest blends, 34 to 50 times the tolerance; the tie check |

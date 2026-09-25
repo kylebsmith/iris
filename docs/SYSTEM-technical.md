@@ -10,7 +10,7 @@ The plain-language companion is [SYSTEM-plain-english.md](SYSTEM-plain-english.m
 
 iris is a supervised-learning runtime for the Wekinator interaction loop
 (demonstrate gesture-to-parameter pairs, train, play) sized for a
-microcontroller. `struct iris` is 248 bytes on a 64-bit host and 164 on the
+microcontroller. `struct iris` is 248 bytes on a 64-bit host and 168 on the
 ESP32-S3; everything else lives in a caller-supplied arena whose size a macro
 computes at compile time. `IRIS_ARENA(2,12,3,256)` is 9,264 bytes on a 64-bit
 host and equals `iris_size()` exactly (`tests/audit.c`, "arena macro >= runtime
@@ -271,9 +271,6 @@ These are load-bearing, not caveats.
    probe grid is 0.0037, against a median of 0.0116 for a change of seed. So
    deleting and re-recording a take does not return exactly the instrument you
    would have had.
-7. **`iris_last_error` is measured two ways**: after a gradient run it is the
-   last epoch's error, accumulated while the weights moved; after a closed-form
-   solve or a load it is a recall error of the final weights.
-8. The save format records no trainer, so a file cannot say which trainer
+7. The save format records no trainer, so a file cannot say which trainer
    produced it. Demonstrations spanning more than about 3.4e38 end to end give
    an infinite range width, which training traps and `iris_save` refuses.

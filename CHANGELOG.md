@@ -98,7 +98,9 @@ Removed:
   kept for life, with `in_center`, its golden hash `0xFEFAEDF6` and its
   fixtures. Every instrument scales its inputs to [-1, +1]. Without the field,
   `struct iris`, and so every `IRIS_ARENA`, is 8 bytes smaller on a 64-bit
-  host (248 bytes) and 4 smaller on the ESP32-S3 (164).
+  host (248 bytes). On the ESP32-S3 it is the same size as in 0.1.0 (168
+  bytes), because a new field keeps the last epoch's error for the plateau
+  test now that `iris_last_error` is measured separately.
 - `experimental/iris_lbfgs.h`, the limited-memory quasi-Newton trainer (L-BFGS,
   the Broyden–Fletcher–Goldfarb–Shanno method with a bounded history), with its
   checks and hashes. It had no caller outside the tests.
@@ -148,6 +150,15 @@ Behaviour changes on the playing path:
   not-a-number in the worst-demonstration ledger. It now returns -1, with
   `IRIS_NAN_TRAPPED`, and leaves the instrument at its seed's unfitted start
   with the ledger empty; `iris_train` returns 0 there, as before.
+- `iris_last_error` meant two things: after a gradient run, the last epoch's
+  error added up while the weights moved; after a closed-form solve or a load,
+  the error of the final weights. It is now always the second, measured with
+  one forward pass when a trainer finishes and when a file is loaded, so the
+  same weights read the same bits every way; `iris_continue` and
+  `iris_continue_to_plateau` return the same figure, and `iris_clear` resets
+  it to 1. The reported errors fall by 2% to 13% (the reference task trained
+  to its plateau: 4.169e-06 before, 3.718e-06 now). The plateau test and the
+  error floor still read the epoch's own figure.
 - The stuck-divergence refusal fired only on every second warm call, and any
   call that overwrote the status let a warm run through; it now keys on the
   pinned weights and holds on every call.

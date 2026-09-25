@@ -325,7 +325,8 @@
      int   iris_train_epochs_done(k)      epochs the last run actually did
      int   iris_is_trained(k)             1 if the fit matches the stored
                                           demonstrations
-     float iris_last_error(k)             the training error of the fit
+     float iris_last_error(k)             the training error of the current
+                                          weights (PART 8)
      void  iris_set_smoothing(k, amount)  0 sticks to the demonstrations, 1
                                           smooths confidently between them
      float iris_get_smoothing(k)
@@ -1125,6 +1126,10 @@ struct iris {
   int32_t tr_done, tr_ceiling, tr_running;
   int32_t tr_n_ex;         /* how many demonstrations the shuffle covers */
   float   tr_ref;          /* error one plateau-window ago */
+  float   tr_err;          /* the last epoch's error, added up while the
+                              weights moved: what the error floor and the
+                              plateau test read. iris_last_error is a
+                              different measurement, taken after the run. */
 };
 
 /* WHAT THE STATUS DOES AND DOES NOT COVER.
@@ -1200,13 +1205,15 @@ struct iris {
 
    Here is why it has to exist. The two rules below are each sound, but they
    meet badly in C, and `if (trainer(...))` is wrong in BOTH directions
-   depending on which trainer you called. The four trainers on the same 20
-   demonstrations (2-12-3; the refusal is an empty store):
+   depending on which trainer you called. The four trainers on the 20
+   demonstrations of the reference task in tests/audit.c (2-12-3, seed 1234,
+   each from a fresh reseed, the closed-form one at lam0 1e-4; the refusal is
+   an empty store):
 
      on a fit that WORKED        return   if(return)   iris_is_trained
        iris_train                 1          true            1
-       iris_continue(k, 600)      0.00038    true            1
-       iris_continue_to_plateau   0.000011   true            1
+       iris_continue(k, 600)      0.00012    true            1
+       iris_continue_to_plateau   0.0000043  true            1
        iris_train_elm             0          FALSE           1   <-- best case
 
      on a fit that REFUSED
@@ -1430,7 +1437,7 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
   iris_internal_default_learning(k); k->l2 = 0.0f;
   for (int i = 0; i < cap; ++i) k->ex_res[i] = 0.0f;
   k->res_epochs = 0;
-  k->tr_done = 0; k->tr_ceiling = 0; k->tr_running = 0; k->tr_ref = 0.0f;
+  k->tr_done = 0; k->tr_ceiling = 0; k->tr_running = 0; k->tr_ref = 0.0f; k->tr_err = 0.0f;
   for (int i = 0; i < n_in;  ++i) { k->in_lo[i]  = 0.0f; k->in_hi[i]  = 1.0f; }
   for (int i = 0; i < n_out; ++i) { k->out_lo[i] = 0.0f; k->out_hi[i] = 1.0f; }
   iris_reseed(k, seed);
@@ -1700,7 +1707,7 @@ IRIS_API int iris_delete_nearest(iris *k, const float *in) { if (!k) return 0;
 
 IRIS_API void iris_clear(iris *k) {
   if (!k) return;
-  k->n_ex = 0; k->trained = 0; k->fitted = 0;
+  k->n_ex = 0; k->trained = 0; k->fitted = 0; k->last_error = 1.0f;
   /* Every demonstration goes, and with them the fit: the instrument is no
      longer fitted and plays 0 until it is trained again. Any sliced run in
      flight ends too. The trainer returns at once when there are no
@@ -1709,7 +1716,7 @@ IRIS_API void iris_clear(iris *k) {
          while (iris_train_slice(k, 500)) { draw(); poll(); }
      would never end: a sketch with a clear button and sliced training is
      one press from that. */
-  k->tr_running = 0; k->tr_done = 0; k->tr_n_ex = 0; k->tr_ref = 0.0f;
+  k->tr_running = 0; k->tr_done = 0; k->tr_n_ex = 0; k->tr_ref = 0.0f; k->tr_err = 0.0f;
 }
 
 /* ==========================================================================
@@ -2288,6 +2295,46 @@ IRIS_API int iris_internal_trainable(iris *k) {
   return 1;
 }
 
+/* THE TRAINING ERROR OF THE CURRENT WEIGHTS, which is what iris_last_error
+   reports: the mean squared error over every stored demonstration and every
+   output, in the network's own output units (each output's demonstrated
+   range spans 0.1 to 0.9, PART 5), from one forward pass per demonstration
+   with the weights as they are now. Every trainer that fits calls it once
+   when it finishes, and iris_load calls it, so the same weights and
+   demonstrations give the same bits whichever way the instrument got them.
+   The squares are added in one running sum, demonstration by demonstration
+   and output by output, and divided once.
+
+   It is not the figure the plateau test reads. That one (tr_err) is added up
+   during an epoch while every visit moves the weights, so it describes no
+   single set of weights: on the reference task of tests/audit.c trained by
+   iris_train it is 4.57e-6 for the last epoch, where the weights the run
+   ends with measure 4.29e-6.
+
+   1 when the instrument is not fitted or holds no demonstrations, the value
+   a fresh instrument reports, and 1 if the sum is not a number, which takes
+   a demonstration so far outside the stored ranges that normalising it
+   overflows a float. It writes the network's activations, and uses x, a
+   working array of at least n_in floats that every caller already has: an
+   array of its own would add IRIS_MAX_IN floats to the deepest stack frame
+   of a training run, 128 bytes an Uno cannot spare. */
+IRIS_API float iris_internal_recall_error(iris *k, float *x) {
+  if (!k->fitted || k->n_ex < 1) return 1.0f;
+  const int stride = k->n_in + k->n_out;
+  float e = 0.0f;
+  for (int r = 0; r < k->n_ex; ++r) {
+    const float *row = k->ex + (size_t)r * stride;
+    for (int i = 0; i < k->n_in; ++i) x[i] = iris_internal_norm_in(k, i, row[i]);
+    iris_internal_forward_norm(k, x);
+    for (int o = 0; o < k->n_out; ++o) {
+      const float d = k->out[o] - iris_internal_norm_out(k, o, row[k->n_in + o]);
+      e += d * d;
+    }
+  }
+  e /= (float)(k->n_ex * k->n_out);
+  return iris_internal_isbad(e) ? 1.0f : e;
+}
+
 /* Start a training session: the progress counters, the shuffle and the
    residual ledger. The blocking trainers start one inside the engine and
    iris_train_begin starts one for a sliced run, through this same function,
@@ -2297,6 +2344,7 @@ IRIS_API void iris_internal_begin_session(iris *k, int ceiling) {
   k->tr_ceiling = ceiling;
   k->tr_done    = 0;
   k->tr_ref     = 0.0f;
+  k->tr_err     = 0.0f;
   k->tr_running = 1;
   k->tr_n_ex    = k->n_ex;
   for (int i = 0; i < k->n_ex; ++i) k->order[i] = i;
@@ -2313,8 +2361,9 @@ IRIS_API void iris_internal_begin_session(iris *k, int ceiling) {
      resume  : 0 = start a session (iris_internal_begin_session), run it and
                    end it -- a blocking call
                1 = continue the session already in k -- one slice of it
-   Returns the last epoch's mean squared error, or -1 if it refused or met
-   a not-a-number partway. */
+   Returns the training error of the weights it ends with
+   (iris_internal_recall_error, which iris_last_error then reports), or -1 if
+   it refused or met a not-a-number partway. */
 /* REFUSAL CONVENTION (one convention, whole library): a train call that did
    no training returns -1.0f and leaves `trained` alone, so a caller reading
    only the return value can tell a refusal from a repeat of the previous
@@ -2543,6 +2592,7 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
       }
     }
     err /= (float)(k->n_ex * NOUT);
+    k->tr_err = err;
     k->res_epochs++;
     k->tr_done++;
 
@@ -2565,10 +2615,11 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
     /* THE ERROR FLOOR — a fourth stopping rule, and at small demonstration
        counts the one most likely to be what actually stopped you.
 
-       WHAT 1e-6 IS. `err` is the mean squared error over every demonstration
-       and output, in the network's own output units, where each output's
-       demonstrated range spans the 0.8-wide band [0.1, 0.9], added up during
-       the epoch while the weights are still moving. So the floor is
+       WHAT 1e-6 IS. `tr_err` is the mean squared error over every
+       demonstration and output, in the network's own output units, where
+       each output's demonstrated range spans the 0.8-wide band [0.1, 0.9],
+       added up during the epoch while the weights are still moving (not
+       iris_last_error, which is measured after the run). So the floor is
        a root-mean-square miss of 0.001 in those units: 0.125% of each
        output's demonstrated range. It is ABSOLUTE -- the same number whatever
        the data, the noise or the number of demonstrations -- and it was
@@ -2590,24 +2641,26 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
        to stop on any path), so it also fires on the fixed-epoch path. Ask
        iris_train_epochs_done() how many epochs actually ran; if it is below
        what you asked for and no guard fired, this is why. */
-    if (err < 1e-6f) { k->tr_running = 0; break; }
+    if (k->tr_err < 1e-6f) { k->tr_running = 0; break; }
 
     /* --- the plateau test, and the progress report ----------------------- */
     if (conv && (k->tr_done % IRIS_CONV_WINDOW) == 0) {
-      if (cb && !cb(user, k->tr_done, k->tr_ceiling, err)) { k->tr_running = 0; break; }
-      if (k->tr_ref > 0.0f && (k->tr_ref - err) <= IRIS_CONV_TOL * k->tr_ref) {
+      if (cb && !cb(user, k->tr_done, k->tr_ceiling, k->tr_err)) { k->tr_running = 0; break; }
+      if (k->tr_ref > 0.0f && (k->tr_ref - k->tr_err) <= IRIS_CONV_TOL * k->tr_ref) {
         k->tr_running = 0;
         break;
       }
-      k->tr_ref = err;
+      k->tr_ref = k->tr_err;
     }
   }
 
   k->trained = 1;
   k->fitted  = 1;
-  k->last_error = err;
+  /* The training error of the weights the run ends with, measured now:
+     one forward pass per demonstration, the cost of a third of an epoch. */
+  k->last_error = iris_internal_recall_error(k, x);
   if (!resume) k->tr_running = 0;     /* a blocking run is over when it returns */
-  return err;
+  return k->last_error;
 }
 
 /* --------------------------------------------------------------------------
@@ -2668,11 +2721,12 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
 
 /* THE FIXED-EPOCH TRAINER: exactly `epochs` more epochs from the current
    weights, fewer only if the error floor or the divergence guard stops the
-   run (iris_train_epochs_done says how many ran). Returns the last epoch's
-   mean squared error, or -1 if it refused, which it also does for a budget
-   of zero or less, or if it met a not-a-number partway, which leaves the
-   instrument at its seed's unfitted start (iris_internal_trap_nan). Mind THE HAZARD above: after deleting a take, call
-   iris_train, not this.
+   run (iris_train_epochs_done says how many ran). Returns the training
+   error of the weights it leaves, the value iris_last_error then reports,
+   or -1 if it refused, which it also does for a budget of zero or less, or
+   if it met a not-a-number partway, which leaves the instrument at its
+   seed's unfitted start (iris_internal_trap_nan). Mind THE HAZARD above:
+   after deleting a take, call iris_train, not this.
 
    It matches Weka MultilayerPerceptron's per-weight update recursion and its
    per-demonstration update granularity.
@@ -2707,11 +2761,13 @@ IRIS_API float iris_continue(iris *k, int epochs) { if (!k) return -1.0f;
    plateau test, the ceiling, the error floor and the divergence guard stop
    it exactly as they stop iris_train. ceiling <= 0 takes IRIS_CONV_CEILING.
    cb may be NULL; otherwise it is called every IRIS_CONV_WINDOW epochs with
-   (user, epochs done, ceiling, error), and returning 0 from it ends the run
-   there, leaving a usable, partly trained instrument. Returns the final mean
-   squared error, or -1 if it refused or met a not-a-number partway (as
-   iris_continue). Mind THE HAZARD above: after deleting
-   a take, call iris_train, not this. */
+   (user, epochs done, ceiling, error), where the error is the one the
+   plateau test is about to compare: the epoch's mean squared error, added
+   up while the weights moved. Returning 0 from it ends the run there,
+   leaving a usable, partly trained instrument. Returns the training error
+   of the weights it leaves, the value iris_last_error then reports, or -1
+   if it refused or met a not-a-number partway (as iris_continue). Mind THE
+   HAZARD above: after deleting a take, call iris_train, not this. */
 IRIS_API float iris_continue_to_plateau(iris *k, int ceiling, iris_progress_fn cb,
                                         void *user) { if (!k) return -1.0f;
   return iris_internal_train_run(k, ceiling > 0 ? ceiling : IRIS_CONV_CEILING, 1, 0, cb, user);
@@ -2747,10 +2803,10 @@ IRIS_API int iris_internal_cold_start(iris *k) {
        bought less than IRIS_CONV_TOL (10%) of it;
      - the ceiling, IRIS_CONV_CEILING (60,000 epochs; 30,000 where int is 16
        bits);
-     - the error floor, see the note at `err < 1e-6f` in the engine: an
-       ABSOLUTE floor on the mean squared error, not a relative one, and at
-       small demonstration counts it, not the plateau test, is usually what
-       stops the run;
+     - the error floor, see the note at `tr_err < 1e-6f` in the engine: an
+       ABSOLUTE floor on the epoch's mean squared error, not a relative one,
+       and at small demonstration counts it, not the plateau test, is
+       usually what stops the run;
      - the divergence guard: a weight past ±IRIS_W_LIMIT is clamped and the
        run ends there with status IRIS_TRAINING_DIVERGED.
    iris_train_epochs_done tells you how many epochs actually ran.
@@ -2810,11 +2866,14 @@ IRIS_API int iris_train(iris *k) {
      to 1, seed 1, then iris_continue up to each mark:
 
        epochs      training error   worst miss on a demonstrated take
-       4,000       3.16e-04         0.0433    <- where this function stops
-       60,000      3.04e-04         0.0425    <- IRIS_CONV_CEILING
-       160,000     3.10e-04         0.0395
-       320,000     8.32e-06         0.0055
-       388,478     9.99e-07         0.0025    <- the error floor stops it
+       4,000       3.10e-04         0.0433    <- where this function stops
+       60,000      2.86e-04         0.0425    <- IRIS_CONV_CEILING
+       160,000     2.79e-04         0.0395
+       320,000     7.88e-06         0.0055
+       388,478     1.09e-06         0.0025    <- the error floor stops it
+
+     (training error is iris_last_error; the floor reads the last epoch's
+     own figure, which has just fallen under 1e-6.)
 
      The error sits on a FALSE plateau from epoch 4,000 past 160,000 and then
      falls two orders of magnitude (seeds 7, 42 and 12345 do the same; seed
@@ -2909,8 +2968,8 @@ IRIS_API int iris_train_busy(const iris *k) { if (!k) return 0; return k->tr_run
 
 /* How many epochs the last run ACTUALLY did. Compare against what you asked
    for: fewer means it stopped early, and there are four rules that can do
-   that — the plateau test, the error floor (an absolute 1e-6 on the mean
-   squared error; see the note in the engine), the divergence guard, or a
+   that — the plateau test, the error floor (an absolute 1e-6 on the epoch's
+   mean squared error; see the note in the engine), the divergence guard, or a
    progress callback returning 0. iris_get_status() distinguishes the guard;
    this distinguishes "ran to completion" from "stopped for a good reason",
    which iris_train_progress() deliberately cannot, because it reports 1.0 for
@@ -2923,14 +2982,17 @@ IRIS_API int iris_train_epochs_done(const iris *k) { if (!k) return 0; return k-
    iris_reseed and a run that ends unfitted. An instrument can be fitted and
    still playing while this says 0 (PART 6). */
 IRIS_API int   iris_is_trained(const iris *k) { if (!k) return 0; return k->trained; }
-/* The training error of the current fit, as a mean squared error in the
-   network's output units (see ERROR in the masthead), and 1.0 before any
-   fit. It is not measured the same way on every path. After a gradient run
-   it is the last epoch's error, added up while the weights were still
-   moving; after a closed-form solve or a load it is measured over the
-   demonstrations with the final weights. So the same weights can read a
-   little differently: a 2-12-3 fit of 20 demonstrations that reports
-   1.08e-5 after iris_train reads 9.27e-6 after a save and a load. */
+/* The training error of the current weights: the mean squared error over
+   every stored demonstration and output, in the network's output units (see
+   ERROR in the masthead), measured with one forward pass per demonstration
+   when a trainer finishes -- a gradient run or slice, or a closed-form
+   solve -- and when a file is loaded (iris_internal_recall_error). So it
+   has one meaning whichever way the weights arrived: the same weights and
+   demonstrations read the same bits after iris_train, after iris_train_elm
+   and after a save and a load. 1.0 before any fit, after iris_clear and
+   after a run that ended unfitted. A record or a delete does not re-measure
+   it: until the next training run it describes the demonstrations the fit
+   was made on. */
 IRIS_API float iris_last_error(const iris *k) { if (!k) return 0.0f; return k->last_error; }
 IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->seed; }
 
@@ -3694,15 +3756,14 @@ IRIS_API int iris_internal_train_elm_ex(iris *k, float lam0, float gain_w, float
   /* the progress fields describe this fit, not the gradient run before it:
      no epochs and no ceiling, and iris_train_progress reads the solve's
      ledger (res_epochs 1, below) as a finished fit */
-  k->tr_done = 0; k->tr_ceiling = 0; k->tr_n_ex = 0; k->tr_ref = 0.0f;
+  k->tr_done = 0; k->tr_ceiling = 0; k->tr_n_ex = 0; k->tr_ref = 0.0f; k->tr_err = 0.0f;
   k->trained = 1;
   k->fitted  = 1;                    /* a closed-form solve IS a fit */
   k->status  = doublings > 0 ? IRIS_RIDGE_ESCALATED : IRIS_STATUS_OK;
 
-  /* --- recall error (in the units every trainer reports), the ledger,
-     and how far the demonstrations and the fitted outputs move ------------ */
+  /* --- the ledger, and how far the demonstrations and the fitted outputs
+     move; then the training error, as every trainer measures it ---------- */
   {
-    float err = 0.0f;
     float lo_y[IRIS_MAX_OUT], hi_y[IRIS_MAX_OUT];     /* fitted, normalised */
     for (int o = 0; o < NO_; ++o) { lo_y[o] = 1e30f; hi_y[o] = -1e30f; }
     for (int i = 0; i < k->cap; ++i) k->ex_res[i] = 0.0f;
@@ -3714,7 +3775,6 @@ IRIS_API int iris_internal_train_elm_ex(iris *k, float lam0, float gain_w, float
       for (int o = 0; o < NO_; ++o) {
         const float y = k->out[o], t = iris_internal_norm_out(k, o, row[NI_ + o]);
         const float e = y - t;
-        err += e * e;
         rse += e * e;
         if (y < lo_y[o]) lo_y[o] = y;
         if (y > hi_y[o]) hi_y[o] = y;
@@ -3722,7 +3782,7 @@ IRIS_API int iris_internal_train_elm_ex(iris *k, float lam0, float gain_w, float
       k->ex_res[n] = rse;
     }
     k->res_epochs = 1;
-    k->last_error = err / (float)(k->n_ex * NO_);
+    k->last_error = iris_internal_recall_error(k, x);
 
 #ifndef IRIS_NO_GUARDS
     /* DID IT ACTUALLY LEARN A MAPPING? A large enough lam0 -- or a zero
@@ -4147,31 +4207,16 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
   iris_internal_zero_velocity(k);
   for (int i = 0; i < k->cap; ++i) k->ex_res[i] = 0.0f;
   k->res_epochs = 0;
-  k->tr_done = 0; k->tr_ceiling = 0; k->tr_running = 0; k->tr_n_ex = 0; k->tr_ref = 0.0f;
+  k->tr_done = 0; k->tr_ceiling = 0; k->tr_running = 0; k->tr_n_ex = 0;
+  k->tr_ref = 0.0f; k->tr_err = 0.0f;
   k->status = IRIS_STATUS_OK;
 
   /* The training error is not in the file, but the fit and the demonstrations
-     are, so it is measured: one forward pass per demonstration, in the units
-     every trainer reports. With no fit, or nothing to measure it over, it is
-     1, the value a fresh instrument reports. It is 1 as well if the sum is not
-     a number, which takes a demonstration so far outside the stored ranges
-     that normalising it overflows a float. */
-  k->last_error = 1.0f;
-  if (k->fitted && k->n_ex > 0) {
-    const int stride = k->n_in + k->n_out;
-    float xn[IRIS_MAX_IN], e = 0.0f;
-    for (int r = 0; r < k->n_ex; ++r) {
-      const float *row = k->ex + (size_t)r * stride;
-      for (int i = 0; i < k->n_in; ++i) xn[i] = iris_internal_norm_in(k, i, row[i]);
-      iris_internal_forward_norm(k, xn);
-      for (int o = 0; o < k->n_out; ++o) {
-        const float d = k->out[o] - iris_internal_norm_out(k, o, row[k->n_in + o]);
-        e += d * d;
-      }
-    }
-    e /= (float)(k->n_ex * k->n_out);
-    if (!iris_internal_isbad(e)) k->last_error = e;
-  }
+     are, so it is measured exactly as every trainer measures it when it
+     finishes (iris_internal_recall_error): a loaded instrument reports the
+     bits the saved one did. */
+  { float x[IRIS_MAX_IN];
+    k->last_error = iris_internal_recall_error(k, x); }
   return 1;
 }
 

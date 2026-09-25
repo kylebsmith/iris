@@ -51,6 +51,13 @@ ONE_EPOCH_C = 2.0
 # calibrated: the worst is 1.39 (grid, near the error floor), 5.8 times
 # inside 8.
 ERR_C = 8.0
+# (a) the training error iris reports after each epoch (iris_last_error: one
+# forward pass over the demonstrations with the weights the epoch ended
+# with), against the binary64 mean squared error of the same weights:
+# within REC_C * u * (sqrt(err) + n_ex * n_out * err), the same form as
+# ERR_C and for the same reasons, with no replay in between. REC_C is
+# calibrated: the worst is set out in README.md, "Tolerances".
+REC_C = 8.0
 # (a) the free-running trajectory: after e epochs the largest weight
 # difference, relative to max(1, largest weight), within
 # min(TRAJ_C * e * roundings_per_epoch * u, TRAJ_CEILING).
@@ -397,7 +404,11 @@ def check_trajectory(rep, r, ex, rg, tag, stats):
     Wx = np.array([ref.floats(ep["w"]) for ep in eps])
     Vx = np.array([ref.floats(ep["v"]) for ep in eps])
     orders = np.array([ep["order"] for ep in eps])
-    errs = np.array([float(ref.float32s(ep["err"])[0]) for ep in eps])
+    # the epoch's own error, added up while the weights moved: what the error
+    # floor and the plateau test read
+    errs = np.array([float(ref.float32s(ep["run_err"])[0]) for ep in eps])
+    # iris_last_error after the epoch: the error of the weights it ended with
+    recs = np.array([float(ref.float32s(ep["err"])[0]) for ep in eps])
     statuses = [ep["status"] for ep in eps]
 
     # --- one epoch at a time, from iris's own state ---------------------
@@ -417,13 +428,20 @@ def check_trajectory(rep, r, ex, rg, tag, stats):
               f"{len(eps)} epochs; worst {fmt(worst)} of the bound "
               f"{fmt(c_eff)}*n*u*max(|w|,1) ({fmt(per_visit)}u per visit); "
               f"{fmt(time.perf_counter() - t0)} s")
-    # the epoch's error: what iris_continue returns, and what the error floor
-    # and the plateau test read
+    # the epoch's error: what the error floor and the plateau test read
     ratio_e = np.abs(errs - E1s) / (ERR_C * U * (np.sqrt(E1s) + n * O * E1s))
     stats["epoch_error"].append((tag, ratio_e.max()))
     rep.check(f"{tag}: every epoch's error, replayed", ratio_e.max() <= 1.0,
               f"{len(eps)} epochs; worst {fmt(ratio_e.max())} of "
               f"{ERR_C:g}*u*(sqrt(err)+n*outputs*err) (epoch {int(ratio_e.argmax()) + 1})")
+    # the training error after the epoch: what iris_last_error reports and
+    # iris_continue returns, the error of iris's own weights at that point
+    R = ref.recall_errors(shape, Wx, X, T)
+    ratio_r = np.abs(recs - R) / (REC_C * U * (np.sqrt(R) + n * O * R))
+    stats["recall_error"].append((tag, ratio_r.max()))
+    rep.check(f"{tag}: the training error after every epoch", ratio_r.max() <= 1.0,
+              f"{len(eps)} epochs; worst {fmt(ratio_r.max())} of "
+              f"{REC_C:g}*u*(sqrt(err)+n*outputs*err) (epoch {int(ratio_r.argmax()) + 1})")
 
     # --- the whole run, free-running in binary64 ------------------------
     # A second binary64 run starts from the same weights with w1[0] moved by
@@ -737,8 +755,8 @@ def main():
     print(f"iris against its binary64 reference (numpy {np.__version__})")
     exe = build_export(args.cc, workdir)
     rep = Report()
-    stats = {k: [] for k in ("one_epoch", "epoch_error", "trajectory", "error_rel", "forward",
-                             "knn")}
+    stats = {k: [] for k in ("one_epoch", "epoch_error", "recall_error", "trajectory",
+                             "error_rel", "forward", "knn")}
     t_all = time.perf_counter()
     for r in recipes():
         if args.only and args.only not in r["name"]:
@@ -769,6 +787,9 @@ def main():
         e_obs = max(t[1] for t in stats["epoch_error"])
         print(f"    one epoch's error: worst {e_obs:.3g} of its bound; ERR_C = {ERR_C:g}, "
               f"margin {1.0 / e_obs:.3g}x")
+        r_obs = max(t[1] for t in stats["recall_error"])
+        print(f"    the training error after each epoch: worst {r_obs:.3g} of its bound; "
+              f"REC_C = {REC_C:g}, margin {1.0 / r_obs:.3g}x")
         print(f"    epoch error, relative difference, largest: "
               f"{max(t[1] for t in stats['error_rel']):.3g}")
         print(f"    forward pass: worst {max(t[1] for t in stats['forward']):.3g} "

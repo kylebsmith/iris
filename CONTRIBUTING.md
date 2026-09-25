@@ -124,8 +124,8 @@ positive control that must be detected, decides without asking you.
   unsigned type: the bound silently disappears. Test for 0 first. `iris_init`
   bounds the arena through `iris_internal_bytes` for this reason.
 - **Structure sizes differ by architecture.** `struct iris` is 248 bytes on a
-  64-bit laptop and 164 on the ESP32-S3, so `IRIS_ARENA(2,12,1,8)` is 1,024
-  bytes on the laptop and 940 on the chip (Apple clang and
+  64-bit laptop and 168 on the ESP32-S3, so `IRIS_ARENA(2,12,1,8)` is 1,024
+  bytes on the laptop and 944 on the chip (Apple clang and
   `xtensa-esp32s3-elf-gcc`, read from the symbol sizes). Measure on the target;
   never quote one as the other.
 - **The starter kit carries copies of `iris.h`**, one in each sketch folder, so

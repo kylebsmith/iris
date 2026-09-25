@@ -423,6 +423,23 @@ class StoppingRule:
         return None
 
 
+def recall_errors(shape, W, X, T):
+    """The training error of each set of weights in W (one row per set, in
+    the order export.c prints them): the mean over demonstrations and
+    outputs of (y - t)^2, with y the network's output for normalised inputs X
+    and t the normalised targets T. This is the documented iris_last_error,
+    one forward pass with fixed weights, where train_epoch's error is added
+    up while the weights move."""
+    W = np.asarray(W, dtype=np.float64)
+    H, I, O = shape.n_hid, shape.n_in, shape.n_out
+    sl = shape.slices
+    W1 = W[:, sl[0]].reshape(-1, H, I)
+    W2 = W[:, sl[2]].reshape(-1, O, H)
+    a = rational(np.einsum("ehi,ni->enh", W1, X) + W[:, None, sl[1]])
+    y = squash(np.einsum("eoh,enh->eno", W2, a) + W[:, None, sl[3]])
+    return ((y - T[None, :, :]) ** 2).mean(axis=(1, 2))
+
+
 def predict(net, rg, V):
     """What the instrument plays for raw readings V (rows)."""
     return denormalise(net.forward(normalise_inputs(V, rg)), rg)

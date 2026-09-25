@@ -544,7 +544,8 @@ static void after_load_at_rest(void) {
   for (int i = 0; i < S2.no; ++i)          if (fbits(b.k->v_b2[i]) != 0u) vel = 0;
   for (int i = 0; i < S2.cap; ++i)         if (fbits(b.k->ex_res[i]) != 0u) led = 0;
   const int prog = b.k->tr_done == 0 && b.k->tr_ceiling == 0 && b.k->tr_running == 0
-                && b.k->tr_n_ex == 0 && b.k->tr_ref == 0.0f && b.k->res_epochs == 0
+                && b.k->tr_n_ex == 0 && b.k->tr_ref == 0.0f && b.k->tr_err == 0.0f
+                && b.k->res_epochs == 0
                 && !iris_train_busy(b.k) && iris_train_slice(b.k, 10) == 0;
   const int learn = b.k->lr == 0.10f && b.k->momentum == 0.85f;
   const float e = iris_last_error(b.k);

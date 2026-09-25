@@ -136,10 +136,16 @@ static void print_state(const iris *k) {
   printf("\"");
 }
 
+/* One epoch: the order it used, its two errors -- "run_err", the epoch's
+   mean squared error added up while the weights moved, which the error floor
+   and the plateau test read (tr_err in the structure), and "err",
+   iris_last_error, the error of the weights the epoch ended with -- the
+   status, and the weights and velocities. */
 static void print_epoch(const iris *k, int first) {
   printf("%s\n  {\"order\": [", first ? "" : ",");
   for (int i = 0; i < k->n_ex; ++i) printf("%s%d", i ? "," : "", (int)k->order[i]);
-  printf("], \"err\": \"%08x\", \"status\": %d, ", (unsigned)bits(k->last_error),
+  printf("], \"err\": \"%08x\", \"run_err\": \"%08x\", \"status\": %d, ",
+         (unsigned)bits(iris_last_error(k)), (unsigned)bits(k->tr_err),
          (int)iris_get_status(k));
   print_state(k);
   printf("}");
