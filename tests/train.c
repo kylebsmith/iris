@@ -7,9 +7,11 @@
    and "bit-identical" mean every byte the instrument owns, not a few fields
    someone thought to look at.
 
-     1. A refusal changes nothing. Every trainer and diagnostic is handed a
-        store with a not-a-number or an infinity written straight into it, and
-        an empty store, and must refuse without touching one byte.
+     1. A refusal changes nothing but, for a poisoned store, the status.
+        Every trainer and diagnostic is handed a store with a not-a-number or
+        an infinity written straight into it, and must refuse with every byte
+        but the status word unchanged and the status IRIS_NAN_TRAPPED; handed
+        an empty store, it must refuse without touching one byte.
      2. iris_train_begin + iris_train_slice is iris_train, bit for bit, over
         several shapes, seeds and slice sizes, starting from an instrument
         that has already been trained, warm-trained, edited and deleted from.
@@ -109,6 +111,11 @@ static iris *lived_in(int ni, int nh, int no, int cap, int n, uint32_t seed) {
 }
 
 static int same_arena(void) { return memcmp(A, SNAP, sizeof A) == 0; }
+/* Every byte but the status word, which is compared on its own. */
+static int same_but_status(const iris *k) {
+  const size_t at = (size_t)((const unsigned char *)&k->status - A), n = sizeof k->status;
+  return memcmp(A, SNAP, at) == 0 && memcmp(A + at + n, SNAP + at + n, sizeof A - at - n) == 0;
+}
 static int is_nan(float x) { return x != x; }
 
 static int cb_calls = 0;
@@ -119,36 +126,48 @@ static int count_cb(void *user, int done, int ceiling, float err) {
 }
 
 /* Every trainer and diagnostic in PART 8 on one instrument whose store the
-   caller has just made untrainable. Returns the number of calls that either
-   answered wrongly or changed a byte. */
-static int refusals_change_nothing(iris *k, char *why, size_t whylen) {
+   caller has just made untrainable. Each call starts from the same snapshot,
+   with the status set to IRIS_RIDGE_ESCALATED so that both a write and its
+   absence show; afterwards every byte but the status must be as it was, and
+   the status must be want (IRIS_RIDGE_ESCALATED for "left alone"). Returns
+   the number of calls that answered wrongly or changed what they may not. */
+static int refusals_change_nothing(iris *k, int32_t want, char *why, size_t whylen) {
   static unsigned char scratch[sizeof A];
   int bad = 0;
+  k->status = IRIS_RIDGE_ESCALATED;
   memcpy(SNAP, A, sizeof A);
   memset(scratch, 0xA5, sizeof scratch);
   const float prog = iris_train_progress(k);
   const int busy = iris_train_busy(k), done = iris_train_epochs_done(k);
   why[0] = 0;
-#define REFUSES(expr, label) do { if (!(expr) || !same_arena()) {           \
-      bad++; snprintf(why + strlen(why), whylen - strlen(why), " %s", label); \
-      memcpy(A, SNAP, sizeof A); } } while (0)
+#define REFUSES_AS(expr, label, st) do {                                    \
+      if (!(expr) || !same_but_status(k) || k->status != (st)) {              \
+        bad++; snprintf(why + strlen(why), whylen - strlen(why), " %s", label); } \
+      memcpy(A, SNAP, sizeof A); } while (0)
+#define REFUSES(expr, label) REFUSES_AS(expr, label, want)
   REFUSES(iris_train(k) == 0, "train");
   REFUSES(iris_train_epochs(k, 50) == -1.0f, "epochs");
   cb_calls = 0;
   REFUSES(iris_train_converge(k, 4000, count_cb, 0) == -1.0f && cb_calls == 0, "converge");
   REFUSES(iris_train_converge(k, 0, 0, 0) == -1.0f, "converge-default");
   REFUSES(iris_train_begin(k, 0) == 0, "begin");
-  REFUSES(iris_train_slice(k, 50) == 0, "slice");
+  /* no run is in flight, so a slice has nothing to continue and asks nothing */
+  REFUSES_AS(iris_train_slice(k, 50) == 0, "slice", IRIS_RIDGE_ESCALATED);
   REFUSES(iris_internal_train_run(k, 50, 0, 0, 0, 0) == -1.0f, "engine");
-  REFUSES(iris_train_progress(k) == prog && iris_train_busy(k) == busy
-          && iris_train_epochs_done(k) == done, "progress/busy/done");
+  REFUSES_AS(iris_train_progress(k) == prog && iris_train_busy(k) == busy
+             && iris_train_epochs_done(k) == done, "progress/busy/done", IRIS_RIDGE_ESCALATED);
   { float e = iris_loo_error(k, 30);
     REFUSES(e == -1.0f && !is_nan(e), "loo_error"); }
   { int untouched = 1;
     float s = iris_suggest_smoothing(k, scratch, sizeof scratch);
     for (size_t i = 0; i < sizeof scratch; ++i) if (scratch[i] != 0xA5) { untouched = 0; break; }
     REFUSES(s == -1.0f && untouched, "suggest_smoothing"); }
+  /* too little scratch is a mistake in the call, which leaves the status
+     alone even when the store is poisoned too */
+  REFUSES_AS(iris_suggest_smoothing(k, scratch, 16) == -1.0f, "suggest-small-scratch",
+             IRIS_RIDGE_ESCALATED);
 #undef REFUSES
+#undef REFUSES_AS
   return bad;
 }
 
@@ -171,20 +190,20 @@ int main(void) {
         if (poison == 0) k->ex[(size_t)2 * stride + k->n_in] = __builtin_nanf("");
         if (poison == 1) k->ex[(size_t)1 * stride] = __builtin_inff();
         if (poison == 2) k->ex[(size_t)(k->n_ex - 1) * stride] = -__builtin_inff();
-        int b = refusals_change_nothing(k, why, sizeof why);
+        int b = refusals_change_nothing(k, IRIS_NAN_TRAPPED, why, sizeof why);
         if (b && !where[0]) snprintf(where, sizeof where, "shape %d poison %d:%.100s", s, poison, why);
         bad += b; cases++;
       }
     }
-    snprintf(d, sizeof d, "%d shape/poison cases x 10 calls: %d wrong%s%s",
+    snprintf(d, sizeof d, "%d shape/poison cases x 11 calls: %d wrong%s%s",
              cases, bad, where[0] ? " -- " : "", where);
-    check("a poisoned store is refused with every byte unchanged", bad == 0, d);
+    check("a poisoned store is refused, only the status set", bad == 0, d);
   }
   {
     /* An empty store, and two demonstrations (too few for leave-one-out). */
     iris *k = lived_in(2, 12, 3, 32, 14, 9u);
     iris_clear(k);
-    int bad_empty = refusals_change_nothing(k, why, sizeof why);
+    int bad_empty = refusals_change_nothing(k, IRIS_RIDGE_ESCALATED, why, sizeof why);
     char w1[160]; snprintf(w1, sizeof w1, "%s", why);
     iris *k2 = iris_init(A, sizeof A, 2, 12, 3, 32, 5u);
     record_n(k2, 2, 3ul);
@@ -199,19 +218,21 @@ int main(void) {
     check("an empty or too-small store is refused unchanged", bad_empty == 0 && few_ok, d);
   }
   {
-    /* A run in flight whose store goes bad ends -- the one write a refused
-       slice makes -- and nothing else moves. */
+    /* A run in flight whose store goes bad ends and reports IRIS_NAN_TRAPPED
+       -- the two writes a slice refused over a poisoned store makes -- and
+       nothing else moves. */
     iris *k = lived_in(2, 12, 3, 32, 14, 21u);
     iris_train_begin(k, 0);
     iris_train_slice(k, 300);
     k->ex[4] = __builtin_nanf("");
     memcpy(SNAP, A, sizeof A);
-    { int32_t zero = 0;
-      memcpy(SNAP + ((unsigned char *)&k->tr_running - A), &zero, sizeof zero); }
+    { int32_t zero = 0, trapped = IRIS_NAN_TRAPPED;
+      memcpy(SNAP + ((unsigned char *)&k->tr_running - A), &zero, sizeof zero);
+      memcpy(SNAP + ((unsigned char *)&k->status - A), &trapped, sizeof trapped); }
     int more = iris_train_slice(k, 300);
-    snprintf(d, sizeof d, "slice returned %d, busy %d, every other byte unchanged %d",
-             more, iris_train_busy(k), same_arena());
-    check("a slice that finds a poisoned store ends the run only", more == 0 && !iris_train_busy(k) && same_arena(), d);
+    snprintf(d, sizeof d, "slice returned %d, busy %d, status %d, every other byte unchanged %d",
+             more, iris_train_busy(k), (int)iris_get_status(k), same_arena());
+    check("a slice over a poisoned store ends the run, reports", more == 0 && !iris_train_busy(k) && same_arena(), d);
   }
 
   /* ---- 2. begin + slices == iris_train, every byte ---------------------- */

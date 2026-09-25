@@ -23,7 +23,8 @@
    sessions). It asserts nothing and takes a minute or two.
 
    What is checked:
-     1. every refusal leaves every byte of the arena as it was, status included
+     1. every refusal leaves every byte of the arena as it was; the status
+        too, except that a poisoned demonstration sets it to IRIS_NAN_TRAPPED
      2. at smoothing 0 the solved weights match pinned hashes, bit for bit
         (fixed recipes, hashes below)
      3. recall error rises with smoothing, and held-out error on noisy
@@ -279,10 +280,21 @@ static int measure(void) {
 }
 
 /* ---- 1. refusals ---------------------------------------------------------- */
+/* snap() sets the status, keeps a copy of the arena and expects the status
+   to be left alone; a caller that expects a write sets want_status after it.
+   refused_cleanly() compares every byte but the status word, and the status
+   on its own. */
+static iris *snapped;
+static int want_status;
 static int refused_cleanly(int ret) {
-  return ret == -1 && memcmp(before, arena, sizeof arena) == 0;
+  const size_t at = (size_t)((unsigned char *)&snapped->status - arena), n = sizeof snapped->status;
+  return ret == -1 && memcmp(before, arena, at) == 0
+      && memcmp(before + at + n, arena + at + n, sizeof arena - at - n) == 0
+      && snapped->status == want_status;
 }
-static void snap(iris *k, int status) { k->status = status; memcpy(before, arena, sizeof arena); }
+static void snap(iris *k, int status) {
+  k->status = status; memcpy(before, arena, sizeof arena); snapped = k; want_status = status;
+}
 
 int main(int argc, char **argv) {
   char d[200];
@@ -294,7 +306,10 @@ int main(int argc, char **argv) {
   /* ---- 1. every refusal changes nothing --------------------------------------
      The instrument is fitted, then given one more take far outside its ranges,
      so a refit of the ranges would move them; and its status is set to a value
-     no refusal path writes. Any byte that moves fails the check. */
+     no refusal path writes. Any byte that moves fails the check, and so does
+     the status, except after a poisoned demonstration, which must set it to
+     IRIS_NAN_TRAPPED: that is numerical health, which the status reports,
+     where every other refusal here is a mistake in the arguments. */
   {
     int bad = 0, cases = 0;
     const size_t need = IRIS_ELM_SCRATCH(16, 2);
@@ -346,9 +361,16 @@ int main(int argc, char **argv) {
         float keep = k->ex[where[p]];
         k->ex[where[p]] = poison[p];
         snap(k, IRIS_RIDGE_ESCALATED);
+        want_status = IRIS_NAN_TRAPPED;
         int r = iris_train_elm(k, 1e-4f, scratch, sizeof scratch);
         cases++;
         if (!refused_cleanly(r)) { bad++; snprintf(which, sizeof which, "poisoned demonstration %d", p); }
+        /* a bad lam0 as well: the mistake in the call is found first, and
+           leaves the status alone */
+        snap(k, IRIS_RIDGE_ESCALATED);
+        r = iris_train_elm(k, -1.0f, scratch, sizeof scratch);
+        cases++;
+        if (!refused_cleanly(r)) { bad++; snprintf(which, sizeof which, "poisoned demonstration %d, lam0 -1", p); }
         k->ex[where[p]] = keep;
       } }
 
@@ -402,7 +424,7 @@ int main(int argc, char **argv) {
 
     snprintf(d, sizeof d, "%d of %d refusals moved a byte%s%s (the factorisation case returned %d)",
              bad, cases, bad ? "; last: " : "", which, fact_ret);
-    check("every refusal leaves the arena and status as they were", bad == 0, d);
+    check("every refusal leaves the arena, and the status, as it should", bad == 0, d);
   }
 
   /* ---- 2. smoothing 0 is the unsmoothed solve, to the bit -------------------- */
@@ -641,7 +663,7 @@ int main(int argc, char **argv) {
     record_recipe(k, r);
     iris_train_begin(k, 4000);
     iris_train_slice(k, 50);
-    memcpy(before, arena, sizeof arena);
+    snap(k, (int)iris_get_status(k));
     int kept = refused_cleanly(iris_train_elm(k, -1.0f, scratch, sizeof scratch))
             && iris_train_busy(k);
     int ret = solve_recipe(k, r);

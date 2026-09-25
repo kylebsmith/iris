@@ -1101,18 +1101,17 @@ int main(void) {
     float pin[NI] = { 0.9f, 0.9f }, pout[NO] = { 0.5f, 5.0f, 0.5f };
     iris_record(a, pin, pout);                    /* clean row, accepted */
     a->ex[(size_t)(a->n_ex - 1) * (NI + NO) + NI] = 0.0f/0.0f;  /* now poison it */
-    /* A refusal changes nothing, the status included: it is reported by the
-       return value alone. */
-    const int st_before = a->status;
+    /* A refusal over a poisoned demonstration changes nothing but the
+       status, which reports the not-a-number it found. */
     float rr = iris_train_epochs(a, 100);         /* must refuse */
-    int st = (rr == -1.0f) && (a->status == st_before);
+    int st = (rr == -1.0f) && (a->status == IRIS_NAN_TRAPPED);
     int ranges_intact = 1;
     for (int o = 0; o < NO; ++o)
       if (a->out_lo[o] != rlo[o] || a->out_hi[o] != rhi[o]) ranges_intact = 0;
     iris_delete_last(a);                          /* musician removes the poison */
     ok("refused train leaves ranges bit-identical",
        st && ranges_intact,
-       "returned -1 with status untouched %d, out_lo/out_hi unmoved %d", st, ranges_intact);
+       "returned -1 with status IRIS_NAN_TRAPPED %d, out_lo/out_hi unmoved %d", st, ranges_intact);
   }
 
 

@@ -486,14 +486,14 @@ typedef enum {
                                 example: a reading refused at iris_record's
                                 door, a setting refused by a setter, a played
                                 output replaced by the centre of the
-                                demonstrated range, or a training run that met
+                                demonstrated range, a training run that met
                                 one in the error or a weight partway through
-                                and re-seeded to a finite start. The
-                                backpropagation trainers and their diagnostics
-                                (PART 8) do NOT report a stored demonstration
-                                holding one here: they refuse it and change
-                                nothing, this status included, and say so by
-                                their return value.                          */
+                                and re-seeded to a finite start, or a trainer
+                                or diagnostic (PART 8, closed-form included)
+                                that found one in a stored demonstration and
+                                refused. That refusal writes this status and
+                                nothing else; the demonstration stays in the
+                                store, where it can be found and deleted.    */
   IRIS_RIDGE_ESCALATED   = 3,  /* a closed-form solve (ELM) needed its ridge
                                 doubled to factor. Result is valid; the data
                                 was harder than usual.                       */
@@ -1900,26 +1900,37 @@ IRIS_API int iris_internal_pinned(const iris *k) {
 typedef int (*iris_progress_fn)(void *user, int done, int ceiling, float err);
 
 /* CAN THIS STORE BE TRAINED ON? Every trainer and diagnostic asks this
-   FIRST, before it reseeds, fits ranges, touches a progress counter or sets a
-   status -- and it writes nothing itself. So a refusal leaves every byte of
-   the instrument as it was, the instrument goes on playing exactly as before,
-   and the refusal is reported by the return value alone.
+   FIRST, before it reseeds, fits ranges or touches a progress counter. So a
+   refusal leaves the instrument as it was, and it goes on playing exactly as
+   before.
 
    Three conditions. The shape fits this translation unit's working arrays
    (iris_shape_fits). There is at least one demonstration. And every stored
    number is finite: a not-a-number would poison every weight in the first
-   epoch. iris_record already refuses one at the door, so that last test is
-   defence in depth, for a store that arrived some other way -- a file written
-   by a -DIRIS_NO_GUARDS build, say. The bad demonstration stays in the store
-   where the musician can find it and delete it. The finiteness test is one of
-   the guards, so a -DIRIS_NO_GUARDS build compiles it out, as it does
-   iris_record's, and then nothing stops a not-a-number reaching the weights. */
-IRIS_API int iris_internal_trainable(const iris *k) {
+   epoch.
+
+   THE ONE WRITE. A shape that does not fit, or an empty store, is a mistake
+   in how the call was made, and like every argument mistake it is reported
+   by the return value alone (see the failure rules above iris_get_status). A
+   stored number that is not finite is a matter of numerical health, which is
+   what the status reports, so that refusal sets IRIS_NAN_TRAPPED -- and
+   writes nothing else.
+
+   iris_record and iris_load both refuse a non-finite number at the door, so
+   this test is defence in depth, for a store that got one another way: a
+   translation unit built with -DIRIS_NO_GUARDS recording into the same
+   instrument, or a program writing into the store directly. The bad
+   demonstration stays in the store where the musician can find it and
+   delete it. The finiteness test is one of the guards, so a -DIRIS_NO_GUARDS
+   build compiles it out, as it does iris_record's, and then nothing stops a
+   not-a-number reaching the weights. */
+IRIS_API int iris_internal_trainable(iris *k) {
   if (!iris_shape_fits(k) || k->n_ex < 1) return 0;
 #ifndef IRIS_NO_GUARDS
   {
     const int n = k->n_ex * (k->n_in + k->n_out);
-    for (int i = 0; i < n; ++i) if (iris_isbad(k->ex[i])) return 0;
+    for (int i = 0; i < n; ++i)
+      if (iris_isbad(k->ex[i])) { k->status = IRIS_NAN_TRAPPED; return 0; }
   }
 #endif
   return 1;
@@ -1957,18 +1968,19 @@ IRIS_API void iris_internal_begin_session(iris *k, int ceiling) {
    run. */
 IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume,
                            iris_progress_fn cb, void *user) { if (!k) return -1.0f;
-  /* Refuse before writing anything. epochs <= 0 is "do nothing", not "train
-     instantly": without that test the loop below never runs, err stays 0, and
-     the tail reports a freshly randomised network as trained with a perfect
-     fit.
+  /* Refuse before writing anything else. epochs <= 0 is "do nothing", not
+     "train instantly": without that test the loop below never runs, err stays
+     0, and the tail reports a freshly randomised network as trained with a
+     perfect fit. A poisoned demonstration sets IRIS_NAN_TRAPPED inside
+     iris_internal_trainable.
 
-     ONE WRITE ON A SLICE'S REFUSAL, and it is the one that has to happen: a
-     run in flight that finds nothing it can train on is over, however it got
-     that way. The four delete functions empty a store as surely as iris_clear
-     does, and ending the run HERE covers every caller instead of every caller
-     having to remember. Without it the documented slice loop spins for ever
-     with the progress bar frozen -- five million iterations and counting,
-     measured. */
+     ONE MORE WRITE ON A SLICE'S REFUSAL, and it is the one that has to
+     happen: a run in flight that finds nothing it can train on is over,
+     however it got that way. The four delete functions empty a store as
+     surely as iris_clear does, and ending the run HERE covers every caller
+     instead of every caller having to remember. Without it the documented
+     slice loop spins for ever with the progress bar frozen -- five million
+     iterations and counting, measured. */
   if (epochs <= 0 || !iris_internal_trainable(k)) {
     if (resume) k->tr_running = 0;
     return -1.0f;
@@ -2288,7 +2300,8 @@ IRIS_API float iris_train_epochs(iris *k, int epochs) { if (!k) return -1.0f;
    or -1 if it refused.
 
    It continues from the current weights. A store it cannot train on is
-   refused with nothing written. While a weight sits exactly on
+   refused, with IRIS_NAN_TRAPPED as the one write if a demonstration is not
+   finite (see iris_internal_trainable). While a weight sits exactly on
    ±IRIS_W_LIMIT it refuses with IRIS_DIVERGED_STUCK, on every call, and
    that status is then the one thing it writes; iris_train is the way out. */
 IRIS_API float iris_train_converge(iris *k, int ceiling, iris_progress_fn cb, void *user) { if (!k) return -1.0f;
@@ -2300,7 +2313,8 @@ IRIS_API float iris_train_converge(iris *k, int ceiling, iris_progress_fn cb, vo
    bit-identical to the blocking one:
 
      1. refuse a store it cannot train on (iris_internal_trainable), having
-        written nothing;
+        written nothing but IRIS_NAN_TRAPPED for a demonstration that is not
+        finite;
      2. reseed from the instrument's own seed, so the fit starts from the
         weights that seed draws, whatever training happened before.
 
@@ -2332,14 +2346,15 @@ IRIS_API int iris_internal_cold_start(iris *k) {
        run ends there with status IRIS_TRAINING_DIVERGED.
    iris_train_epochs_done tells you how many epochs actually ran.
 
-   Returns 1 if it fitted, 0 if it refused. It refuses -- and then changes
-   nothing at all, not the weights, not the ranges, not the status -- when
-   there are no demonstrations, when one of them holds a not-a-number or an
-   infinity, when the instrument is null, or when its shape is too big for
-   this translation unit's working arrays. A run the divergence guard stopped
-   still returns 1: the instrument was fitted, and the status says how. If
-   you want to know HOW WELL it fits, that is a separate question with a
-   separate answer: iris_last_error(k).
+   Returns 1 if it fitted, 0 if it refused. It refuses when there are no
+   demonstrations, when the instrument is null, or when its shape is too big
+   for this translation unit's working arrays, and then changes nothing at
+   all; and it refuses when a demonstration holds a not-a-number or an
+   infinity, and then the one thing it changes is the status, to
+   IRIS_NAN_TRAPPED. Neither refusal touches the weights or the ranges. A run
+   the divergence guard stopped still returns 1: the instrument was fitted,
+   and the status says how. If you want to know HOW WELL it fits, that is a
+   separate question with a separate answer: iris_last_error(k).
 
    IT NEVER REFUSES A STUCK INSTRUMENT, and that is deliberate: starting over
    from the seed is the way out of IRIS_DIVERGED_STUCK, whose weights are the
@@ -2408,8 +2423,8 @@ IRIS_API int iris_train(iris *k) {
 
    BIT-IDENTICAL TO iris_train, for any slice sizes. iris_train_begin does
    exactly what iris_train does before its first epoch (iris_internal_cold_start:
-   refuse an untrainable store having written nothing, then reseed from the
-   instrument's own seed) and starts the session through the same function the
+   refuse an untrainable store, then reseed from the instrument's own seed)
+   and starts the session through the same function the
    engine uses. The shuffle buffer and the plateau reference then carry across
    the slices, so the random draws are the same draws in the same order and
    every byte of the arena ends the same. tests/train.c checks that over
@@ -2418,7 +2433,7 @@ IRIS_API int iris_train(iris *k) {
    ceiling <= 0 takes IRIS_CONV_CEILING, which is what iris_train uses; any
    other ceiling gives the run iris_train would make with that ceiling. Returns
    1 if the run started, 0 if it refused -- for the same reasons, and with the
-   same guarantee that nothing changed, as iris_train. */
+   same guarantee about what it writes, as iris_train. */
 IRIS_API int iris_train_begin(iris *k, int ceiling) { if (!k) return 0;
   if (!iris_internal_cold_start(k)) return 0;
   iris_internal_begin_session(k, ceiling > 0 ? ceiling : IRIS_CONV_CEILING);
@@ -2427,8 +2442,9 @@ IRIS_API int iris_train_begin(iris *k, int ceiling) { if (!k) return 0;
 
 /* Runs at most `epochs` more. Returns 1 if there is more to do, 0 when the
    run has finished (plateau, ceiling, early stop, or a guard) -- including
-   when the store can no longer be trained on, emptied by deletes or holding a
-   not-a-number, which ends the run and writes nothing else. */
+   when the store can no longer be trained on: emptied by deletes, which ends
+   the run and writes nothing else, or holding a not-a-number, which ends the
+   run and writes IRIS_NAN_TRAPPED. */
 IRIS_API int iris_train_slice(iris *k, int epochs) { if (!k) return 0;
   /* A budget of zero or less is "do nothing", not "use the default". It used
      to fall through to the engine's own default of 2,000 epochs, so a caller
@@ -2556,7 +2572,9 @@ IRIS_API double iris_internal_out_span(const iris *k, int n, int j) {
    output, in the demonstrations' own units, or -1 if it refused: fewer than 3
    demonstrations to fold over, or a store no trainer would accept (see
    iris_internal_trainable). It checks that BEFORE the first fold reseeds
-   anything, so a refusal changes nothing and never returns a not-a-number.
+   anything, so a refusal changes nothing but the status, which it sets to
+   IRIS_NAN_TRAPPED only for a demonstration that is not finite, and it never
+   returns a not-a-number.
 
    THE INSTRUMENT IS LEFT REFITTED ON ALL EXAMPLES, from that same seed, so it
    is valid to play afterwards — but it is NOT the instrument you had before you
@@ -2673,13 +2691,13 @@ IRIS_API float iris_loo_error(iris *k, int epochs) { return iris_internal_loo(k,
    least IRIS_ARENA(n_in, n_hid, n_out, cap) bytes -- the size of the
    instrument's own arena, which iris_size returns at run time -- at any
    alignment, not overlapping the instrument. It refuses otherwise, and on
-   anything iris_loo_error refuses, having written nothing: refusing an
-   answer is recoverable, and quietly replacing someone's instrument is not.
+   anything iris_loo_error refuses, having changed nothing but, for a
+   demonstration that is not finite, the status: refusing an answer is
+   recoverable, and quietly replacing someone's instrument is not.
 
    It still suggests; it still does not decide. Applying the number is yours. */
 IRIS_API float iris_suggest_smoothing(iris *k, void *scratch, size_t scratch_bytes) {
   if (!k) return -1.0f;
-  if (k->n_ex < 3 || !iris_internal_trainable(k)) return -1.0f;   /* what the sweep refuses */
   {
     /* The instrument is every byte from its structure to the end of order[],
        the last array iris_init carves. That span is always smaller than the
@@ -2694,6 +2712,9 @@ IRIS_API float iris_suggest_smoothing(iris *k, void *scratch, size_t scratch_byt
     if (!copy || need == 0 || scratch_bytes < need) return -1.0f;
     if ((uintptr_t)copy < (uintptr_t)inst + span
         && (uintptr_t)inst < (uintptr_t)copy + span) return -1.0f;   /* overlaps */
+    /* what the sweep refuses, asked after the arguments so that a mistake in
+       them leaves the status alone even when a demonstration is poisoned */
+    if (k->n_ex < 3 || !iris_internal_trainable(k)) return -1.0f;
 
     for (size_t i = 0; i < span; ++i) copy[i] = inst[i];
     for (int i = 0; i < 5; ++i) {
@@ -2966,8 +2987,10 @@ IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->see
 
    NOTHING CHANGES UNLESS THE SOLVE WORKS. Every refusal -- a bad argument, too
    little scratch, a poisoned demonstration, or a factorisation that fails even
-   after escalation -- leaves every byte of the instrument as it was, status
-   included; the return value is the whole report. That takes some care,
+   after escalation -- leaves every byte of the instrument as it was, and the
+   return value is the report. The one exception is the poisoned
+   demonstration, which sets the status to IRIS_NAN_TRAPPED, as every trainer
+   does (see iris_internal_trainable). That takes some care,
    because a solve needs the new ranges and the new frozen layer before it can
    know whether it will succeed:
      - the solve works in the caller's scratch, never in the weight arrays;
@@ -3077,7 +3100,8 @@ IRIS_API float iris_logit(float t) { return 2.0f * iris_artanh(2.0f * t - 1.0f);
    iris_train_elm and for the gain measurement in docs/gain-sweep.c.
 
    Returns the number of ridge doublings used (0 = first try; status
-   IRIS_RIDGE_ESCALATED if > 0), or -1 refusing, with nothing changed. It
+   IRIS_RIDGE_ESCALATED if > 0), or -1 refusing, with nothing changed but the
+   status after a poisoned demonstration (IRIS_NAN_TRAPPED). It
    refuses: a null instrument or scratch, no demonstrations, a shape this
    translation unit cannot hold, nh < 8, scratch smaller than
    IRIS_ELM_SCRATCH(nh, n_out), a lam0 or gain that is negative or not finite,
@@ -3102,12 +3126,11 @@ IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
   if (iris_isbad(gain_w) || !(gain_w >= 0.0f)) return -1;  /* true for NaN      */
   if (iris_isbad(gain_b) || !(gain_b >= 0.0f)) return -1;
   if (scratch_bytes < IRIS_ELM_SCRATCH(k->n_hid, k->n_out)) return -1;
-#ifndef IRIS_NO_GUARDS
-  /* a poisoned demonstration is refused here, before anything is written,
-     and stays in the store where the musician can find it and delete it */
-  for (int i = 0; i < k->n_ex * (k->n_in + k->n_out); ++i)
-    if (iris_isbad(k->ex[i])) return -1;
-#endif
+  /* a poisoned demonstration is refused here, after the arguments and before
+     anything else is written, by the test every trainer shares: it sets
+     IRIS_NAN_TRAPPED, and the demonstration stays in the store where the
+     musician can find it and delete it */
+  if (!iris_internal_trainable(k)) return -1;
 
   const int NI_ = k->n_in, NH_ = k->n_hid, NO_ = k->n_out, K = NH_ + 1;
   const int stride = NI_ + NO_;
