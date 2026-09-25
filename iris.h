@@ -3272,16 +3272,22 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
   /* THE BLEND, written as the nearest neighbour's value plus the weighted mean
      of how far each neighbour's value lies from it:
 
-         out = y0 + sum( w * (y - y0) ) / sum( w )
+         out = y0 + sum( s * (y - y0) ),    s = w / sum( w )
 
-     That is the ordinary weighted mean, sum(w * y) / sum(w), rearranged, and
-     the rearrangement is what makes it exact when every neighbour agrees: each
-     difference is then exactly zero, so the answer is exactly y0. The ordinary
-     form rounds. Measured on it with the checks in tests/playing.c: 291,862 of
-     364,140 queries on stores whose labels all agreed did not return the
-     label exactly -- a label of 3 came back as 2.9999998, which a C cast to
-     int turns into class 2 -- and 44,504 of 800,000 random queries landed a
-     few steps of float resolution outside the demonstrated range.
+     where s is a neighbour's share of the total weight. That is the ordinary
+     weighted mean, sum(w * y) / sum(w), rearranged, and the rearrangement is
+     what makes it exact when every neighbour agrees: each difference is then
+     exactly zero, so the answer is exactly y0. The ordinary form rounds.
+     Measured on it with the checks in tests/playing.c: 291,862 of 364,140
+     queries on stores whose labels all agreed did not return the label
+     exactly -- a label of 3 came back as 2.9999998, which a C cast to int
+     turns into class 2 -- and 44,504 of 800,000 random queries landed a few
+     steps of float resolution outside the demonstrated range.
+
+     The shares are worked out before they multiply anything. A weight
+     reaches 1e9 on a demonstration you stand on, so w * (y - y0) overflows
+     once two values differ by more than about 3e29; a share is at most 1, so
+     s * (y - y0) is never larger than the difference it scales.
 
      This form stays inside without help: the nearest neighbour carries the
      largest weight, so the mean keeps a margin from either end of the range
@@ -3292,27 +3298,28 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
      sign whose difference is larger than the largest float and overflows to
      infinity.
 
-     Fewer than kk rows can be in the slots when some distances are not finite;
-     the blend uses the ones that are there. */
+     The nearest neighbour's own term is s * (y0 - y0), which is zero, so the
+     sum starts at the second slot. Fewer than kk rows can be in the slots
+     when some distances are not finite; the blend uses the ones that are
+     there. */
   const float *y0 = k->ex + (size_t)bi[0] * stride + NIn;
-  float wsum = 0.0f;
+  float share[IRIS_KNN_MAXK], wsum = 0.0f;
   int used = 0;
-  for (int o = 0; o < NOut; ++o) out[o] = 0.0f;
   while (used < kk && bi[used] >= 0) {
-    const float w = 1.0f / (bd[used] + IRIS_KNN_GUARD);
-    const float *y = k->ex + (size_t)bi[used] * stride + NIn;
-    wsum += w;
-    for (int o = 0; o < NOut; ++o) out[o] += w * (y[o] - y0[o]);
+    share[used] = 1.0f / (bd[used] + IRIS_KNN_GUARD);
+    wsum += share[used];
     ++used;
   }
+  for (int n = 0; n < used; ++n) share[n] = share[n] / wsum;
   for (int o = 0; o < NOut; ++o) {
-    float lo = y0[o], hi = y0[o];
+    float d = 0.0f, lo = y0[o], hi = y0[o];
     for (int n = 1; n < used; ++n) {
       const float y = k->ex[(size_t)bi[n] * stride + NIn + o];
+      d += share[n] * (y - y0[o]);
       if (y < lo) lo = y;
       if (y > hi) hi = y;
     }
-    out[o] = iris_clampf(y0[o] + out[o] / wsum, lo, hi);
+    out[o] = iris_clampf(y0[o] + d, lo, hi);
   }
 #ifndef IRIS_NO_GUARDS
   /* iris_record refuses a not-a-number, but the store is memory the caller

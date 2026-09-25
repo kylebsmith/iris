@@ -219,7 +219,11 @@ int main(void) {
   /* ---- k-nearest neighbours: values near the largest float ---------------
      Two demonstrations whose outputs are 3e38 and -3e38: their difference
      overflows. The blend must still land inside the range, finite, with a
-     healthy status -- nothing here is broken, the numbers are just large. */
+     healthy status. Then two demonstrations on one spot with outputs 1e30
+     and 2e30, queried on that spot: each carries a weight of 1e9, and a
+     weight times their difference overflows, but the answer must be their
+     mean, 1.5e30, with a healthy status. Nothing here is broken; the numbers
+     are just large. */
   { iris *k = iris_init(A, sizeof A, 2, 12, 2, 64, 1);
     float a_in[2] = { 0.0f, 0.0f }, a_out[2] = { 3e38f, 1.0f };
     float b_in[2] = { 1.0f, 1.0f }, b_out[2] = { -3e38f, 2.0f };
@@ -230,10 +234,21 @@ int main(void) {
       iris_knn_predict(k, in, o, 2);
       if (iris_isbad(o[0]) || o[0] > 3e38f || o[0] < -3e38f) bad++;
     }
-    snprintf(d, sizeof d, "%d of 21 answers not finite or outside, status %d",
-             bad, (int)iris_get_status(k));
+    const int status_far = (int)iris_get_status(k);
+    k = iris_init(A, sizeof A, 2, 12, 2, 64, 1);
+    float spot[2] = { 0.25f, 0.5f }, corner[2] = { 1.0f, 1.0f };
+    float y1[2] = { 1e30f, 1.0f }, y2[2] = { 2e30f, 1.0f }, y3[2] = { 1.5e30f, 1.0f };
+    iris_record(k, spot, y1); iris_record(k, spot, y2); iris_record(k, corner, y3);
+    float m[2];
+    iris_knn_predict(k, spot, m, 2);
+    const float mean = 0.5f * y1[0] + 0.5f * y2[0];
+    const int mean_ok = iris_absf(m[0] - mean) <= 1e-6f * mean
+                     && iris_get_status(k) == IRIS_STATUS_OK;
+    snprintf(d, sizeof d, "%d of 21 answers not finite or outside, status %d; "
+             "1e30 and 2e30 blend to %g, status %d", bad, status_far,
+             (double)m[0], (int)iris_get_status(k));
     check("k-NN: outputs near the largest float blend without overflow",
-          bad == 0 && iris_get_status(k) == IRIS_STATUS_OK, d); }
+          bad == 0 && status_far == IRIS_STATUS_OK && mean_ok, d); }
 
   /* ---- a still input is ignored: moving it changes nothing ---------------
      For inputs resting at 500 (a sensor mid-range), 4095 (a 12-bit rail), 0
