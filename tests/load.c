@@ -35,9 +35,10 @@
    Under the sanitizers, add to all three lines:
      -g -fsanitize=address,undefined,alignment,float-divide-by-zero -fno-sanitize-recover=all
 
-   Every arena and every file handed to iris_load is a heap block of exactly
-   its size, so a read or write past either is an AddressSanitizer report.
-   Exits 1 if any check fails.
+   Every arena, and every file handed to iris_load except the offset buffers
+   of the alignment check, is a heap block of exactly its size, so a read or
+   write past either is an AddressSanitizer report. Exits 1 if any check
+   fails.
    ========================================================================= */
 #ifdef LOAD_SMALL_UNIT
 
