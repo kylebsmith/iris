@@ -118,10 +118,10 @@
    slices: iris_train_begin / iris_train_slice / iris_train_progress, which is
    bit-identical to the blocking call.
 
-   iris_continue(k, n) runs exactly n epochs from the current weights: the
+   iris_continue(k, n) runs n more epochs from the current weights: the
    fixed-epoch backprop that Wekinator's Weka MultilayerPerceptron does, and
-   the audit pins its output to the bit. It and iris_continue_to_plateau
-   continue from the current weights; read their hazard in PART 8 first.
+   the audit pins its output to the bit. It and iris_continue_to_plateau are
+   the warm trainers; read their hazard in PART 8 before using either.
 
    ============================================================================ */
 
