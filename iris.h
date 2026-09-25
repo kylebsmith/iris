@@ -3132,11 +3132,11 @@ IRIS_API float iris_suggest_smoothing(iris *k, void *scratch, size_t scratch_byt
    (docs/adr/0019-the-residual-ledger-integrates-it-does-not-sample.md),
    which would be a false accusation.
 
-   TWO LIMITS THAT TRAVEL WITH IT. A 5% offset on one of eight outputs is
-   smaller than the spread between two takes of the same human gesture, and
-   nothing here finds it reliably. And
-   every number behind it comes from a clean offset on a smooth, noiseless
-   truth: real demonstrations are inconsistent in ways that are not one
+   THE LIMIT THAT TRAVELS WITH IT. Every number below comes from one clean
+   offset on one output of a smooth, noiseless truth. A 5% offset of that kind
+   is smaller than the spread between two takes of the same human gesture,
+   and on clean synthetic sessions iris_train still ranks it first (18 of 20,
+   below), but real demonstrations are inconsistent in ways that are not one
    displaced output, and none of this has been checked against a recorded
    human gesture.
 
