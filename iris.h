@@ -3082,9 +3082,12 @@ IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int k
   for (int i = 0; i < NIn; ++i) inv[i] = 1.0f / (k->in_hi[i] - k->in_lo[i]);
 
   const int stride = NIn + NOut;
+  /* Every slot is filled, not only the first kk. The scan and the blend touch
+     only the first kk, but a compiler cannot see that kk is at least 1 here,
+     and gcc-15 at -O2 and -O3 warned that bi might be read uninitialised. */
   int   bi[IRIS_KNN_MAXK];
   float bd[IRIS_KNN_MAXK];
-  for (int n = 0; n < kk; ++n) { bi[n] = -1; bd[n] = 1e30f; }
+  for (int n = 0; n < IRIS_KNN_MAXK; ++n) { bi[n] = -1; bd[n] = 1e30f; }
 
   for (int r = 0; r < k->n_ex; ++r) {
     const float *row = k->ex + (size_t)r * stride;
@@ -3113,18 +3116,55 @@ IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int k
     ((iris *)k)->status = IRIS_NAN_TRAPPED;
     return;
   }
+#else
+  if (bi[0] < 0) bi[0] = 0;   /* no guard: use the first demonstration, as
+                                 iris_classify_1nn does, never read outside */
 #endif
+  /* THE BLEND, written as the nearest neighbour's value plus the weighted mean
+     of how far each neighbour's value lies from it:
+
+         out = y0 + sum( w * (y - y0) ) / sum( w )
+
+     That is the ordinary weighted mean, sum(w * y) / sum(w), rearranged, and
+     the rearrangement is what makes it exact when every neighbour agrees: each
+     difference is then exactly zero, so the answer is exactly y0. The ordinary
+     form rounds. Measured on it with the checks in tests/playing.c: 291,862 of
+     364,140 queries on stores whose labels all agreed did not return the
+     label exactly -- a label of 3 came back as 2.9999998, which a C cast to
+     int turns into class 2 -- and 44,504 of 800,000 random queries landed a
+     few steps of float resolution outside the demonstrated range.
+
+     This form stays inside without help: the nearest neighbour carries the
+     largest weight, so the mean keeps a margin from either end of the range
+     that rounding cannot cross (0 of the 800,000, and 0 of 1,000,000 queries
+     on stores built from values at the very ends of their range). The answer
+     is still held between the smallest and largest of the neighbours' values,
+     for the one case that argument does not cover: two values of opposite
+     sign whose difference is larger than the largest float and overflows to
+     infinity.
+
+     Fewer than kk rows can be in the slots when some distances are not finite;
+     the blend uses the ones that are there. */
+  const float *y0 = k->ex + (size_t)bi[0] * stride + NIn;
   float wsum = 0.0f;
+  int used = 0;
   for (int o = 0; o < NOut; ++o) out[o] = 0.0f;
-  for (int n = 0; n < kk; ++n) {
-    if (bi[n] < 0) break;   /* fewer than kk insertable rows: use what exists */
-    float w = 1.0f / (bd[n] + IRIS_KNN_GUARD);
-    const float *row = k->ex + (size_t)bi[n] * stride;
+  while (used < kk && bi[used] >= 0) {
+    const float w = 1.0f / (bd[used] + IRIS_KNN_GUARD);
+    const float *y = k->ex + (size_t)bi[used] * stride + NIn;
     wsum += w;
-    for (int o = 0; o < NOut; ++o) out[o] += w * row[NIn + o];
+    for (int o = 0; o < NOut; ++o) out[o] += w * (y[o] - y0[o]);
+    ++used;
   }
-  float s = 1.0f / wsum;
-  for (int o = 0; o < NOut; ++o) out[o] *= s;
+  for (int o = 0; o < NOut; ++o) {
+    float lo = y0[o], hi = y0[o];
+    for (int n = 1; n < used; ++n) {
+      const float y = k->ex[(size_t)bi[n] * stride + NIn + o];
+      if (y < lo) lo = y;
+      if (y > hi) hi = y;
+    }
+    out[o] = iris_clampf(y0[o] + out[o] / wsum, lo, hi);
+  }
 #ifndef IRIS_NO_GUARDS
   /* The store admits examples with NaN OUTPUTS (the record-door trap is a
      documented follow-up), and this path would blend such a NaN straight
