@@ -29,7 +29,7 @@ comments included, and merged line counts go wrong.
 
 Usage:
   python3 tools/coverage.py --llvm-cov LLVM_COV --source iris.h --dir build/cov \\
-      --min-lines 98.0 --min-branches 89.5 PROGRAM...
+      --min-lines 98.0 --min-branches 88.5 PROGRAM...
 reads DIR/bin/PROGRAM and DIR/prof/PROGRAM.profdata for each PROGRAM, prints the
 totals, each program's own share, and every line no program executed, and exits
 1 when lines or branch outcomes fall under their minimum.

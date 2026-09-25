@@ -352,13 +352,20 @@ arm_fuzz_load() {
 # Coverage: every test program built with clang's source-based coverage, the
 # profiles merged per program, and the union taken per source position by
 # tools/coverage.py. IRIS_API is redefined to force every function out in
-# every program, so all programs report against the same lines.
+# every program, so all programs report against the same lines. The counters
+# are updated atomically: audit and threads run iris on several threads at
+# once, and a plain increment that loses a race makes llvm-cov's derived
+# branch counts (a parent's count minus a child's) wrong. Without it the
+# union counted six to nine outcomes no program takes -- the defensive
+# tests in small functions called millions of times, such as
+# iris_internal_norm_in's index check -- and moved by one or two outcomes
+# from run to run.
 # THE THRESHOLDS sit just under what the suite measures. Lines: 1,157 of 1,177
 # (98.30%) with Apple clang 17, Homebrew clang 22 and Debian clang 19 alike.
 # Branch outcomes depend on the LLVM version, which decides how many there
-# are: 885 of 968 (91.43%) with Apple clang 17, 886 of 968 (91.53%) with
-# clang 19, 907 of 1,012 (89.62%) with clang 22. So: lines at least 98.0%,
-# branch outcomes at least 89.5%. COV_MIN_LINES and COV_MIN_BRANCHES
+# are: 878 of 968 (90.70%) with Apple clang 17 and with clang 19, 900 of
+# 1,012 (88.93%) with clang 22, the same in every run. So: lines at least
+# 98.0%, branch outcomes at least 88.5%. COV_MIN_LINES and COV_MIN_BRANCHES
 # override them.
 arm_cov() {
   KC=""
@@ -389,7 +396,7 @@ arm_cov() {
   printf '#define IRIS_API static inline __attribute__((used))\n' > build/cov/prelude.h
   printf '#include "../../tests/guards_ab.c"\n' > build/cov/guards_ab_ng.c
   printf '#define LOAD_SMALL_UNIT\n#include "../../tests/load.c"\n' > build/cov/load_small.c
-  K="$STD -O2 $WARN -I. -fprofile-instr-generate -fcoverage-mapping -include build/cov/prelude.h"
+  K="$STD -O2 $WARN -I. -fprofile-instr-generate -fcoverage-mapping -fprofile-update=atomic -include build/cov/prelude.h"
   covbuild() { name=$1; shift; "$KC" $K -pthread -o "build/cov/bin/$name" "$@" -lm; }
   covbuild audit tests/audit.c
   covbuild guards_ab tests/guards_ab.c
@@ -413,7 +420,7 @@ arm_cov() {
     $PD merge -sparse build/cov/prof/"$p"-*.profraw -o "build/cov/prof/$p.profdata"
   done
   python3 tools/coverage.py --llvm-cov "$LC" --source iris.h --dir build/cov \
-    --min-lines "${COV_MIN_LINES:-98.0}" --min-branches "${COV_MIN_BRANCHES:-89.5}" \
+    --min-lines "${COV_MIN_LINES:-98.0}" --min-branches "${COV_MIN_BRANCHES:-88.5}" \
     audit guards_ab guards_ab_ng regressions coverage load train elm playing portability recipes tu fuzz threads tiny
 }
 
