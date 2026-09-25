@@ -107,6 +107,7 @@ int iris_probe(void) {
   SINKI += (int)iris_get_status(k);
   iris_reseed(k, 99u);
   iris_internal_set_learning(k, 0.1f, 0.85f);
+  iris_internal_default_learning(k);
   iris_internal_set_l2(k, 0.0f);
   SINKF += iris_get_l2(k);
   iris_set_smoothing(k, 0.0f);

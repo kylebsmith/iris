@@ -1070,6 +1070,15 @@ IRIS_API void iris_reseed(iris *k, uint32_t seed) { if (!k) return;
   k->status = IRIS_STATUS_OK;
 }
 
+/* The learning rate and momentum every instrument starts with, 0.10 and 0.85,
+   and gets back when a file is loaded into it: the file does not carry them,
+   and every instrument this library saves trained with them unless
+   iris_internal_set_learning (below) changed them. */
+IRIS_API void iris_internal_default_learning(iris *k) {
+  k->lr = 0.10f;
+  k->momentum = 0.85f;
+}
+
 IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out,
                    int cap, uint32_t seed) {
   if (!mem) return 0;
@@ -1155,7 +1164,7 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
   for (int i = 0; i < cap; ++i) k->order[i] = i;
 
   k->n_ex = 0; k->next_id = 1;
-  k->lr = 0.10f; k->momentum = 0.85f; k->l2 = 0.0f;
+  iris_internal_default_learning(k); k->l2 = 0.0f;
   for (int i = 0; i < cap; ++i) k->ex_res[i] = 0.0f;
   k->res_epochs = 0;
   k->tr_done = 0; k->tr_ceiling = 0; k->tr_running = 0; k->tr_ref = 0.0f;
@@ -3447,10 +3456,11 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
    byte of it, its status included. There is no half-loaded instrument.
 
    AFTER A LOAD the instrument is the saved one, and it is at rest: fitted and
-   trained come from the flags, the momentum velocities are zero, the record
-   of which demonstration fights the others (PART 8f) is empty, any sliced
-   training run is over, the status is IRIS_STATUS_OK, and iris_last_error is
-   measured afresh over the demonstrations.
+   trained come from the flags, the momentum velocities are zero, the
+   learning rate and momentum are the defaults every instrument starts with,
+   the record of which demonstration fights the others (PART 8f) is empty,
+   any sliced training run is over, the status is IRIS_STATUS_OK, and
+   iris_last_error is measured afresh over the demonstrations.
 
    WHY FITTED AND TRAINED ARE TWO BITS. `fitted` means this instrument has
    produced a fit and plays it; `trained` means that fit still describes the
@@ -3712,6 +3722,7 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
   }
 
   /* At rest: nothing carried over from whatever this arena held before. */
+  iris_internal_default_learning(k);
   iris_zero_velocity(k);
   for (int i = 0; i < k->cap; ++i) k->ex_res[i] = 0.0f;
   k->res_epochs = 0;

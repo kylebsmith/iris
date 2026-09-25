@@ -518,7 +518,7 @@ static void flips(const char *name, shape s, int n_demos, int every_bit) {
 
 /* ------------------------------------------------------- the other checks */
 static void after_load_at_rest(void) {
-  char d[240];
+  char d[320];
   box a = make(S2, 1234u);
   demos(a.k, S2, S2_DEMOS, 0); iris_train(a.k);
   size_t n = 0; unsigned char *f = save(a.k, &n);
@@ -528,6 +528,7 @@ static void after_load_at_rest(void) {
   iris_train_epochs(b.k, 50);                  /* velocities and ledger now set */
   iris_train_begin(b.k, 5000);
   iris_train_slice(b.k, 100);                  /* a sliced run in progress */
+  iris_internal_set_learning(b.k, 0.3f, 0.2f); /* not the defaults */
   b.k->status = IRIS_STORE_FULL;
   const int nw = S2.nh * S2.ni + S2.nh + S2.no * S2.nh + S2.no;
   int dirty_v = 0, dirty_l = 0;
@@ -545,12 +546,15 @@ static void after_load_at_rest(void) {
   const int prog = b.k->tr_done == 0 && b.k->tr_ceiling == 0 && b.k->tr_running == 0
                 && b.k->tr_n_ex == 0 && b.k->tr_ref == 0.0f && b.k->res_epochs == 0
                 && !iris_train_busy(b.k) && iris_train_slice(b.k, 10) == 0;
+  const int learn = b.k->lr == 0.10f && b.k->momentum == 0.85f;
   const float e = iris_last_error(b.k);
   snprintf(d, sizeof d, "dirty before %d/%d/%d; load %d, velocities zero %d, ledger zero %d, "
-           "progress reset %d, status %d, last_error %g, %d weights",
-           dirty_v, dirty_l, dirty_t, ok, vel, led, prog, (int)iris_get_status(b.k), (double)e, nw);
+           "progress reset %d, learning rate and momentum the defaults %d, status %d, "
+           "last_error %g, %d weights",
+           dirty_v, dirty_l, dirty_t, ok, vel, led, prog, learn, (int)iris_get_status(b.k),
+           (double)e, nw);
   check("after a load: velocities 0, ledger clear, progress reset, OK",
-        dirty_v && dirty_l && dirty_t && ok && vel && led && prog
+        dirty_v && dirty_l && dirty_t && ok && vel && led && prog && learn
         && iris_get_status(b.k) == IRIS_STATUS_OK && !iris_isbad(e) && e >= 0.0f && e < 1.0f, d);
   free(f); drop(&a); drop(&b);
 }
