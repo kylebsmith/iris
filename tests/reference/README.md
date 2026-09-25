@@ -357,12 +357,14 @@ each weight by l2 × lr / n per visit, outside the momentum (l2 = 0.3 ×
 smoothing, lr the learning rate); scikit-learn adds alpha × w to the gradient,
 where momentum multiplies a steady push by 1 / (1 − momentum), so the same
 shrink needs alpha = l2 × (1 − momentum) / n: 0.0011 at smoothing 0.5 and 20
-demonstrations. What still differs: scikit-learn's output is linear where iris's
-is the rational logistic, its starting weights are Glorot's rather than a
-uniform draw over the square root of the fan-in, and its backward pass is the
-true gradient where iris's is the surrogate the header describes. The table
-therefore compares results on a task, not algorithms; checks (a) to (c) compare
-algorithms.
+demonstrations. scikit-learn divides the penalty by the number of rows in each
+gradient step, one for the SGD arm and all n for L-BFGS, so the L-BFGS arm
+takes n times that alpha, l2 × (1 − momentum): 0.0225. What still differs:
+scikit-learn's output is linear where iris's is the rational logistic, its
+starting weights are Glorot's rather than a uniform draw over the square root
+of the fan-in, and its backward pass is the true gradient where iris's is the
+surrogate the header describes. The table therefore compares results on a
+task, not algorithms; checks (a) to (c) compare algorithms.
 
 Each row is 8 seeds: 20 demonstrations at uniform random points, iris seeded
 with the seed and scikit-learn with the same number, and the error is the
@@ -372,18 +374,18 @@ root-mean-square difference from the clean function on a 21 × 21 grid of
 deviation of the logarithm of the ratio between iris at two seeds on the same
 data, the scale on which a difference means something.
 
-| Noise | Smoothing | Alpha | iris | SGD | L-BFGS | iris / SGD | iris / L-BFGS | Reroll | Epochs |
+| Noise | Smoothing | Alpha, SGD / L-BFGS | iris | SGD | L-BFGS | iris / SGD | iris / L-BFGS | Reroll | Epochs |
 |---|---|---|---|---|---|---|---|---|---|
 | 0 | 0 | 0 | 0.0145 | 0.0190 | 0.0157 | 0.76 [0.60, 0.94] | 0.92 [0.84, 1.01] | 0.062 | 17,414 |
 | 0.05 | 0 | 0 | 0.0938 | 0.0573 | 0.1393 | 1.64 [1.39, 1.96] | 0.67 [0.52, 0.88] | 0.181 | 13,000 |
-| 0.05 | 0.5 | 0.0011 | 0.0381 | 0.0513 | 0.0556 | 0.74 [0.67, 0.82] | 0.68 [0.55, 0.83] | 0.038 | 4,000 |
+| 0.05 | 0.5 | 0.0011 / 0.0225 | 0.0381 | 0.0513 | 0.0370 | 0.74 [0.67, 0.82] | 1.03 [0.98, 1.08] | 0.038 | 4,000 |
 
 On clean data iris's held-out error is three quarters of scikit-learn's SGD at
 the same epoch count, and not distinguishable from L-BFGS's (the interval
 includes 1). On noisy data without smoothing iris fits more of the noise than
-the SGD arm does, and less than L-BFGS does. With smoothing 0.5 it has the
-lowest error of the three, and stops at 4,000 epochs against 13,000 without
-smoothing.
+the SGD arm does, and less than L-BFGS does. With smoothing 0.5 its error is
+three quarters of the SGD arm's and not distinguishable from L-BFGS under the
+same penalty, and it stops at 4,000 epochs against 13,000 without smoothing.
 
 The band is both intervals inside [0.5, 2]: iris within a factor of 2, either
 way, of a standard implementation of the same model class. A factor of 2 is

@@ -628,8 +628,12 @@ def calibration(exe, workdir, seeds, n_demos):
         # momentum; scikit-learn adds alpha * w to the gradient, inside it,
         # where momentum multiplies a steady push by 1 / (1 - momentum). The
         # same shrink per visit therefore needs alpha = l2 (1 - momentum) / n.
+        # scikit-learn divides the penalty by the rows in each gradient step:
+        # one for the SGD arm, all n for L-BFGS, which therefore takes n times
+        # that alpha to be held as hard.
         l2 = ref.weight_decay(smoothing)
         alpha = l2 * (1.0 - momentum) / n_demos
+        arm_alpha = {"sgd": alpha, "lbfgs": alpha * n_demos}
         t0 = time.perf_counter()
         for s in range(1, seeds + 1):
             demos = random_truth_demos(n_demos, noise, seed=1000 + s)
@@ -657,8 +661,8 @@ def calibration(exe, workdir, seeds, n_demos):
                                          nesterovs_momentum=False, max_iter=epochs, tol=0.0,
                                          n_iter_no_change=epochs + 1, shuffle=True)),
                             ("lbfgs", dict(solver="lbfgs", max_iter=5000, tol=1e-10))):
-                m = MLPRegressor(hidden_layer_sizes=(12,), activation="tanh", alpha=alpha,
-                                 random_state=s, **kw)
+                m = MLPRegressor(hidden_layer_sizes=(12,), activation="tanh",
+                                 alpha=arm_alpha[arm], random_state=s, **kw)
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", ConvergenceWarning)
                     m.fit(X, T)
@@ -699,7 +703,7 @@ def print_calibration(rows, seeds, n_demos):
     print("  SGD: stochastic gradient descent, one demonstration at a time, held to iris's "
           "epoch count; LBFGS: the limited-memory\n  Broyden-Fletcher-Goldfarb-Shanno method; "
           "reroll: standard deviation of log(iris / iris with another seed) on the same data;\n"
-          "  epochs: iris_train's median")
+          f"  alpha: the SGD arm's, and L-BFGS takes {n_demos} times it; epochs: iris_train's median")
 
 
 # The band both ratios' intervals should sit in: iris within a factor of 2,
