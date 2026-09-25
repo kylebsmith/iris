@@ -2683,8 +2683,9 @@ IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->see
    report the count. If escalation was needed the status says
    IRIS_RIDGE_ESCALATED -- the result is valid, the data was harder than usual.
    The campaign behind that: docs/adr/0009-ridge-is-mandatory.md. Escalation
-   can still run out: lam0 = 0 on 32 demonstrations that share one input fails
-   all nine attempts, and that is an ordinary refusal (below).
+   can still run out: lam0 = 0 on 128 demonstrations all made at one gesture
+   fails all nine attempts (40 seeds of 40, at 8, 12 and 24 hidden units), and
+   that is an ordinary refusal (below).
 
    SMOOTHING reaches this trainer as extra ridge on the output weights, and
    never on the output biases: a penalised bias drags every output toward the

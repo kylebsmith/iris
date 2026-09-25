@@ -366,16 +366,17 @@ int main(int argc, char **argv) {
       cases++;
       if (!refused_cleanly(iris_train_elm(e, 1e-4f, scratch, sizeof scratch))) { bad++; snprintf(which, sizeof which, "no demonstrations"); } }
 
-    /* a factorisation that fails even after escalation: lam0 = 0 on 32
-       demonstrations that share one input, recorded after a fit on other data
-       so the ranges the failed solve fitted differ from the ones it must put
-       back */
+    /* a factorisation that fails even after escalation: lam0 = 0 on 128
+       demonstrations all made at one gesture, recorded after a fit on other
+       data so the ranges the failed solve fitted differ from the ones it must
+       put back. Both inputs are still, so every demonstration normalises to
+       the same point and the normal matrix has rank one */
     int fact_ret = 0;
     { iris *f = iris_init(arena, sizeof arena, 2, 8, 1, 128, 3u);
       for (int i = 0; i < 10; ++i) { float in[2] = { (float)i, (float)(i % 3) }, o = (float)i; iris_record(f, in, &o); }
       iris_train_elm(f, 1e-4f, scratch, sizeof scratch);
       iris_clear(f);
-      for (int i = 0; i < 32; ++i) { float in[2] = { 0.5f, 0.25f }, o = (float)(i % 3); iris_record(f, in, &o); }
+      for (int i = 0; i < 128; ++i) { float in[2] = { 0.5f, 0.25f }, o = (float)(i % 3); iris_record(f, in, &o); }
       snap(f, IRIS_RIDGE_ESCALATED);
       fact_ret = iris_train_elm(f, 0.0f, scratch, sizeof scratch);
       cases++;
