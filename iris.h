@@ -1350,7 +1350,11 @@ IRIS_API float iris_denorm_out(const iris *k, int i, float y) { if (!k || i < 0 
    learning costs anything.
    ========================================================================== */
 
-IRIS_API void iris_forward_norm(const iris *k, const float *x_norm) { if (!k) return;
+/* The network alone, on inputs already normalised. It writes its working
+   values -- the hidden and output activations -- into the instrument, which
+   is why it takes a non-const instrument and why one instrument must not be
+   played from two places at once. */
+IRIS_API void iris_forward_norm(iris *k, const float *x_norm) { if (!k) return;
   for (int h = 0; h < k->n_hid; ++h) {
     const float *w = k->w1 + (size_t)h * k->n_in;
     float s = k->b1[h];
@@ -1386,7 +1390,7 @@ IRIS_API int iris_shape_fits(const iris *k) {
            && k->n_hid <= IRIS_MAX_HID;
 }
 
-IRIS_API void iris_predict(const iris *k, const float *in, float *out) { if (!k) return;
+IRIS_API void iris_predict(iris *k, const float *in, float *out) { if (!k) return;
   if (!iris_shape_fits(k)) {
     /* Write a safe value rather than returning silently: `out` holds whatever
        the caller last played, and leaving it there is stale audio, which is the
@@ -1394,7 +1398,7 @@ IRIS_API void iris_predict(const iris *k, const float *in, float *out) { if (!k)
        unfitted path uses -- the centre of the demonstrated range. */
     for (int o = 0; o < k->n_out; ++o)
       out[o] = (k->n_ex > 0) ? 0.5f * (k->out_lo[o] + k->out_hi[o]) : 0.0f;
-    ((iris *)k)->status = IRIS_NOT_FITTED;
+    k->status = IRIS_NOT_FITTED;
     return;
   }
   float x[IRIS_MAX_IN];
@@ -1419,7 +1423,7 @@ IRIS_API void iris_predict(const iris *k, const float *in, float *out) { if (!k)
   if (!k->fitted) {
     for (int o = 0; o < k->n_out; ++o)
       out[o] = (k->n_ex > 0) ? 0.5f * (k->out_lo[o] + k->out_hi[o]) : 0.0f;
-    ((iris *)k)->status = IRIS_NOT_FITTED;
+    k->status = IRIS_NOT_FITTED;
     return;
   }
 #endif
@@ -1438,7 +1442,7 @@ IRIS_API void iris_predict(const iris *k, const float *in, float *out) { if (!k)
        bit test fails and this changes nothing.                            */
     if (iris_isbad(out[o])) {
       out[o] = 0.5f * (k->out_lo[o] + k->out_hi[o]);
-      ((iris *)k)->status = IRIS_NAN_TRAPPED;   /* reporting beats const purity */
+      k->status = IRIS_NAN_TRAPPED;
     }
 #endif
   }
@@ -3121,18 +3125,22 @@ IRIS_API void iris_internal_neighbour_scale(const iris *k, float *inv) {
    demonstration gives that row a weight of ~1e9 — recall exact to float
    precision; between demonstrations the nearest k blend. Conflicting
    duplicates average finitely (the guard keeps zero-distance weights
-   finite). O(n_ex * n_in) per call, division-free scan, no state touched. */
+   finite). O(n_ex * n_in) per call, division-free scan.
+
+   WHAT IT WRITES INSIDE THE INSTRUMENT: the status, when it has something to
+   report, and the ranges of an instrument that has never been fitted (see
+   below). That is why it takes a non-const instrument. */
 /* LENGTHS, same rule as iris_predict and just as unchecked.
    Reads exactly n_in floats from `in` and writes exactly n_out into `out`. */
-IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int kk) { if (!k) return;
-  if (!iris_shape_fits(k)) { ((iris *)k)->status = IRIS_NOT_FITTED; return; }
+IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { if (!k) return;
+  if (!iris_shape_fits(k)) { k->status = IRIS_NOT_FITTED; return; }
   /* The distance measure needs the input ranges, and those are only set by a
      fit. Called on a recorded-but-never-trained instrument this silently used
      the default range of 0..1 and gave a quietly wrong answer. Fit them here:
      it is the same work iris_fit_ranges does, it depends on nothing but the
      demonstrations, and a caller who has to remember an ordering rule will
      eventually forget it. */
-  if (!k->fitted && k->n_ex > 0) iris_fit_ranges((iris *)k);
+  if (!k->fitted && k->n_ex > 0) iris_fit_ranges(k);
   const int NIn = k->n_in, NOut = k->n_out;
   if (k->n_ex == 0) { for (int o = 0; o < NOut; ++o) out[o] = 0.0f; return; }
   if (kk < 1) kk = 1;
@@ -3174,7 +3182,7 @@ IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int k
      of each demonstrated range and report, exactly like the MLP backstop. */
   if (bi[0] < 0) {
     for (int o = 0; o < NOut; ++o) out[o] = 0.5f * (k->out_lo[o] + k->out_hi[o]);
-    ((iris *)k)->status = IRIS_NAN_TRAPPED;
+    k->status = IRIS_NAN_TRAPPED;
     return;
   }
 #else
@@ -3233,7 +3241,7 @@ IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int k
   for (int o = 0; o < NOut; ++o)
     if (iris_isbad(out[o])) {
       out[o] = 0.5f * (k->out_lo[o] + k->out_hi[o]);
-      ((iris *)k)->status = IRIS_NAN_TRAPPED;
+      k->status = IRIS_NAN_TRAPPED;
     }
 #endif
 }
@@ -3243,16 +3251,18 @@ IRIS_API void iris_knn_predict(const iris *k, const float *in, float *out, int k
    the store is empty. For a classifier task store the class label in
    out[0]; this is then exactly desktop Wekinator's shipping default for
    discrete outputs (Weka IBk, k=1, min-max normalised Euclidean distance,
-   first-recorded wins ties). */
+   first-recorded wins ties). Like iris_knn_predict it writes the status and
+   the ranges of a never-fitted instrument, so it takes a non-const one. */
 /* LENGTHS, same rule as iris_predict and just as unchecked.
-   Reads exactly n_in floats from `in` and writes exactly n_out into `out`. */
-IRIS_API int iris_classify_1nn(const iris *k, const float *in, float *out) { if (!k) return -1;
-  if (!iris_shape_fits(k)) { ((iris *)k)->status = IRIS_NOT_FITTED; return -1; }
+   Reads exactly n_in floats from `in` and writes exactly n_out into `out`;
+   `out` may be null when only the identifier is wanted. */
+IRIS_API int iris_classify_1nn(iris *k, const float *in, float *out) { if (!k) return -1;
+  if (!iris_shape_fits(k)) { k->status = IRIS_NOT_FITTED; return -1; }
   /* Same reason as iris_knn_predict: the distance measure needs the input
      ranges, and only a fit sets them. Without this, a classifier called on a
      recorded-but-never-trained instrument used the default 0..1 range and
      could return the wrong class with a healthy status. */
-  if (!k->fitted && k->n_ex > 0) iris_fit_ranges((iris *)k);
+  if (!k->fitted && k->n_ex > 0) iris_fit_ranges(k);
   const int NIn = k->n_in, NOut = k->n_out;
   if (k->n_ex == 0) return -1;
   float inv[IRIS_MAX_IN];
@@ -3278,7 +3288,7 @@ IRIS_API int iris_classify_1nn(const iris *k, const float *in, float *out) { if 
   if (best < 0) {
     if (out) for (int o = 0; o < NOut; ++o)
       out[o] = 0.5f * (k->out_lo[o] + k->out_hi[o]);
-    ((iris *)k)->status = IRIS_NAN_TRAPPED;
+    k->status = IRIS_NAN_TRAPPED;
     return -1;
   }
 #else
@@ -3295,7 +3305,7 @@ IRIS_API int iris_classify_1nn(const iris *k, const float *in, float *out) { if 
     for (int o = 0; o < NOut; ++o)
       if (iris_isbad(out[o])) {
         out[o] = 0.5f * (k->out_lo[o] + k->out_hi[o]);
-        ((iris *)k)->status = IRIS_NAN_TRAPPED;
+        k->status = IRIS_NAN_TRAPPED;
       }
 #endif
   }

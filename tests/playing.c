@@ -29,6 +29,14 @@ static float lcg01(void) {
   return (float)(lcg_state >> 8) / 16777216.0f;
 }
 
+/* The playing functions write into the instrument -- the status, the
+   network's activations, the ranges of a never-fitted instrument -- so they
+   take a non-const one. These three lines stop compiling if a signature
+   goes back to const iris *. */
+static void (*const play_net)(iris *, const float *, float *) = iris_predict;
+static void (*const play_knn)(iris *, const float *, float *, int) = iris_knn_predict;
+static int  (*const play_1nn)(iris *, const float *, float *) = iris_classify_1nn;
+
 static unsigned char A[IRIS_ARENA(2, 12, 2, 64)];
 static unsigned char B[IRIS_ARENA(2, 12, 2, 64)];
 static unsigned char SCR[IRIS_ELM_SCRATCH(12, 2)];
@@ -290,6 +298,18 @@ int main(void) {
     k->status = IRIS_STATUS_OK;
     snprintf(d, sizeof d, "%d of 6 reported, outputs finite %d", reported, finite);
     check("a not-a-number on a still input is still reported", reported == 6 && finite, d); }
+
+  /* ---- the playing functions take a non-const instrument -----------------
+     The pointers above only compile against the non-const signatures; this
+     plays once through each so the check is also exercised at run time. */
+  { iris *k = still_instrument(A, sizeof A, 500.0f);
+    float in[2] = { 0.5f, 500.0f }, o[2];
+    iris_train(k);
+    play_net(k, in, o);
+    play_knn(k, in, o, 3);
+    const int id = play_1nn(k, in, o);
+    snprintf(d, sizeof d, "compiled against iris *; 1-NN answered id %d", id);
+    check("iris_predict, iris_knn_predict, iris_classify_1nn take iris *", id > 0, d); }
 
   printf("\n  %s (%d failed)\n\n", fails ? "SOME CHECKS FAILED" : "ALL CHECKS PASSED", fails);
   return fails ? 1 : 0;
