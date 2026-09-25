@@ -299,6 +299,81 @@ int main(void) {
     snprintf(d, sizeof d, "%d of 6 reported, outputs finite %d", reported, finite);
     check("a not-a-number on a still input is still reported", reported == 6 && finite, d); }
 
+  /* ---- an unfitted instrument plays the centre of what it was shown -------
+     Recorded but never trained: every output is the centre of the range its
+     demonstrations covered, exactly, and the status says IRIS_NOT_FITTED.
+     With nothing recorded it is 0. The answer must not depend on stale
+     ranges: not on the 0..1 an instrument starts with, not on what a
+     neighbour function fitted, not on what the store held before a clear. */
+  { iris *k = iris_init(A, sizeof A, 2, 12, 2, 64, 5u);
+    float q[2] = { 0.3f, 0.8f }, o[2] = { -7.0f, -7.0f };
+    iris_predict(k, q, o);
+    const int empty_ok = o[0] == 0.0f && o[1] == 0.0f
+                      && iris_get_status(k) == IRIS_NOT_FITTED;
+    const float outs[5][2] = { { 120, -3 }, { 100, 0 }, { 200, 7 }, { 150, 1 }, { 180, 2 } };
+    for (int i = 0; i < 5; ++i) {
+      float in[2] = { (float)i, (float)(i * i) }, out[2] = { outs[i][0], outs[i][1] };
+      iris_record(k, in, out);
+    }
+    const size_t n0 = iris_save(k, FILE_BUF, sizeof FILE_BUF);
+    static unsigned char before[8192];
+    memcpy(before, FILE_BUF, n0);
+    int centre = 0;
+    for (int j = 0; j < 3; ++j) {
+      float in[2] = { (float)j * 7.0f, -1.0f };
+      iris_predict(k, in, o);
+      if (o[0] == 150.0f && o[1] == 2.0f && iris_get_status(k) == IRIS_NOT_FITTED) centre++;
+    }
+    const size_t n1 = iris_save(k, FILE_BUF, sizeof FILE_BUF);
+    const int bytes_same = n0 == n1 && memcmp(before, FILE_BUF, n0) == 0;
+    float kn[2];
+    iris_knn_predict(k, q, kn, 3);                  /* fits the ranges */
+    iris_predict(k, q, o);
+    const int after_knn = o[0] == 150.0f && o[1] == 2.0f;
+    iris_clear(k);
+    { float in[2] = { 1.0f, 1.0f }, out[2] = { 175.0f, 0.5f }; iris_record(k, in, out); }
+    iris_predict(k, q, o);
+    const int after_clear = o[0] == 175.0f && o[1] == 0.5f;
+    iris_clear(k);
+    for (int i = 0; i < 4; ++i) {
+      float in[2] = { (float)i, 0.0f }, out[2] = { 100.0f, -0.25f };
+      iris_record(k, in, out);
+    }
+    iris_predict(k, q, o);
+    const int constant = o[0] == 100.0f && o[1] == -0.25f;
+    snprintf(d, sizeof d, "empty %d, centre %d of 3, save unchanged %d, after k-NN %d, "
+             "after clear %d, constant %d", empty_ok, centre, bytes_same, after_knn,
+             after_clear, constant);
+    check("an unfitted instrument plays the centre of its demonstrations",
+          empty_ok && centre == 3 && bytes_same && after_knn && after_clear && constant, d); }
+
+  /* ---- an edited instrument keeps playing ---------------------------------
+     A take recorded after training makes the fit stale but must not silence
+     the instrument: it keeps playing its network, status healthy. */
+  { iris *k = still_instrument(A, sizeof A, 500.0f);
+    iris_train(k);
+    float q[2] = { 0.37f, 500.0f }, p0[2], p1[2];
+    iris_predict(k, q, p0);
+    { float in[2] = { 0.5f, 500.0f }, out[2] = { 30.0f, 0.0f }; iris_record(k, in, out); }
+    iris_predict(k, q, p1);
+    const int same = memcmp(p0, p1, sizeof p0) == 0;
+    snprintf(d, sizeof d, "is_trained %d, prediction unchanged %d, status %d",
+             iris_is_trained(k), same, (int)iris_get_status(k));
+    check("a stale fit keeps playing its network",
+          !iris_is_trained(k) && same && iris_get_status(k) == IRIS_STATUS_OK, d); }
+
+  /* ---- the neighbour functions with nothing to compare against -----------
+     No stale values left in `out`: 0, as iris_predict plays with nothing
+     recorded, and -1 from the classifier. */
+  { iris *k = iris_init(A, sizeof A, 2, 12, 2, 64, 5u);
+    float q[2] = { 0.3f, 0.8f }, a[2] = { 7.0f, 7.0f }, b[2] = { 7.0f, 7.0f };
+    iris_knn_predict(k, q, a, 3);
+    const int id = iris_classify_1nn(k, q, b);
+    snprintf(d, sizeof d, "k-NN %.1f %.1f, 1-NN %.1f %.1f id %d",
+             (double)a[0], (double)a[1], (double)b[0], (double)b[1], id);
+    check("an empty store gives 0 from both neighbour functions",
+          a[0] == 0.0f && a[1] == 0.0f && b[0] == 0.0f && b[1] == 0.0f && id == -1, d); }
+
   /* ---- the playing functions take a non-const instrument -----------------
      The pointers above only compile against the non-const signatures; this
      plays once through each so the check is also exercised at run time. */

@@ -1390,14 +1390,31 @@ IRIS_API int iris_shape_fits(const iris *k) {
            && k->n_hid <= IRIS_MAX_HID;
 }
 
+/* THE SUBSTITUTE a playing function writes when it cannot play: the
+   instrument was never fitted, its shape does not fit this translation
+   unit's working arrays, or the answer came out not-a-number. Writing
+   something is the point -- `out` holds whatever the caller played last, and
+   leaving it there is stale audio.
+
+   It is the centre of output o's range: the range the instrument was fitted
+   to, or, before its first fit, the range of the demonstrations it holds (so
+   an instrument that has only been shown takes plays the middle of what it
+   was shown), and 0 when it holds none. Written 0.5*lo + 0.5*hi rather than
+   0.5*(lo + hi), which overflows when lo + hi passes the largest float. */
+IRIS_API float iris_internal_centre(const iris *k, int o) {
+  float lo = k->out_lo[o], hi = k->out_hi[o];
+  if (!k->fitted) {
+    if (k->n_ex == 0) return 0.0f;
+    iris_internal_span(k, k->n_in + o, &lo, &hi);
+  }
+  return 0.5f * lo + 0.5f * hi;
+}
+
+/* THE PLAYING CALL. It writes the network's activations and, when it has
+   something to report, the status inside the instrument; nothing else. */
 IRIS_API void iris_predict(iris *k, const float *in, float *out) { if (!k) return;
   if (!iris_shape_fits(k)) {
-    /* Write a safe value rather than returning silently: `out` holds whatever
-       the caller last played, and leaving it there is stale audio, which is the
-       failure this library refuses everywhere else. Same substitute the
-       unfitted path uses -- the centre of the demonstrated range. */
-    for (int o = 0; o < k->n_out; ++o)
-      out[o] = (k->n_ex > 0) ? 0.5f * (k->out_lo[o] + k->out_hi[o]) : 0.0f;
+    for (int o = 0; o < k->n_out; ++o) out[o] = iris_internal_centre(k, o);
     k->status = IRIS_NOT_FITTED;
     return;
   }
@@ -1406,28 +1423,22 @@ IRIS_API void iris_predict(iris *k, const float *in, float *out) { if (!k) retur
 #ifndef IRIS_NO_GUARDS
   /* PLAYING AN INSTRUMENT THAT WAS NEVER FITTED. Without this, the forward
      pass runs over the random weights iris_reseed drew and returns
-     plausible-looking numbers with NO SYMPTOM anywhere: no status, no return
-     code, no silence. The robustness audit ranked it the highest on-stage
-     risk in the library precisely because nothing reports it.
+     plausible-looking numbers with no symptom anywhere: no status, no return
+     code, no silence. So it plays the substitute above instead and reports
+     IRIS_NOT_FITTED.
 
      IT GUARDS ON `fitted`, NOT ON `trained`, AND THE DIFFERENCE MATTERS.
-     iris_record and iris_delete clear `trained` — the fit no longer reflects the
-     current example set — but the instrument is still a real instrument and
-     must keep playing. Guarding on `trained` breaks that, which audit check 13
-     exists to protect, and an attempt to do so on 2026-08-26 failed exactly
-     there. `fitted` says "this has EVER produced a fit" and is cleared only by
-     iris_reseed and iris_clear.
-
-     Remedy is the NaN guard's: the centre of the demonstrated range, or 0 when
-     there are no demonstrations to have a range from. Silence beats noise. */
+     iris_record and iris_delete clear `trained` -- the fit no longer reflects
+     the current example set -- but the instrument is still a real instrument
+     and must keep playing mid-performance (tests/playing.c holds that).
+     `fitted` says "this has EVER produced a fit". It is cleared by
+     iris_reseed and iris_clear, and by loading a file saved before any fit. */
   if (!k->fitted) {
-    for (int o = 0; o < k->n_out; ++o)
-      out[o] = (k->n_ex > 0) ? 0.5f * (k->out_lo[o] + k->out_hi[o]) : 0.0f;
+    for (int o = 0; o < k->n_out; ++o) out[o] = iris_internal_centre(k, o);
     k->status = IRIS_NOT_FITTED;
     return;
   }
 #endif
-
 
   for (int i = 0; i < k->n_in; ++i) x[i] = iris_norm_in(k, i, in[i]);
   iris_forward_norm(k, x);
@@ -1436,12 +1447,11 @@ IRIS_API void iris_predict(iris *k, const float *in, float *out) { if (!k) retur
     out[o] = iris_clampf(v, k->out_lo[o], k->out_hi[o]);
 #ifndef IRIS_NO_GUARDS
     /* Last line of defence. iris_clampf passes NaN straight through (every
-       comparison with NaN is false), so a NaN here — glitched sensor in,
-       poisoned weight — would land in an audio parameter. Substitute the
-       centre of the demonstrated range and say so. On a healthy run the
-       bit test fails and this changes nothing.                            */
+       comparison with NaN is false), so a NaN here -- glitched sensor in,
+       poisoned weight -- would land in an audio parameter. Substitute and say
+       so. On a healthy run the bit test fails and this changes nothing. */
     if (iris_isbad(out[o])) {
-      out[o] = 0.5f * (k->out_lo[o] + k->out_hi[o]);
+      out[o] = iris_internal_centre(k, o);
       k->status = IRIS_NAN_TRAPPED;
     }
 #endif
@@ -3133,7 +3143,11 @@ IRIS_API void iris_internal_neighbour_scale(const iris *k, float *inv) {
 /* LENGTHS, same rule as iris_predict and just as unchecked.
    Reads exactly n_in floats from `in` and writes exactly n_out into `out`. */
 IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { if (!k) return;
-  if (!iris_shape_fits(k)) { k->status = IRIS_NOT_FITTED; return; }
+  if (!iris_shape_fits(k)) {
+    for (int o = 0; o < k->n_out; ++o) out[o] = iris_internal_centre(k, o);
+    k->status = IRIS_NOT_FITTED;
+    return;
+  }
   /* The distance measure needs the input ranges, and those are only set by a
      fit. Called on a recorded-but-never-trained instrument this silently used
      the default range of 0..1 and gave a quietly wrong answer. Fit them here:
@@ -3181,7 +3195,7 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
      whatever sits beside the arena. Refuse instead: substitute the centre
      of each demonstrated range and report, exactly like the MLP backstop. */
   if (bi[0] < 0) {
-    for (int o = 0; o < NOut; ++o) out[o] = 0.5f * (k->out_lo[o] + k->out_hi[o]);
+    for (int o = 0; o < NOut; ++o) out[o] = iris_internal_centre(k, o);
     k->status = IRIS_NAN_TRAPPED;
     return;
   }
@@ -3240,7 +3254,7 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
      into an audio parameter. Same last line of defence as iris_predict. */
   for (int o = 0; o < NOut; ++o)
     if (iris_isbad(out[o])) {
-      out[o] = 0.5f * (k->out_lo[o] + k->out_hi[o]);
+      out[o] = iris_internal_centre(k, o);
       k->status = IRIS_NAN_TRAPPED;
     }
 #endif
@@ -3257,14 +3271,21 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
    Reads exactly n_in floats from `in` and writes exactly n_out into `out`;
    `out` may be null when only the identifier is wanted. */
 IRIS_API int iris_classify_1nn(iris *k, const float *in, float *out) { if (!k) return -1;
-  if (!iris_shape_fits(k)) { k->status = IRIS_NOT_FITTED; return -1; }
+  if (!iris_shape_fits(k)) {
+    if (out) for (int o = 0; o < k->n_out; ++o) out[o] = iris_internal_centre(k, o);
+    k->status = IRIS_NOT_FITTED;
+    return -1;
+  }
   /* Same reason as iris_knn_predict: the distance measure needs the input
      ranges, and only a fit sets them. Without this, a classifier called on a
      recorded-but-never-trained instrument used the default 0..1 range and
      could return the wrong class with a healthy status. */
   if (!k->fitted && k->n_ex > 0) iris_fit_ranges(k);
   const int NIn = k->n_in, NOut = k->n_out;
-  if (k->n_ex == 0) return -1;
+  if (k->n_ex == 0) {                 /* nothing to snap to: 0, as iris_predict */
+    if (out) for (int o = 0; o < NOut; ++o) out[o] = 0.0f;
+    return -1;
+  }
   float inv[IRIS_MAX_IN];
   iris_internal_neighbour_scale(k, inv);
   const int stride = NIn + NOut;
@@ -3286,8 +3307,7 @@ IRIS_API int iris_classify_1nn(iris *k, const float *in, float *out) { if (!k) r
      is a confident wrong class every time. Starting at -1 and refusing here
      matches iris_knn_predict, which has always guarded this case. */
   if (best < 0) {
-    if (out) for (int o = 0; o < NOut; ++o)
-      out[o] = 0.5f * (k->out_lo[o] + k->out_hi[o]);
+    if (out) for (int o = 0; o < NOut; ++o) out[o] = iris_internal_centre(k, o);
     k->status = IRIS_NAN_TRAPPED;
     return -1;
   }
@@ -3304,7 +3324,7 @@ IRIS_API int iris_classify_1nn(iris *k, const float *in, float *out) { if (!k) r
        the musician can find and delete it. */
     for (int o = 0; o < NOut; ++o)
       if (iris_isbad(out[o])) {
-        out[o] = 0.5f * (k->out_lo[o] + k->out_hi[o]);
+        out[o] = iris_internal_centre(k, o);
         k->status = IRIS_NAN_TRAPPED;
       }
 #endif
