@@ -2809,9 +2809,10 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
    mapping there 0.75 to 0.82 of full scale wrong (8 of 8 seeds). A take
    outside the demonstrated range does damage of its own, because every run
    refits the ranges: correcting at twice the range moves the whole mapping
-   by 0.07 to 0.16, against about 0.0015 for a take inside it. After
-   deleting a take, call iris_train, which starts over from the seed and
-   fits only the demonstrations stored now.
+   by 0.07 to 0.16, against about 0.0015 for a take inside it. (These
+   figures come from studies whose programs are not in this repository.)
+   After deleting a take, call iris_train, which starts over from the seed
+   and fits only the demonstrations stored now.
 
    THE SEED ALONE NO LONGER DESCRIBES THE INSTRUMENT. A warm run draws its
    shuffle from the random state the last run left, so after one the seed
