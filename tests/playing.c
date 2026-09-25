@@ -355,16 +355,23 @@ int main(void) {
 
   /* ---- the rule's threshold, from both sides -----------------------------
      Still means a width of at most 1e-5 of the magnitude, or at most 1e-6.
-     Just inside that must be ignored; twice as wide must count. */
-  { struct { float lo, hi; int still; } c[6] = {
+     Five percent inside either threshold must be ignored and five percent
+     outside must count, so a threshold moved by more than about 5% either
+     way fails here. At 500 the float spacing is 3.05e-5, so the widths
+     0.00475 and 0.00525 are stored as 0.0047607 and 0.0052490. */
+  { struct { float lo, hi; int still; } c[10] = {
       { 500.0f, 500.004f, 1 },   /* width 0.004 <= 0.005: still        */
       { 500.0f, 500.01f,  0 },   /* width 0.01: moved                   */
+      { 500.0f, 500.00475f, 1 }, /* 0.95 of 0.005: still                */
+      { 500.0f, 500.00525f, 0 }, /* 1.05 of 0.005: moved                */
       { 0.0f,   5e-7f,    1 },   /* width 5e-7 <= 1e-6: still           */
       { 0.0f,   2e-6f,    0 },   /* width 2e-6: moved                   */
+      { 0.0f,   9.5e-7f,  1 },   /* 0.95 of the 1e-6 floor: still       */
+      { 0.0f,   1.05e-6f, 0 },   /* 1.05 of the 1e-6 floor: moved       */
       { -4095.0f, -4094.99f, 1 },/* width 0.01 <= 0.04095: still        */
       { 4095.0f, 4095.0f, 1 } }; /* exactly constant                    */
     int wrong = 0;
-    for (int j = 0; j < 6; ++j) {
+    for (int j = 0; j < 10; ++j) {
       iris *k = iris_init(A, sizeof A, 2, 12, 2, 64, 1u);
       float a[2] = { 0.0f, c[j].lo }, b[2] = { 1.0f, c[j].hi }, o[2] = { 0.0f, 1.0f };
       iris_record(k, a, o); iris_record(k, b, o);
@@ -372,8 +379,8 @@ int main(void) {
       const int is_still = (k->in_hi[1] == k->in_lo[1]);
       if (is_still != c[j].still) wrong++;
     }
-    snprintf(d, sizeof d, "%d of 6 widths classified wrongly", wrong);
-    check("a width inside the threshold is still, twice it is not", wrong == 0, d); }
+    snprintf(d, sizeof d, "%d of 10 widths classified wrongly", wrong);
+    check("a width 5% inside the threshold is still, 5% outside not", wrong == 0, d); }
 
   /* ---- the rule survives saving and loading -------------------------------
      A loaded instrument must play exactly as the one that was saved, still
