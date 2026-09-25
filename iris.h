@@ -563,8 +563,9 @@
    the shape you asked for: iris_internal_train_run alone reserves
    float x[IRIS_MAX_IN] and float t[IRIS_MAX_OUT], 192 bytes, whether your
    instrument has 32 inputs or 2. avr-gcc 7.3.0 -mmcu=atmega328p -Os
-   -fstack-usage gives iris_internal_train_run a frame of 288 bytes and
-   iris_predict 164. An Uno has 2 KB of memory in total and a sketch leaves a
+   -fstack-usage, with every function compiled on its own (IRIS_API defined
+   empty), gives iris_internal_train_run a frame of 284 bytes and
+   iris_predict 158. An Uno has 2 KB of memory in total and a sketch leaves a
    few hundred bytes of it for the stack, so the defaults do not fit it with
    room to spare.
 
@@ -577,8 +578,8 @@
        #include "iris.h"
 
    With the same compiler and flags iris_internal_train_run, the deepest
-   frame on the record/train/predict path, falls from 288 bytes to 128, a
-   saving of 160, and iris_predict from 164 to 52; a caller into which the
+   frame on the record/train/predict path, falls from 284 bytes to 124, a
+   saving of 160, and iris_predict from 158 to 46; a caller into which the
    compiler inlines that whole path measures 280 and 120. These are
    single frames as the compiler reports them, not a measured run-time
    stack depth. The only rule is that the maxima must be at least the n_in,
