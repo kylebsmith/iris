@@ -11,14 +11,15 @@
    same demonstrations and compares the two instruments on a grid of
    gestures.
 
-   THE AGREEMENT BOUND IS ZERO: every gesture must play bit-identically,
-   and the two must stop after the same number of epochs. That is the right
+   THE AGREEMENT BOUND IS ZERO: every gesture must play bit-identically, and
+   the two must stop after the same number of epochs. That is the right
    bound, not a fragile one. Both programs do the same operations on 32-bit
-   floats in the same order, IEEE 754 rounds each one exactly one way, iris.h
-   refuses to compile where a compiler would carry wider intermediate
-   results, and both switch fused multiply-add contraction off. So the two
-   agree on every C99 compiler (Apple clang, clang and gcc, at -O0 to -Os,
-   measured) or one of them no longer computes the model the header
+   floats in the same order, IEEE 754 (the floating-point standard of the
+   Institute of Electrical and Electronics Engineers) rounds each one exactly
+   one way, iris.h refuses to compile where a compiler would carry wider
+   intermediate results, and both switch fused multiply-add contraction off.
+   So the two agree on every C99 compiler (Apple clang, clang and gcc, at -O0
+   to -Os, measured) or one of them no longer computes the model the header
    describes, and then this program exits 1. Changing the momentum in iris.h
    from 0.85f to 0.8499f fails it, as does stretching iris's output scaling
    by one part in a million.

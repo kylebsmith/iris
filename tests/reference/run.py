@@ -741,7 +741,8 @@ def main():
     ap.add_argument("--seeds", type=int, default=8, help="seeds in the task table")
     ap.add_argument("--demos", type=int, default=20, help="demonstrations per task")
     ap.add_argument("--cc", default=os.environ.get("CC", "cc"), help="C compiler")
-    ap.add_argument("--workdir", help="keep the export's JSON here")
+    ap.add_argument("--workdir",
+                    help="keep the export's output, JSON (JavaScript Object Notation), here")
     ap.add_argument("--only", help="run only the recipes whose names contain this")
     args = ap.parse_args()
 

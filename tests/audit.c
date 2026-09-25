@@ -11,7 +11,8 @@
    (tests/guards_ab.c), which needs two builds of the core and so lives
    outside this binary. */
 
-/* pthread.h and clock_gettime are POSIX, not C99; ask for them. */
+/* pthread.h and clock_gettime are POSIX (the Portable Operating System
+   Interface standard), not C99; ask for them. */
 #define _POSIX_C_SOURCE 200809L
 #include "../iris.h"
 /* This file computes its own demonstrations (truth() below), and the golden
@@ -1342,12 +1343,12 @@ int main(int argc, char **argv) {
   /* --- 31. training to convergence, and a progress bar that is not a lie --
      Three claims. (a) iris_train, which stops at the plateau, fits the
      reference task far better than a fixed 600-epoch run. (b) The same run
-     sliced into chunks -- which is how a single-threaded UI keeps drawing --
-     is BIT-IDENTICAL to iris_train taken in one blocking call: both check and
-     reseed the same way, and the shuffle buffer is carried across the
-     slices. (c) The reported progress never goes backwards and ends at
-     exactly 1.0, which is the whole difference between a progress bar and
-     an animation.                                                          */
+     sliced into chunks -- which is how a single-threaded user interface
+     keeps drawing -- is BIT-IDENTICAL to iris_train taken in one blocking
+     call: both check and reseed the same way, and the shuffle buffer is
+     carried across the slices. (c) The reported progress never goes
+     backwards and ends at exactly 1.0, which is the whole difference between
+     a progress bar and an animation.                                       */
   {
     load_examples(k, 20);
     iris_reseed(k, 4242u); iris_continue(k, 600);

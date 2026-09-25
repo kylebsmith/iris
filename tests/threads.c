@@ -26,7 +26,8 @@
    "separate" to exit 0 with no report and "same" to produce a
    ThreadSanitizer data-race report.
    ========================================================================= */
-/* pthread.h is POSIX, not C99; ask for it. */
+/* pthread.h is POSIX (the Portable Operating System Interface standard),
+   not C99; ask for it. */
 #define _POSIX_C_SOURCE 200809L
 #include "iris.h"
 #include <pthread.h>

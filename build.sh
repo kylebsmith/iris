@@ -49,11 +49,12 @@
 #                (polyphonic expression; control change and Open Sound
 #                Control), built with -Werror
 #   docs         the files that describe the code, held to it: keywords.txt
-#                (the Arduino IDE's highlighting) lists every public
-#                function and type, the study programs in docs/ build with
-#                -Werror, CONTRIBUTING.md lists exactly this script's arms,
-#                and tests/version_check.sh holds tools/version-check.sh to
-#                its rule (a release date only on a release tag)
+#                (the highlighting of the Arduino IDE, its integrated
+#                development environment) lists every public function and
+#                type, the study programs in docs/ build with -Werror,
+#                CONTRIBUTING.md lists exactly this script's arms, and
+#                tests/version_check.sh holds tools/version-check.sh to its
+#                rule (a release date only on a release tag)
 #
 # THE WHOLE SUITE UNDER A TOOL
 #   sanitize     every test program and example above under

@@ -9,9 +9,9 @@ programs, taken together, execute.
 iris.h's functions are `static inline`, so every program carries its own copy
 of each one, compiled with that program's settings (guards_ab_ng, for one,
 has no guards). This script therefore does not ask llvm-cov to combine the
-copies. It exports every program's regions and branches as JSON and takes the
-union itself, position by position, and each program's own share is printed
-beside it:
+copies. It exports every program's regions and branches as JSON (JavaScript
+Object Notation, a plain-text data format) and takes the union itself,
+position by position, and each program's own share is printed beside it:
 
   lines     the union of the lines llvm-cov marks as executed (its lcov "DA"
             records), keeping only lines that belong to iris.h's own functions;
