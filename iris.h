@@ -2793,6 +2793,12 @@ IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
     int something_to_learn = 0;
     for (int o = 0; o < NO_; ++o)
       if (k->out_hi[o] - k->out_lo[o] > 1e-5f) something_to_learn = 1;
+    /* Nor when no input moved: a still input reads 0 (PART 5), so every
+       corner above is the same point and one sound is all it can play. */
+    int an_input_moved = 0;
+    for (int i = 0; i < NI_; ++i)
+      if (k->in_hi[i] > k->in_lo[i]) an_input_moved = 1;
+    if (!an_input_moved) something_to_learn = 0;
 
     /* The normalised band is 0.8 wide. Moving less than half a percent of it
        across the whole input range is a constant with rounding on it. */

@@ -367,6 +367,36 @@ int main(void) {
     snprintf(d, sizeof d, "%d of 6 reported, outputs finite %d", reported, finite);
     check("a not-a-number on a still input is still reported", reported == 6 && finite, d); }
 
+  /* ---- every input still: one sound, and no fault -------------------------
+     Six takes with both inputs resting and the outputs varying. No input
+     moved, so the instrument cannot tell one gesture from another and the
+     best it can play is one sound near the demonstrations' mean. Both
+     trainers must fit that with a healthy status: the closed-form trainer's
+     check for a mapping that collapsed to a constant must not call this a
+     fault. */
+  { int healthy = 0, fitted = 0, near_mean = 0;
+    float got[2] = { 0.0f, 0.0f };
+    for (int trainer = 0; trainer < 2; ++trainer) {
+      iris *k = iris_init(A, sizeof A, 2, 12, 2, 64, 3u);
+      float in[2] = { 500.0f, 0.0f };
+      for (int r = 0; r < 6; ++r) {
+        float out[2] = { (float)r, 1.0f - 0.5f * (float)r };
+        iris_record(k, in, out);
+      }
+      if (trainer == 0) iris_train(k); else iris_train_elm(k, 1e-3f, SCR, sizeof SCR);
+      if (iris_get_status(k) == IRIS_STATUS_OK) healthy++;
+      if (iris_is_trained(k)) fitted++;
+      float o[2];
+      iris_predict(k, in, o);
+      got[trainer] = o[0];
+      if (iris_absf(o[0] - 2.5f) < 0.25f && iris_absf(o[1] + 0.25f) < 0.125f) near_mean++;
+    }
+    snprintf(d, sizeof d, "healthy %d of 2, trained %d of 2, near the mean %d of 2 "
+             "(%.3f and %.3f, mean 2.5)", healthy, fitted, near_mean,
+             (double)got[0], (double)got[1]);
+    check("with every input still, both trainers fit without a fault",
+          healthy == 2 && fitted == 2 && near_mean == 2, d); }
+
   /* ---- an unfitted instrument plays the centre of what it was shown -------
      Recorded but never trained: every output is the centre of the range its
      demonstrations covered, exactly, and the status says IRIS_NOT_FITTED.
