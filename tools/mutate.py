@@ -29,9 +29,16 @@ under build/mutate/ and run against the fast arms of build.sh (--arms), in
 order, stopping at the first that fails, each with a time limit (--timeout).
 
 THE BASELINE. --baseline names a file of known survivors, one per line as
-`function | class | original | mutated`, which --write-baseline rewrites from
-this run. The report then lists survivors that are new, and baseline entries
-this run killed or did not sample.
+`function | class | original | mutated | site`, which --write-baseline
+rewrites from this run. The site is the first eight hex digits of the SHA-1
+of the source line the mutant sits on, with its spacing collapsed, so two
+sites in one function with the same operator are told apart while an edit
+elsewhere in iris.h, which moves line numbers, leaves the key alone. The
+file also records the SHA-1 of the iris.h it was written from, and the report
+says when iris.h has changed since: the same seed then plans different
+mutants, so a "new" survivor may only be a site the old sample never drew.
+The report lists survivors that are new, and baseline entries this run killed
+or did not sample.
 
   python3 tools/mutate.py                       100 mutants, seed 20260924
   python3 tools/mutate.py --sample 400 --seed 7 --jobs 8
@@ -261,6 +268,9 @@ def plan(src, n, seed, floor):
     every = sites(src)
     for s in every:
         s["part"] = part_of(s["line"], marks)
+        first, last = src.rfind("\n", 0, s["a"]) + 1, src.find("\n", s["b"])
+        text = " ".join(src[first:last if last >= 0 else len(src)].split())
+        s["site"] = hashlib.sha1(text.encode()).hexdigest()[:8]
     by = collections.defaultdict(list)
     for s in every:
         by[s["part"]].append(s)
@@ -357,7 +367,7 @@ def one(m, work, src, base_hash, arms, timeout, cc, keep):
 
 
 def key(m):
-    return f"{m['fn']} | {m['cls']} | {' '.join(m['orig'].split())} | {m['new']}"
+    return f"{m['fn']} | {m['cls']} | {' '.join(m['orig'].split())} | {m['new']} | {m['site']}"
 
 
 def main():
@@ -430,14 +440,23 @@ def main():
     print(f"\nSURVIVORS ({len(survivors)}): a change to iris.h that no arm above notices")
     for r in survivors:
         print(f"  iris.h:{r['line']:<5d} {key(r)}")
-    base = set()
+    base, written_from = set(), None
+    src_sha = hashlib.sha1(src.encode()).hexdigest()
     if os.path.exists(a.baseline):
-        base = {l.strip() for l in open(a.baseline) if l.strip() and not l.startswith("#")}
+        for l in open(a.baseline):
+            if l.startswith("# iris.h sha1 "):
+                written_from = l.split()[-1]
+            elif l.strip() and not l.startswith("#"):
+                base.add(l.strip())
     now = {key(r) for r in survivors}
     sampled = {key(r) for r in results}
     new = sorted(now - base)
     gone = sorted(b for b in base if b in sampled and b not in now)
     print(f"\nagainst the baseline {os.path.relpath(a.baseline, ROOT)} ({len(base)} known survivors):")
+    if written_from != src_sha:
+        print("  NOTE  iris.h has changed since the baseline was written, so this seed drew a "
+              "different sample;\n        a new survivor may be a site the old sample never drew. "
+              "Rewrite it with --write-baseline.")
     print(f"  new survivors: {len(new)}")
     for n in new:
         print(f"    {n}")
@@ -446,8 +465,10 @@ def main():
         print(f"    {g}")
     if a.write_baseline:
         with open(a.baseline, "w") as f:
-            f.write("# Known survivors of tools/mutate.py, one per line: function | class | original | mutated.\n")
+            f.write("# Known survivors of tools/mutate.py, one per line: "
+                    "function | class | original | mutated | site.\n")
             f.write(f"# Written with --sample {a.sample} --seed {a.seed}.\n")
+            f.write(f"# iris.h sha1 {src_sha}\n")
             for n in sorted(now):
                 f.write(n + "\n")
         print(f"  wrote {len(now)} survivors to {os.path.relpath(a.baseline, ROOT)}")
