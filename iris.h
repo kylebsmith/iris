@@ -592,24 +592,27 @@
 #ifndef IRIS_MAX_OUT
 #define IRIS_MAX_OUT  16   /* sound parameters out */
 #endif
-/* THE CAP HAS TO FIT THE MACHINE'S SIZE TYPE.
+/* THE CAP KEEPS THE SIZE ARITHMETIC INSIDE 32 BITS.
 
    The bound exists to stop an overflow, not because 4,096 is musically
-   special. iris_size multiplies cap by (n_in + n_out) and by sizeof(float),
-   and on a 32-bit target (the ESP32-S3) size_t is 32 bits: a large enough
-   cap would wrap, iris_size would return a SMALL number, the arena check
-   would pass, and the demonstration store would run off the end of the
-   caller's buffer. At the maxima (32 in, 16 out) 4,096 demonstrations are
-   786,432 bytes on their own, already past the S3's 512 KB of internal
+   special. IRIS_ARENA and iris_size multiply cap by (n_in + n_out) and by
+   sizeof(float), in unsigned long, which C guarantees is at least 32 bits
+   (see the note at IRIS_ARENA). An uncapped count could wrap that product,
+   so that the arena check passed a buffer too small and the demonstration
+   store ran off the end of it. At the maxima (32 in, 64 hidden, 16 out)
+   4,096 demonstrations make an arena of 862,136 bytes on a 64-bit laptop,
+   far below 2^32, so the product cannot wrap. The demonstrations alone are
+   786,432 bytes there, already past the ESP32-S3's 512 KB of internal
    memory, so nothing a board can hold is refused.
 
-   On a 16-bit size type, every Arduino AVR board, the overflow arrives far
-   sooner, and IDENTICALLY in IRIS_ARENA and in iris_size, so the bound
-   would wrap to the same wrong number and could not see it: with a cap of
-   4,096, IRIS_ARENA(8,8,8,894) compiled for a Mega comes out around 4,000
-   bytes instead of 69,672 and the build succeeds. So the cap follows the
-   machine. 255 keeps the largest legal arena comfortably inside a 16-bit
-   size type, and 255 takes is already more than anyone records by hand. */
+   Where size_t is 16 bits, every Arduino AVR board, the cap is 255, and there
+   it describes the boards rather than an overflow: an int count cannot wrap
+   a 32-bit product, and a shape whose arena passes 65,535 bytes is refused
+   by the compiler when the array is declared in C, and by iris_size and
+   iris_init at run time in C++ (the note at IRIS_ARENA). With avr-gcc 7.3.0
+   for the atmega2560 the smallest shape, IRIS_ARENA(1, 8, 1, 255), is 5,580
+   bytes, more than an Uno's 2 KB of memory and most of a Mega's 8 KB, and
+   255 takes is already more than anyone records by hand. */
 #define IRIS_MAX_EX   ((int)(sizeof(size_t) >= 4 ? 4096 : 255))  /* stored takes */
 #ifndef IRIS_MAX_HID
 #define IRIS_MAX_HID  64   /* hidden units         */
@@ -1288,8 +1291,9 @@ IRIS_API iris_status iris_get_status(const iris *k) {
    ========================================================================== */
 
 /* Bytes an instrument of this shape needs. Returns 0 for a shape that cannot
-   be sized safely (any dimension out of range, or cap above IRIS_MAX_EX, which
-   would overflow size_t on a 32-bit target such as the ESP32-S3).
+   be sized safely: any dimension out of range (cap above IRIS_MAX_EX
+   included, see the note there), or an arena larger than this machine's
+   size_t can hold, which on an AVR board is anything past 65,535 bytes.
 
    READ THIS BEFORE USING THE RETURN VALUE. 0 is a SENTINEL and it does not
    protect you on its own: size_t is unsigned, so `bytes < iris_size(...)` is
