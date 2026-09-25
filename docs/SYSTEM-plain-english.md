@@ -70,8 +70,8 @@ tasted your coffee and is guessing. Then this happens, over and over:
 
 One pass through all your demonstrations is called an **epoch**. iris does
 thousands of them. In a small worked example that ships with the library — three
-demonstrations, two inputs, three outputs — it ran 2,557 epochs and got the error
-down to about one millionth. Running it just now on a laptop, that took under a
+demonstrations, two inputs, three outputs — it runs 2,557 epochs and gets the
+error down to about one millionth. On a laptop that takes less than a
 millisecond. This whole loop is what the word **training** means, and the trained
 bundle of weights is what people call a **model**. I will call it the instrument,
 because that is what it is.
@@ -96,9 +96,10 @@ knows the twenty poses. A trained network gives you the whole continuous space
 between them, and you play in that space. You demonstrate the corners of the
 territory and then you improvise inside it. (iris ships the lookup-style
 behaviour too, and it is a real choice, not a worse one: the lookup returns your
-demonstrations back exactly, which the network never quite does — it misses its
-own demonstrations by about one percent. The network is better everywhere in
-between, by roughly two-fold at every number of demonstrations tested.)
+demonstrations back exactly, which the network never quite does — in the
+library's tests it misses its own demonstrations by a fraction of a percent.
+The network is better everywhere in between, by roughly two-fold at every
+number of demonstrations tested.)
 
 Two related things worth knowing. First, it is repeatable: on the same machine,
 built the same way, the same starting random numbers plus the same
@@ -159,35 +160,38 @@ quieter case is the more common one and the more dangerous: a slightly-off
 demonstration that does not break anything, just bends everything a little.
 
 iris can often point at the culprit. It keeps a running score of how much each
-individual demonstration is fighting the others, and it flags the one that stands
-out. In the worked example it correctly named the bad take. Be clear about how
-far that goes: on a demonstration that is badly wrong, it finds the offender
-about nine times in ten. On one that is only slightly wrong — off by five percent,
-which is less than the spread between two takes of the same human gesture — it
-finds it about three times in ten, and the library says in plain words that it
-does not pretend otherwise.
+individual demonstration is fighting the others, and it points at the one that
+stands out. In the worked example it correctly named the bad take. Be clear
+about how far that goes. On made-up test data, where one take is wrong on one
+of its outputs and everything else is clean, it names that take nearly every
+time, even when the take is only five percent off. Real mistakes are messier
+than that, and it has never been tried on recorded human gestures. It also
+raises false alarms: on clean sessions with nothing wrong, it points at
+something loudly enough to flag it a few times in every hundred. So treat what it
+names as a take to listen to again, not a take to delete unheard.
 
-When it does find one: you delete that demonstration and retrain. In the worked
-example the re-fit simply worked, and the instrument came back to 0.618, 0.500,
-0.383 — the numbers it started with. Had the bad take damaged the weights badly
-enough to stop training, the library would have refused and said so rather than
-returning a broken instrument, and a full re-roll from fresh random numbers is
-the cure for that. That is the
-repair procedure. Find the contradiction, delete it, retrain, and if the retrain
-refuses, start over from scratch.
+When it does find one: you delete that demonstration and train again. In the
+worked example the bad take had pushed one of the network's numbers against
+the library's safety limit, and the library said so. Deleting the take and
+training again fixed that too: training always starts over from the same
+starting numbers, so the deleted take leaves nothing behind, and the
+instrument came back to exactly 0.618, 0.500, 0.383, the numbers it started
+with. That is the repair procedure. Find the contradiction, delete it, train
+again.
 
 Two caveats on that. The flagging stays silent until you have at least twelve
 demonstrations, because with fewer than that there is not enough agreement to
-measure disagreement against. And deleting a bad take and re-recording does *not*
-give you back the instrument you would have had if you had never made the
-mistake. It gives you a very close one. Measured across thirty-two trials, it was
-never identical.
+measure disagreement against. And deleting a bad take and re-recording it does
+*not* give you back exactly the instrument you would have had if you had never
+made the mistake, because the re-recorded take is now last in the list and the
+order changes the training a little. It gives you a very close one: a few times
+closer than re-rolling would.
 
 **It cannot handle a hard edge.** If you want the sound to change abruptly at a
 boundary — nothing, nothing, nothing, then suddenly everything — this shape of
-network is bad at it. On a test target with a sharp edge in it, the error was
-fifteen times worse than on a smooth one. Your friend cannot learn a cliff by
-tasting cups on either side of it.
+network is bad at it. It rounds the corner off, and on sharp test targets it is
+the case where the library's safety limit trips most often. Your friend cannot
+learn a cliff by tasting cups on either side of it.
 
 **It has no sense of time.** It looks at where your hand is *right now*. It has no
 idea where your hand was a moment ago. A gesture that is defined by its motion — a
@@ -203,37 +207,34 @@ to 100 percent by pushing your hand further. You get a wall. This was chosen on
 purpose, so the instrument can never send an insane value to hardware, and it is
 a genuine cost.
 
-**The evidence has holes, and they are disclosed.** Almost every accuracy number
-was measured on smooth, artificial, noise-free test data. iris offers several
-ways of doing the training loop described earlier, and recommends one of them.
-When the same tests were re-run with realistic sensor noise added, that
-recommended method got noticeably *worse* than a cruder, deliberately-stopped-early
-one — because a good learner will happily learn the noise along with the signal.
-The project's own documentation marks that finding as unresolved and flags the
-recommendation as provisional. Nothing has yet been tested against real recorded
-human gesture.
+**The evidence has holes, and they are disclosed.** Every accuracy number was
+measured on artificial test data, some of it with noise added to imitate shaky
+takes. iris recommends one way of doing the training loop described earlier:
+keep going until the error stops improving. On noisy test data that method gets
+noticeably *worse* than a cruder one that simply stops early, because a good
+learner will happily learn the noise along with the signal. The smoothing
+setting repairs most of that, but it costs accuracy on clean data, so no single
+setting suits both, and the default waits for a study of real recorded
+gestures. Nothing has yet been tested against real recorded human gesture.
 
-Two of the timing figures were measured on the actual target chip. The first is
-321 milliseconds, for a deliberately short fixed-length training run — 600
-passes — on twenty demonstrations. The trainer iris actually recommends does not
-stop at 600; on twenty demonstrations it runs about 18,000 passes, and that one
-has been timed on the chip too — 595 milliseconds at four demonstrations and
-2.7 to 3.0 seconds at eight to twenty.
-Every other figure carrying that chip's name is an estimate scaled from a laptop
-in the same way, and the project says so on the face of the table.
+Only a few timings have been taken on the actual chip, all of them with the
+previous version of the library and none with a saved record of the run yet.
+One prediction takes 14.9 millionths of a second. Training took 595
+milliseconds at four demonstrations and 2.7 to 3.0 seconds at eight to twenty,
+but on test data that finishes after about 4,000 to 9,000 passes. A more
+typical set of twenty demonstrations needs about 18,000 passes, and that has not
+been timed on the chip, so nobody yet knows how long typical training takes
+there.
 
 ## What it costs to run
 
 Once trained, playing the instrument is cheap. One gesture in, one set of sound
-parameters out, in about thirty billionths of a second on a laptop — measured. On
-the small chip it is 14.9 millionths of a second — and that one is a reading
-from the board, not a laptop figure scaled by a guess. An earlier version of
-this page said about eight millionths, which was exactly such a guess and was
-withdrawn. At a thousand gestures per second, 14.9 microseconds is about 1.5
-percent of one core.
+parameters out, in about thirty-six billionths of a second on a laptop. On the
+small chip it is 14.9 millionths of a second, read from the board itself. At a
+thousand gestures per second, that is about 1.5 percent of the chip's time.
 
 The whole instrument, including room for 256 stored demonstrations, occupies
-9,272 bytes — about nine kilobytes. A single photo from a phone is several
+9,264 bytes on a laptop, and a little less on the chip — about nine kilobytes. A single photo from a phone is several
 hundred times larger. It never asks the operating system for memory while it
 runs, which is part of why it can live on a battery-powered device in your hands
 rather than on a server.
