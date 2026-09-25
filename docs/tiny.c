@@ -1,17 +1,21 @@
 /* ============================================================================
-   tiny.c — the same algorithm iris.h implements, by hand, in a fraction of the space.
+   tiny.c — the network and update rule iris.h implements, by hand, in a
+   fraction of the space.
 
-   THIS IS AN AUDIT, NOT A LIBRARY. Its job is to answer one question a reviewer
-   or a student is entitled to ask: is iris.h doing anything mysterious, or is
-   it this, plus guards, persistence, ports and documentation?
+   A CHECK, NOT A LIBRARY. Its job is to answer one question a reviewer or a
+   student is entitled to ask: is iris.h doing anything mysterious, or is it
+   this, plus guards, a stopping rule, a shuffle, persistence and
+   documentation?
 
    Run it. It prints its own learned surface and iris.h's on the same task, and
-   the mean difference between them. If the number is small, the library and this
-   one short file compute the same thing — and every other line in
-   iris.h is there for a reason you can name (a refusal, a file format, an
-   output port, an explanation), not because the maths needs it.
+   the mean difference between them. The two are not trained identically
+   (this file visits the four demonstrations in a fixed order for a fixed
+   4,000 epochs; iris_train shuffles them and stops at a plateau), so the
+   difference is small rather than zero. Every other line in iris.h is there
+   for a reason you can name (a refusal, a file format, a guard, an
+   explanation), not because the mathematics needs it.
 
-       cc -std=c99 -O2 -I.. -o tiny tiny.c -lm && ./tiny
+       cc -std=c99 -O2 -Wall -Wextra -I.. -o tiny tiny.c && ./tiny
    ============================================================================ */
 
 #include "../iris.h"                 /* only to compare against; tiny needs none */
@@ -27,17 +31,16 @@ static float w1[NH][NI], b1[NH], w2[NO][NH], b2[NO];
 static float v1[NH][NI], vb1[NH], v2[NO][NH], vb2[NO];   /* momentum velocity */
 static float hid[NH], out[NO];
 
-static float tanh_(float x) {        /* Padé rational tanh, as iris.h uses    */
-  if (x >  4.9f) return  1.0f;
-  if (x < -4.9f) return -1.0f;
-  float x2 = x * x;
-  return x * (27.0f + x2) / (27.0f + 9.0f * x2);
+static float tanh_(float x) {        /* the rational tanh of iris.h, PART 1,  */
+  float x2 = x * x;                  /* clamped to [-1, +1] as there          */
+  float p = x * (27.0f + x2) / (27.0f + 9.0f * x2);
+  return p > 1.0f ? 1.0f : (p < -1.0f ? -1.0f : p);
 }
 static float sig_(float x) { return 0.5f * (tanh_(0.5f * x) + 1.0f); }
 
 /* A deterministic RNG. Any will do; this is xorshift32, as iris.h uses.      */
 static uint32_t rs = 1234;
-static float rnd(void) {             /* uniform in [-1, 1)                    */
+static float rnd(void) {             /* uniform in [-1, +1]                   */
   rs ^= rs << 13; rs ^= rs >> 17; rs ^= rs << 5;
   return (float)((int32_t)rs) / 2147483648.0f;
 }
@@ -138,10 +141,6 @@ int main(void) {
     putchar('\n');
   }
   printf("\n   mean |tiny - iris| over the surface: %.4f\n", acc / (double)n);
-  /* No line counts here. The two that used to be printed were string
-     literals computed by nothing, and neither was ever true of either file.
-     A number in a program that the program does not measure is the exact
-     thing this project tells contributors not to write. */
   printf("   tiny.c does the same job in a small fraction of the space.\n\n");
   return 0;
 }

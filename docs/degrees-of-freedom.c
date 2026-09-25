@@ -1,4 +1,3 @@
-#define IRIS_IMPLEMENTATION
 #include "iris.h"
 #include <stdio.h>
 #include <math.h>

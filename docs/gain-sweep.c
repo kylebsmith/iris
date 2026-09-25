@@ -1,8 +1,12 @@
-/* THE GAIN SWEEP the header says is missing.
-   iris_train_elm_ex is public and takes gain_w and gain_b separately, so the
-   sweep IS reachable through the shipped API. Held-out error on fresh points
-   the solve never saw, over several target shapes and many seeds. */
-#define IRIS_IMPLEMENTATION
+/* THE GAIN SWEEP behind the closed-form trainer's 2/sqrt(n_in) (iris.h,
+   PART 8d). iris_train_elm passes that gain; iris_internal_train_elm_ex, the
+   solve underneath it, takes gain_w and gain_b as arguments, so this program
+   calls it directly. It is an internal function, outside the interface's
+   promise, and called here only to measure. Held-out error on fresh points
+   the solve never saw, over several target shapes and many seeds.
+
+       cc -std=c99 -O2 -Wall -Wextra -I. -o gain-sweep docs/gain-sweep.c -lm
+       ./gain-sweep                                (from the repository root) */
 #include "iris.h"
 #include <stdio.h>
 #include <math.h>
@@ -28,7 +32,7 @@ static float trial(int nh,int nex,float gain,int shape,uint32_t seed){
   rs=seed;
   for(int i=0;i<nex;++i){ float in[NI],o[NO];
     in[0]=rnd(); in[1]=rnd(); target(in,o,shape); iris_record(k,in,o); }
-  if(iris_train_elm_ex(k,1e-4f,gain,gain,scr,sizeof scr)<0) return -1.0f;
+  if(iris_internal_train_elm_ex(k,1e-4f,gain,gain,scr,sizeof scr)<0) return -1.0f;
   double se=0; int n=0;
   for(int t=0;t<300;++t){ float in[NI],w[NO],g[NO];
     in[0]=rnd(); in[1]=rnd(); target(in,w,shape); iris_predict(k,in,g);
