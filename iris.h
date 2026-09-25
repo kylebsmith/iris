@@ -211,6 +211,10 @@
                   before solving it, which stops the solve failing when two
                   demonstrations nearly repeat and pulls the answer toward
                   smaller weights. PART 8d.
+     SANITIZER    compiler instrumentation that stops a program at a fault:
+                  AddressSanitizer at an out-of-bounds memory access,
+                  UndefinedBehaviorSanitizer at an operation C leaves
+                  undefined (a misaligned access, a signed overflow).
      SEED         the number the random starting weights are drawn from. The
                   same seed always gives the same weights; a new seed is a
                   reroll. A seed of 0 is taken as 1.
@@ -581,7 +585,7 @@
    bytes instead of 69,672 and the build succeeds. So the cap follows the
    machine. 255 keeps the largest legal arena comfortably inside a 16-bit
    size type, and 255 takes is already more than anyone records by hand. */
-#define IRIS_MAX_EX   ((int)(sizeof(size_t) >= 4 ? 4096 : 255)) /* demonstrations */
+#define IRIS_MAX_EX   ((int)(sizeof(size_t) >= 4 ? 4096 : 255))  /* stored takes */
 #ifndef IRIS_MAX_HID
 #define IRIS_MAX_HID  64   /* hidden units         */
 #endif
@@ -1388,10 +1392,9 @@ IRIS_API iris *iris_init(void *mem, size_t bytes, int n_in, int n_hid, int n_out
      whenever the demonstration count changes under a running slice, so this
      loop is a second line of defence that no test can observe: 300 trials of
      random mid-run records, deletes and slices on deliberately dirty arenas,
-     under AddressSanitizer and UndefinedBehaviorSanitizer (compiler
-     instrumentation that stops a program at an out-of-bounds access or an
-     operation C leaves undefined), give the same result hash, 0x3920621C,
-     with it and without it. It costs one loop at construction. */
+     under AddressSanitizer and UndefinedBehaviorSanitizer, give the same
+     result hash, 0x3920621C, with it and without it. It costs one loop at
+     construction. */
   for (int i = 0; i < cap; ++i) k->order[i] = i;
 
   k->n_ex = 0; k->next_id = 1;
@@ -2156,7 +2159,7 @@ IRIS_API int iris_internal_pinned(const iris *k) {
    fixed epoch count. tests/audit.c pins its output to the bit.
    -------------------------------------------------------------------------- */
 
-#define IRIS_CONV_WINDOW  2000    /* epochs between plateau tests              */
+#define IRIS_CONV_WINDOW  2000    /* epochs between plateau tests             */
 #define IRIS_CONV_TOL     0.10f   /* stop when a window buys < 10% of the error */
 /* THE CEILING HAS TO FIT THE MACHINE'S int, BECAUSE IT IS PASSED AS ONE.
 
