@@ -207,7 +207,7 @@ interrupt.
 ## Run the tests
 
 ```sh
-sh build.sh           # every host check below that needs only a C compiler
+sh build.sh           # every check below that needs only a C compiler
 sh build.sh test      # the same
 ```
 
@@ -237,9 +237,10 @@ It stops at the first failure and says which check failed. One check at a time:
 | `sh build.sh determinism` | the golden hash across optimisation levels and contraction settings |
 | `sh build.sh cov` | line and branch coverage of `iris.h` across the test programs, with thresholds (needs clang's `llvm-cov`) |
 | `sh build.sh mutate` | an advisory mutation run; it reports, it never fails the build (needs Python) |
-| `sh build.sh reference` | an independent double-precision reference in Python (skips without numpy, Python's numerical library) |
+| `sh build.sh reference` | an independent double-precision reference in Python (skips without numpy, Python's numerical library, and scikit-learn, its machine-learning library) |
 | `sh build.sh mpe`, `sh build.sh sinks` | the output ports in [`extras/`](extras/) |
-| `sh build.sh tiny` | [`docs/tiny.c`](docs/tiny.c), the network and update rule written out by hand |
+| `sh build.sh tiny` | [`docs/tiny.c`](docs/tiny.c), `iris_train` written out again by hand, which must agree with the library to the bit |
+| `sh build.sh docs` | `keywords.txt` lists every public function and type, the programs in [`docs/`](docs/) build with `-Werror`, and `CONTRIBUTING.md` lists every command |
 | `sh build.sh bench` | the browser benchmark in [`extras/bench/`](extras/bench/) |
 | `sh build.sh clean` | remove `build/` |
 

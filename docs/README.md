@@ -23,7 +23,7 @@ For what is true now, read [`../iris.h`](../iris.h) and
 | [DEGREES-OF-FREEDOM.md](DEGREES-OF-FREEDOM.md) | Current | How many inputs and outputs an instrument can afford; its tables reproduce with `degrees-of-freedom.c` on 0.2.0. |
 | [degrees-of-freedom.c](degrees-of-freedom.c) | Current | The program behind DEGREES-OF-FREEDOM.md. |
 | [gain-sweep.c](gain-sweep.c) | Current | The sweep behind the closed-form trainer's hidden-layer gain; prints the table in `iris.h` PART 8d. |
-| [tiny.c](tiny.c) | Current | The network and update rule written out by hand, compared with the library on one task (`sh build.sh tiny`). |
+| [tiny.c](tiny.c) | Current | `iris_train` written out again by hand, which must agree with the library to the bit on one task (`sh build.sh tiny`). |
 | [negative-results/positional-encoding.md](negative-results/positional-encoding.md) | Historical | A positional-encoding option measured and removed before v0.1.0, with its code and numbers. |
 
 ## Studies and design records from v0.1.0

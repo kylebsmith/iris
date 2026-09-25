@@ -111,6 +111,9 @@ jobs:
       - name: tiny (iris_train written again, agreeing to the bit)
         if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
         run: sh build.sh tiny
+      - name: docs (keywords.txt, the programs in docs/, CONTRIBUTING's commands)
+        if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
+        run: sh build.sh docs
       - name: noheap (zero allocator calls, with positive controls)
         if: ${{ !cancelled() && steps.cc.outcome == 'success' }}
         run: sh build.sh noheap
@@ -139,7 +142,7 @@ jobs:
       - name: fuzz (random call sequences under AddressSanitizer)
         if: ${{ !cancelled() && steps.cc.outcome == 'success' && !(runner.os == 'macOS' && matrix.compiler == 'gcc') }}
         run: sh build.sh fuzz 2000
-      - name: sanitize (every test program under AddressSanitizer and UndefinedBehaviorSanitizer)
+      - name: sanitize (every test program and example under AddressSanitizer and UndefinedBehaviorSanitizer)
         if: ${{ !cancelled() && steps.cc.outcome == 'success' && !(runner.os == 'macOS' && matrix.compiler == 'gcc') }}
         run: sh build.sh sanitize
       - name: threads (ThreadSanitizer, with its positive control)

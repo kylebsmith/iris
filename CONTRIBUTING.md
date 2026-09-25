@@ -51,14 +51,19 @@ starter kit's sketches.
 ## Commands
 
 ```sh
-sh build.sh           # every host check that needs only a C compiler
-sh build.sh test      # the same
+sh build.sh              # the same as sh build.sh test
+sh build.sh test         # every arm in the first two groups below, one after another
 ```
 
-It stops at the first failure and names the check. The checks one at a time:
+`test` stops at the first arm that fails and names it. `fuzz`, `sanitize` and
+`threads` join it only where the compiler can link their sanitizer, and it
+says so when one cannot. `CC` chooses the compiler for every arm
+(`CC=gcc-15 sh build.sh`). The arms one at a time, grouped as `build.sh`
+groups them:
 
 ```sh
-sh build.sh audit          # the correctness checks and the golden hash 0x6805FB0D
+# the test programs
+sh build.sh audit          # the correctness checks and the golden hash 0x6805FB0D, the status values in order, the guards with and without
 sh build.sh regressions    # one test per fixed defect
 sh build.sh coverage       # the refusal paths
 sh build.sh load           # the save format, and the playback golden file
@@ -68,22 +73,27 @@ sh build.sh playing        # the playing and neighbour paths
 sh build.sh portability    # the square root and the other C-library stand-ins
 sh build.sh recipes        # the starter kit's two recipes
 sh build.sh tu             # two translation units with different maxima
-sh build.sh fuzz           # random call sequences under AddressSanitizer
+sh build.sh fuzz [N]       # N random call sequences (400) under AddressSanitizer
 sh build.sh examples       # every example, with -Werror, run
+sh build.sh tiny           # docs/tiny.c, iris_train written again, against the library to the bit
+sh build.sh mpe            # the polyphonic-expression output port
+sh build.sh sinks          # the control-change and Open Sound Control ports
+sh build.sh docs           # keywords.txt, the programs in docs/, and this list, against the code
+
+# the whole suite under a tool
 sh build.sh sanitize       # every test program and example under AddressSanitizer and UndefinedBehaviorSanitizer
 sh build.sh threads        # ThreadSanitizer, with a positive control
 sh build.sh noheap         # zero allocator calls, with a positive control
 sh build.sh freestanding   # zero undefined symbols, and the ESP32-S3 list
 sh build.sh targets        # every target builds warning-free; x87 is refused
 sh build.sh pragma         # the contraction pragmas stay inside iris.h
-sh build.sh fuzz-load 300  # libFuzzer on iris_load for 300 seconds (clang)
-sh build.sh determinism    # the golden hash across -O levels and contraction
-sh build.sh cov            # line and branch coverage, with thresholds
-sh build.sh mutate         # advisory mutation run; reports, never fails
-sh build.sh reference      # the Python double-precision reference (numpy)
-sh build.sh mpe            # the polyphonic-expression output port
-sh build.sh sinks          # the control-change and Open Sound Control ports
-sh build.sh tiny           # docs/tiny.c against the library
+sh build.sh determinism    # the golden and starter hashes across -O levels and contraction
+
+# more than a C compiler, so not in test
+sh build.sh fuzz-load [S]  # libFuzzer on iris_load for S seconds (60); needs clang with libFuzzer
+sh build.sh cov            # line and branch coverage, with thresholds; needs clang and llvm-cov
+sh build.sh mutate [...]   # advisory mutation run; reports, never fails; needs Python
+sh build.sh reference      # the Python double-precision reference; needs numpy and scikit-learn
 sh build.sh bench          # rebuild the browser benchmark
 sh build.sh clean          # remove build/
 ```
@@ -96,11 +106,12 @@ clang's coverage-guided fuzzer.
 Prerequisites: a C99 compiler (C as standardised in 1999) for everything
 `sh build.sh` runs by default; clang with libFuzzer for `fuzz-load`; clang's
 coverage tools (`llvm-cov`) for `cov`; Python for `mutate`, and Python with
-numpy for `reference`; the cross-compilers (the ESP32-S3 Arduino core,
-`arm-none-eabi-gcc`, avr-gcc) for the cross-target rows of `freestanding`,
-`targets` and `pragma`; and Docker with a Debian image holding gcc and clang,
-named in `IRIS_LINUX_IMAGE`, for the Linux rows of `freestanding`. A row whose
-tool is missing prints SKIP, and a SKIP is not a pass for that target.
+numpy and scikit-learn for `reference`; the cross-compilers (the ESP32-S3
+Arduino core, `arm-none-eabi-gcc`, avr-gcc) for the cross-target rows of
+`freestanding`, `targets` and `pragma`; and Docker with a Debian image holding
+gcc and clang, named in `IRIS_LINUX_IMAGE`, for the Linux rows of
+`freestanding`. A row whose tool is missing prints SKIP, and a SKIP is not a
+pass for that target.
 
 ## The rule: prove every check can fail
 

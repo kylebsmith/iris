@@ -48,6 +48,10 @@
 #   mpe, sinks   extras/tests/, every byte the output ports in extras/ emit
 #                (polyphonic expression; control change and Open Sound
 #                Control), built with -Werror
+#   docs         the files that describe the code, held to it: keywords.txt
+#                (the Arduino IDE's highlighting) lists every public
+#                function and type, the study programs in docs/ build with
+#                -Werror, and CONTRIBUTING.md lists exactly this script's arms
 #
 # THE WHOLE SUITE UNDER A TOOL
 #   sanitize     every test program and example above under
@@ -191,6 +195,29 @@ arm_examples() {
   done
 }
 arm_tiny() { "$CC" $CFLAGS -o build/tiny docs/tiny.c -lm; ./build/tiny; }
+arm_docs() {
+  missing=""
+  for f in $(public_functions); do grep -q "^$f	KEYWORD2\$" keywords.txt || missing="$missing $f"; done
+  for t in iris iris_status iris_progress_fn; do
+    grep -q "^$t	KEYWORD1\$" keywords.txt || missing="$missing $t"
+  done
+  if [ -n "$missing" ]; then fail "docs: keywords.txt does not list:$missing"; fi
+  say "PASS  keywords.txt lists the $(public_functions | wc -l | tr -d ' ') public functions and the 3 types"
+  n=0
+  for f in docs/*.c; do
+    "$CC" $CFLAGS -Werror -c "$f" -o "build/docs_$(basename "$f" .c).o"; n=$((n + 1))
+  done
+  say "PASS  the $n programs in docs/ build with -Werror"
+  # every arm_ function is an arm (fuzz_load is spelled fuzz-load)
+  sed -n 's/^arm_\([a-z_]*\)() *{.*/\1/p' "$ROOT/build.sh" | tr _ - | sort -u > build/docs_arms
+  sed -n '/^## Commands/,/^## [A-Z]/s/^sh build\.sh \([a-z][a-z-]*\).*/\1/p' CONTRIBUTING.md \
+    | sort -u > build/docs_contributing
+  if ! cmp -s build/docs_arms build/docs_contributing; then
+    diff build/docs_arms build/docs_contributing || true    # < build.sh only, > CONTRIBUTING.md only
+    fail "docs: the commands in CONTRIBUTING.md are not exactly the arms of build.sh"
+  fi
+  say "PASS  CONTRIBUTING.md lists exactly the $(wc -l < build/docs_arms | tr -d ' ') arms of build.sh"
+}
 
 arm_sanitize() {
   need_asan sanitize
@@ -510,7 +537,7 @@ arm_clean() { rm -rf build; trap - EXIT; }
 
 # The host arms `test` runs. The three that need a sanitizer runtime join
 # only when this compiler can link one, and say so when it cannot.
-HOST_ARMS="audit regressions coverage load train elm playing portability recipes tu examples tiny noheap determinism pragma freestanding targets mpe sinks"
+HOST_ARMS="audit regressions coverage load train elm playing portability recipes tu examples tiny docs noheap determinism pragma freestanding targets mpe sinks"
 arm_test() {
   arms=$HOST_ARMS
   if can_link -fsanitize=address,undefined; then arms="$arms fuzz sanitize"
@@ -527,13 +554,13 @@ arm_test() {
 }
 
 case "$ARM" in
-  test|audit|regressions|coverage|load|train|elm|playing|portability|recipes|tu|fuzz|examples|tiny|\
+  test|audit|regressions|coverage|load|train|elm|playing|portability|recipes|tu|fuzz|examples|tiny|docs|\
   sanitize|threads|noheap|freestanding|targets|pragma|determinism|cov|mutate|reference|mpe|sinks|bench|clean)
     "arm_$ARM" "$@" ;;
   fuzz-load) arm_fuzz_load "$@" ;;
   *) trap - EXIT
      say "usage: sh build.sh [test | audit | regressions | coverage | load | train | elm | playing |"
-     say "       portability | recipes | tu | fuzz [N] | examples | tiny | sanitize | threads | noheap |"
+     say "       portability | recipes | tu | fuzz [N] | examples | tiny | docs | sanitize | threads | noheap |"
      say "       freestanding | targets | pragma | determinism | fuzz-load [S] | cov | mutate [...] |"
      say "       reference | mpe | sinks | bench | clean]"
      exit 2 ;;
