@@ -2753,7 +2753,8 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
    THE FILE, format version 7. Every number is little-endian and is written
    and read one byte at a time, so a file means the same thing on every
    machine and the buffer you hand over needs no particular alignment. A float
-   travels as its 32-bit IEEE-754 bit pattern.
+   travels as its 32-bit IEEE-754 bit pattern. In the type column, u32 is an
+   unsigned 32-bit integer, i32 a signed one, and f32 a float.
 
      offset  field                                type     rule on load
      ------  -----------------------------------  -------  -------------------------
@@ -2858,11 +2859,12 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
 #define IRIS_FILE_VERSION 7u       /* the one format this file reads and writes */
 #define IRIS_FILE_HEADER  48u      /* bytes before w1: the fixed fields above   */
 
-/* CRC-32 (IEEE 802.3, the one zip and Ethernet use), computed a bit at a time
-   so there is no 1 KB table to carry onto a microcontroller. It runs only on
-   save and load, never while playing. Measured on the development laptop
-   (Apple M4 Max, cc -O2): 5.5 microseconds for the 872-byte file of a
-   2-12-3 instrument with 20 demonstrations, about 6.5 nanoseconds a byte.
+/* CRC-32, the 32-bit cyclic redundancy check of IEEE 802.3 (the one zip and
+   Ethernet use), computed a bit at a time so there is no 1 KB table to carry
+   onto a microcontroller. It runs only on save and load, never while
+   playing. Measured on the development laptop (Apple M4 Max, cc -O2): 5.5
+   microseconds for the 872-byte file of a 2-12-3 instrument with 20
+   demonstrations, about 6.5 nanoseconds a byte.
 
    WHY A SAVED INSTRUMENT NEEDS ONE. The file is mostly weights, raw floats
    with no redundancy. Flip one bit in flash and every field may still obey
