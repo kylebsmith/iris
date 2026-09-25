@@ -563,13 +563,88 @@ IRIS_API float iris_tanh(float x) {
    only have to be fast once. */
 IRIS_API float iris_sigmoid(float x) { return 0.5f * (iris_tanh(0.5f * x) + 1.0f); }
 
-/* __builtin_sqrtf compiles to one hardware instruction -- except on GNU
-   compilers, which assume it must set errno for a negative input and so also
-   emit a call to the C library's sqrtf for that branch. That is an undefined
-   symbol, and it breaks the no-dependency claim on the ESP32's own toolchain.
-   Build with -fno-math-errno; check-claims.sh verifies it on every compiler it
-   can find. This function is never called with a negative argument. */
-IRIS_API float iris_sqrt(float x) { return __builtin_sqrtf(x); }
+/* THE SQUARE ROOT, in integers, correctly rounded.
+
+   Four places take a square root: iris_reseed (the starting weight scale,
+   1/sqrt(inputs)), iris_novelty (the distance it reports), and the instant
+   trainer (its gain, 2/sqrt(inputs), and the diagonal of every Cholesky
+   step). A compiler's square root is one instruction on a laptop, but on the
+   ESP32-S3 it is a call to the C library's sqrtf, and on GCC and Linux clang
+   it also calls sqrtf for a negative input so that errno can be set. A call
+   is an undefined symbol in a freestanding build, and it makes the answer
+   belong to whichever C library is linked. This function needs nothing and
+   gives the same bits on every target.
+
+   THE METHOD is long-hand square root, the way it is taught with decimal
+   digits, done in base 2. Write x = m * 2^p, with m the float's 24
+   significant bits as a whole number. Then
+   sqrt(x) = sqrt(m * 2^25) * 2^((p - 25) / 2), after moving one factor of 2
+   from the power into m whenever p - 25 is odd. The bits of sqrt(m * 2^25)
+   come out one at a time, from the top, 25 of them.
+   With q the root found so far and b the next bit to try, setting b grows
+   the square from q*q to (q+b)*(q+b), an increase of 2*q*b + b*b, so the bit
+   is kept exactly when the remainder (the number minus q*q) can pay for it.
+   The loop stores the remainder divided by b, which makes the price 2*q + b,
+   and moving on to the next bit, half as big, doubles the stored remainder.
+   Every quantity stays below 2^27, so 32-bit integers suffice.
+
+   CORRECTLY ROUNDED means the answer is the float nearest the true root. 25
+   bits come out: the 24 a float holds and one more, which says whether the
+   true root lies above or below the point halfway to the next float. A
+   nonzero remainder says something is left further down, so a 1 in that
+   extra bit then means past halfway, and the root rounds up. It can never
+   land exactly on halfway: that root, doubled, would be an odd whole number,
+   and so would its square, but the number being rooted is m shifted left by
+   25 places, which is even. IEEE 754 requires exactly this of a hardware
+   square root, so the result is the hardware's, bit for bit, for every input
+   that has a root, and for -0 and NaN: tools/sqrt_exhaustive.c compares all
+   2^32 bit patterns against the host's sqrtf, and tests/portability.c
+   re-checks ten million of them on every run.
+
+   Special values follow IEEE 754: sqrt(+0) = +0, sqrt(-0) = -0, sqrt(+infinity)
+   = +infinity, a NaN comes back as the same NaN made quiet, and any other
+   negative input gives NaN. None of the four callers passes a negative
+   number.
+
+   THE PRICE IS SPEED: about 45 nanoseconds a call on an Apple M4, where the
+   instruction takes about 5. That adds about 45 nanoseconds to iris_novelty,
+   60 to iris_reseed, and 0.6 microseconds to an instant-trainer fit of 20
+   demonstrations with 12 hidden units (4.3 before, so 15%). It adds nothing
+   to the neighbour searches (iris_knn_predict, iris_classify_1nn,
+   iris_delete_nearest), which compare squared distances and never take a
+   root. Measured with Apple clang -O2. */
+IRIS_API float iris_sqrt(float x) {
+  union { float f; uint32_t u; } v;
+  v.f = x;
+  const uint32_t u = v.u;
+  if ((u & 0x7FFFFFFFu) > 0x7F800000u) { v.u = u | 0x00400000u; return v.f; }
+  if (u == 0u || u == 0x80000000u || u == 0x7F800000u) return x;
+  if (u & 0x80000000u) { v.u = 0x7FC00000u; return v.f; }
+
+  int32_t e = (int32_t)(u >> 23);          /* x = m * 2^p with p = e - 150 */
+  uint32_t m = u & 0x007FFFFFu;            /* the 23 stored bits */
+  if (e == 0) {                            /* subnormal: bring the leading 1 up */
+    e = 1;
+    while (m < 0x00800000u) { m <<= 1; --e; }
+  } else {
+    m |= 0x00800000u;                      /* the leading 1 a float leaves implicit */
+  }
+  if (!(e & 1)) { m <<= 1; --e; }          /* p - 25 = e - 175 must be even */
+
+  /* q = floor(sqrt(m * 2^25)): 25 bits, from bit 24 down to bit 0 */
+  uint32_t rem = m << 1, q = 0u, b = 0x01000000u;
+  while (b) {
+    const uint32_t t = q + q + b;          /* (2*q*b + b*b) / b */
+    if (rem >= t) { rem -= t; q += b; }
+    rem <<= 1;
+    b >>= 1;
+  }
+  q += q & (uint32_t)(rem != 0u);          /* round to nearest */
+  /* q >> 1 keeps the leading 1 at bit 23, which adds one to the exponent
+     field; a round-up that carries out of bit 23 adds one more, correctly */
+  v.u = (q >> 1) + (((uint32_t)(e + 125) >> 1) << 23);
+  return v.f;
+}
 IRIS_API float iris_absf(float x) { return x < 0.0f ? -x : x; }
 
 IRIS_API float iris_clampf(float v, float lo, float hi) {
