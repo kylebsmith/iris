@@ -1209,11 +1209,9 @@ IRIS_API void iris_clear(iris *k) {
    infinity forever; leaving headroom at both ends means the network can
    actually arrive.
 
-   WHERE THIS CONSTANT ACTUALLY COMES FROM, stated honestly because this
-   paragraph used to promise "the measurement below" and there is no
-   measurement below -- the block ends here. 0.1/0.9 is a folklore rule of
-   thumb, not a derived value. LeCun's Efficient BackProp section 4.5 derives
-   the principled band from the maximum of the sigmoid's second derivative,
+   WHERE THIS CONSTANT COMES FROM. 0.1/0.9 is a folklore rule of thumb, not a
+   derived value. LeCun's Efficient BackProp section 4.5 derives the
+   principled band from the maximum of the sigmoid's second derivative,
    which is 0.2113/0.7887, and docs/MATH-AUDIT.md:101 records that the shipped
    band therefore delivers 1.85x LESS gradient at the targets. It stays because
    moving it changes every frozen hash and every saved file's output mapping
@@ -1343,9 +1341,8 @@ IRIS_API float iris_denorm_out(const iris *k, int i, float y) { if (!k || i < 0 
      hidden_h = tanh( sum_i w1[h][i] * x_i + b1[h] )
      output_o = sigmoid( sum_h w2[o][h] * hidden_h + b2[o] )
 
-   That is the network. It is NOT the whole of what iris_predict does, and this
-   line used to say it was -- someone following it got a wrong number. The full
-   chain, which is what plays:
+   That is the network. It is NOT the whole of what iris_predict does; the full
+   chain, which is what plays, is:
 
      x_i     = iris_norm_in(k, i, your_reading)     scale the sensor in
      ...the two lines above...
@@ -1353,10 +1350,11 @@ IRIS_API float iris_denorm_out(const iris *k, int i, float y) { if (!k || i < 0 
      out_o   = iris_clampf(out_o, out_lo[o], out_hi[o])   and hold it in range
 
    Four steps, two of them arithmetic on ranges the instrument measured for
-   itself. Two matrix multiplies with a squashing function
-   after each one. For 2 inputs, 12 hidden and 3 outputs that is 60
-   multiply-adds — about one microsecond on the S3. Playing is free; only
-   learning costs anything.
+   itself, and two matrix multiplies with a squashing function after each.
+   For 2 inputs, 12 hidden and 3 outputs that is 60 multiply-adds, and one
+   whole prediction takes 14.9 microseconds on an ESP32-S3 (measured on the
+   part; see the timing note above iris_get_status). Training the same
+   instrument takes seconds, so playing is the cheap half.
    ========================================================================== */
 
 /* The network alone, on inputs already normalised. It writes its working
@@ -1380,11 +1378,12 @@ IRIS_API void iris_forward_norm(iris *k, const float *x_norm) { if (!k) return;
 
 /* DOES THIS INSTRUMENT FIT THIS TRANSLATION UNIT'S WORKING ARRAYS?
 
-   Nine functions below declare float x[IRIS_MAX_IN] and friends. Those maxima
-   are #ifndef so a small board can shrink them (see the note above them), and
-   that is a per-TRANSLATION-UNIT setting: define IRIS_MAX_IN 4 in one .c file
-   and not in another, and the two files disagree about how big those arrays
-   are while sharing one instrument through a pointer.
+   Several functions below declare working arrays such as float
+   x[IRIS_MAX_IN]. Those maxima are #ifndef so a small board can shrink them
+   (see the note above them), and that is a per-TRANSLATION-UNIT setting:
+   define IRIS_MAX_IN 4 in one .c file and not in another, and the two files
+   disagree about how big those arrays are while sharing one instrument
+   through a pointer.
 
    iris_init checks the shape against the maxima -- but it checks them in the
    translation unit that CALLS iris_init, which is the one with the large
@@ -1392,8 +1391,9 @@ IRIS_API void iris_forward_norm(iris *k, const float *x_norm) { if (!k) return;
    into its own float x[4]. Reproduced under AddressSanitizer:
    "stack-buffer-overflow, WRITE of size 4, [32,48) 'x.i'".
 
-   So every function that declares one of those arrays asks this first. It is
-   two comparisons and it turns a memory overwrite into an ordinary refusal. */
+   So the playing functions, the neighbour search and the trainers ask this
+   first. It is two comparisons and it turns a memory overwrite into an
+   ordinary refusal. */
 IRIS_API int iris_shape_fits(const iris *k) {
   return k && k->n_in <= IRIS_MAX_IN && k->n_out <= IRIS_MAX_OUT
            && k->n_hid <= IRIS_MAX_HID;
@@ -1473,30 +1473,34 @@ IRIS_API void iris_predict(iris *k, const float *in, float *out) { if (!k) retur
    Distance from the current gesture to the nearest thing you demonstrated.
    0 means "exactly on an example".
 
-   WHAT 1 MEANS, precisely, because the obvious reading is wrong. The scale is
-   sqrt(n_in)/2 -- a constant that depends only on how many sensors you have,
-   NOT on how far apart your demonstrations are. So 1 means "half the diagonal
-   of the normalised input box away from the nearest example", and that is a
-   fixed distance, not a relative one.
+   WHAT 1 MEANS, precisely, because the obvious reading is wrong. The distance
+   is taken between normalised inputs, which run from -1 to +1 across each
+   demonstrated range (PART 5), and divided by sqrt(n_in)/2 -- a constant that
+   depends only on how many sensors you have, NOT on how far apart your
+   demonstrations are. The normalised box has side 2 and diagonal
+   2*sqrt(n_in), so 1 means "a quarter of that diagonal away from the nearest
+   example": a quarter of every sensor's demonstrated range, in every sensor
+   at once. That is a fixed distance, not a relative one. An input that never
+   moved during the demonstrations adds nothing to the distance but still
+   counts in n_in.
 
    The consequence is worth knowing before you map this to anything. With four
-   corner demonstrations -- which is examples/00_minimal.c -- 60.3% of the
-   gesture square reads exactly 1.0, including the middle of the demonstrated
-   space; it reports the same value for "between your four takes" and "ten
-   times outside them". With twenty-five demonstrations it never exceeds 0.48.
-   The usable range of the control therefore depends on how many takes you
-   recorded, and two instruments are not comparable.
+   corner demonstrations -- which is examples/00_minimal.c -- 60.7% of the
+   gesture square reads exactly 1.0 (on a 1001 x 1001 grid of probes),
+   including the middle of the demonstrated space; it reports the same value
+   for "between your four takes" and "ten times outside them". With
+   twenty-five demonstrations on a 5 x 5 grid it never exceeds 0.5, reached at
+   the centre of each cell. The usable range of the control therefore depends
+   on how many takes you recorded, and two instruments are not comparable.
 
-   Making the scale relative to the examples' own spacing would fix that and is
-   what this comment used to promise. It is deliberately NOT done here: the
-   audit uses novelty to sort probes into near and far bands, so changing the
-   scale moves measured thresholds elsewhere, and that deserves its own
-   measurement rather than a quiet edit.
+   Making the scale relative to the examples' own spacing would fix that. It
+   is deliberately NOT done here: the audit uses novelty to sort probes into
+   near and far bands, so changing the scale moves measured thresholds
+   elsewhere, and that deserves its own measurement rather than a quiet edit.
 
-   This costs one pass over the examples — nothing. But it lets the instrument
-   know when it is improvising rather than recalling, which you can map to
-   anything you like: noise, detuning, a light. As far as I can find, nobody
-   has done this, and it is four lines.
+   This costs one pass over the examples. But it lets the instrument know when
+   it is improvising rather than recalling, which you can map to anything you
+   like: noise, detuning, a light.
    ========================================================================== */
 
 IRIS_API float iris_novelty(const iris *k, const float *in) { if (!k) return 0.0f;
@@ -3076,13 +3080,17 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
 /* ==========================================================================
    PART 10 — THE SECOND ALGORITHM  (k-NN blending and 1-NN snapping)
 
+   k-NN is "k nearest neighbours": answer a gesture by finding the k
+   demonstrations nearest to it and blending what they said. 1-NN is the
+   case k = 1, snapping to the single nearest one. The network of PARTS 6
+   and 8, a multilayer perceptron, is called the MLP below.
+
    A different character of instrument, not a quality tier. Desktop
-   Wekinator ships k-NN as its default for discrete (classifier) outputs;
-   until now iris only answered the continuous case. These two functions
-   add both modes with ZERO training, ZERO seed, and ZERO extra arena
-   bytes: they are a weighted read of the example store the instrument
-   already carries. The examples ARE the model — the design rule of this
-   whole file, taken to its logical end.
+   Wekinator ships k-NN as its default for discrete (classifier) outputs.
+   These two functions play both modes with ZERO training, ZERO seed, and
+   ZERO extra arena bytes: they are a weighted read of the example store the
+   instrument already carries. The examples ARE the model — the design rule
+   of this whole file, taken to its logical end.
 
    Semantics, stated as design and not as apology:
 
@@ -3091,36 +3099,50 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) { if (!k) return 
        is sampler-like where the MLP is morph-like: it plays back and
        blends your demonstrations.
 
-     - EXACT RECALL. Standing on a demonstration returns that
-       demonstration — the property backprop never quite delivers (the MLP
-       audibly misses its own demos by ~1%).
+     - RECALL. Standing on a demonstration returns that demonstration: to
+       the bit from iris_classify_1nn, and to within rounding from
+       iris_knn_predict, where the demonstration you stand on carries a
+       weight of about 1e9 (the audit's exact-recall check measures a worst
+       error of 6e-8 on outputs between 0 and 1). The MLP does not quite get
+       there: trained to its plateau it misses its own demonstrations by
+       about 0.1% of the output range (the audit's convergence check
+       measures a recall error of 0.0012).
 
      - SEAMS, ON PURPOSE. Between two demos the output can step 31x more
-       sharply than its mean step (measured; the MLP's morph is 1.9x).
-       That is the sampler character, documented, not hidden.
+       sharply than its mean step, where the MLP's morph steps 1.9x
+       (measured in the experiment behind docs/adr/0010). That is the
+       sampler character, documented, not hidden.
 
-     - STRUCTURAL SAFETY. Output is a convex combination of demonstrated
-       outputs: it cannot NaN and cannot leave the range you demonstrated,
-       whatever the input does.
+     - STRUCTURAL SAFETY. The answer is a weighted average of demonstrated
+       outputs, held inside their range: it is never a not-a-number and
+       never leaves the range you demonstrated, whatever the input does.
+       When every neighbour carries the same value, the answer is exactly
+       that value.
 
      - THE HONEST FLOOR. The MLP generalises better at EVERY example count
-       measured (2.4x at 5 examples, 2.1x at 200). Choose k-NN for its
-       character or for discrete outputs, never for accuracy.
+       measured (2.4x at 5 examples, 2.1x at 200; docs/adr/0010). Choose
+       k-NN for its character, never for accuracy. For discrete outputs use
+       iris_classify_1nn, which returns a stored label verbatim: a blend of
+       labels is exactly a label only where all k neighbours agree, and a
+       value between labels where they do not.
 
-   Distances live in the min-max normalised input space — the same space
-   iris_novelty uses — so a millimetre sensor and a g-force sensor count
-   equally. Call iris_fit_ranges(k) (or any train) after editing examples and
-   before predicting, exactly as iris_novelty already requires. Ties resolve
-   to the earliest-recorded example, the same rule as Weka's
-   LinearNNSearch, the engine under desktop Wekinator's classifier — so
-   decisions are comparable ("Wekinator-compatible semantics"; the desktop
-   Java binary itself has not been run against this code, and the label
-   stays this honest until it has).
+   Distances count each input in fractions of its demonstrated range, so a
+   millimetre sensor and a g-force sensor count equally, and an input that
+   never moved counts not at all (PART 5). The ranges are the instrument's
+   own: the ones it was last fitted to, or, on an instrument that has never
+   been fitted, the current demonstrations' ranges, fitted on every call. A
+   fitted instrument keeps its ranges when you record or delete; train again
+   to measure in the new ones. (iris_fit_ranges alone would do it too, but it
+   would also change what iris_predict plays, because the network was
+   trained on the old ranges.) Ties resolve to the earliest-recorded example,
+   the same rule as Weka's LinearNNSearch, the engine under desktop
+   Wekinator's classifier — so decisions are comparable ("Wekinator-compatible
+   semantics"; the desktop Java binary itself has not been run against this
+   code, and the label stays this honest until it has).
 
    Every saved instrument can play this way with nothing added to its file:
-   the examples and ranges are already in it. That was the point of the
-   format. Algorithm choice is a runtime call in v0.2; a persisted
-   algorithm-selector tag waits for the next format bump.
+   the examples and ranges are already in it. The file does not record which
+   algorithm you play it with; that is a choice made at run time.
    ========================================================================== */
 
 #define IRIS_KNN_MAXK 8          /* stack bound; k above this is clamped */
@@ -3178,11 +3200,12 @@ IRIS_API int iris_internal_nearest(iris *k, const float *in) {
 }
 
 /* k-NN inverse-squared-distance-weighted regression. k neighbours (default
-   choice: 3), weight 1/(d^2 + guard) each. Standing exactly on a
-   demonstration gives that row a weight of ~1e9 — recall exact to float
-   precision; between demonstrations the nearest k blend. Conflicting
-   duplicates average finitely (the guard keeps zero-distance weights
-   finite). O(n_ex * n_in) per call, division-free scan.
+   choice: 3, at most IRIS_KNN_MAXK), weight 1/(d^2 + guard) each, where d^2
+   is the squared distance. Standing exactly on a demonstration gives that row
+   a weight of 1e9, so recall is exact to within rounding; between
+   demonstrations the nearest k blend. Conflicting duplicates average finitely
+   (the guard keeps zero-distance weights finite). O(n_ex * n_in) per call,
+   division-free scan.
 
    WHAT IT WRITES INSIDE THE INSTRUMENT: the status, when it has something to
    report, and the ranges of an instrument that has never been fitted (see
@@ -3233,8 +3256,8 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
   /* A non-finite query (or one so far out that every distance overflows to
      +inf) makes every comparison false, so no row is ever inserted and each
      bi[n] is still -1 — and -1 * stride is an out-of-bounds read into
-     whatever sits beside the arena. Refuse instead: substitute the centre
-     of each demonstrated range and report, exactly like the MLP backstop. */
+     whatever sits beside the arena. Refuse instead: write the substitute
+     (iris_internal_centre) and report, exactly like the MLP backstop. */
   if (bi[0] < 0) {
     for (int o = 0; o < NOut; ++o) out[o] = iris_internal_centre(k, o);
     k->status = IRIS_NAN_TRAPPED;
@@ -3290,8 +3313,8 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
     out[o] = iris_clampf(y0[o] + out[o] / wsum, lo, hi);
   }
 #ifndef IRIS_NO_GUARDS
-  /* The store admits examples with NaN OUTPUTS (the record-door trap is a
-     documented follow-up), and this path would blend such a NaN straight
+  /* iris_record refuses a not-a-number, but the store is memory the caller
+     can reach, and a NaN output that gets in there would be blended straight
      into an audio parameter. Same last line of defence as iris_predict. */
   for (int o = 0; o < NOut; ++o)
     if (iris_isbad(out[o])) {
@@ -3303,11 +3326,12 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
 
 /* 1-NN classification: snap to the single nearest demonstration and return
    its outputs VERBATIM (bit-for-bit) plus its stable example id, or -1 if
-   the store is empty. For a classifier task store the class label in
-   out[0]; this is then exactly desktop Wekinator's shipping default for
-   discrete outputs (Weka IBk, k=1, min-max normalised Euclidean distance,
-   first-recorded wins ties). Like iris_knn_predict it writes the status and
-   the ranges of a never-fitted instrument, so it takes a non-const one. */
+   the store is empty or the reading has no finite distance to any take. For
+   a classifier task store the class label in out[0]; this is then exactly
+   desktop Wekinator's shipping default for discrete outputs (Weka IBk, k=1,
+   min-max normalised Euclidean distance, first-recorded wins ties). Like
+   iris_knn_predict it writes the status and the ranges of a never-fitted
+   instrument, so it takes a non-const one. */
 /* LENGTHS, same rule as iris_predict and just as unchecked.
    Reads exactly n_in floats from `in` and writes exactly n_out into `out`;
    `out` may be null when only the identifier is wanted. */
@@ -3343,8 +3367,8 @@ IRIS_API int iris_classify_1nn(iris *k, const float *in, float *out) { if (!k) r
 #ifndef IRIS_NO_GUARDS
     /* Verbatim means verbatim for every healthy value — but a NaN stored in
        an example's outputs must not escape as a "class label". Substitute
-       the range centre and report; the returned id still names the row so
-       the musician can find and delete it. */
+       and report; the returned id still names the row so the musician can
+       find and delete it. */
     for (int o = 0; o < NOut; ++o)
       if (iris_isbad(out[o])) {
         out[o] = iris_internal_centre(k, o);
