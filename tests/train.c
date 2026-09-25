@@ -584,6 +584,30 @@ int main(void) {
     check("iris_last_error is the same after a trainer and a load", agree == total && ret_is_it
           && differs_from_run && elm >= 0 && cleared, d);
   }
+  {
+    /* A STALE instrument, as PART 9 and iris_last_error say: a take recorded
+       after training is not measured until something measures it, and a
+       load does -- the same weights over the demonstrations in the file, the
+       bits iris_internal_recall_error gives on the unsaved instrument. */
+    static unsigned char file[16384], LB[sizeof A];
+    iris *k = iris_init(A, sizeof A, 2, 12, 3, 32, 4242u);
+    record_n(k, 20, 31337ul);
+    iris_train(k);
+    { float in[2] = { 0.5f, 0.5f }, out[3] = { 3.0f, -2.0f, 7.0f }; iris_record(k, in, out); }
+    const float before = iris_last_error(k);
+    const size_t fn = iris_save(k, file, sizeof file);
+    iris *l = iris_init(LB, sizeof LB, 2, 12, 3, 32, 5u);
+    const int loaded = fn > 0 && iris_load(l, file, fn);
+    float x[IRIS_MAX_IN];
+    memcpy(SNAP, A, sizeof A);
+    const float now = iris_internal_recall_error(k, x);
+    memcpy(A, SNAP, sizeof A);
+    snprintf(d, sizeof d, "before the save %.9g, after the load %.9g, the current demonstrations "
+             "measure %.9g; trained %d and %d", (double)before, (double)iris_last_error(l),
+             (double)now, iris_is_trained(k), iris_is_trained(l));
+    check("a load measures a stale instrument's error afresh", loaded && !iris_is_trained(l)
+          && iris_last_error(l) == now && now != before, d);
+  }
 
   /* ---- 8. decayed weights are flushed like the velocities -----------------
      Smoothing shrinks every weight by a fraction of itself on every visit.

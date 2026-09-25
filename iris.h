@@ -3066,7 +3066,9 @@ IRIS_API int   iris_is_trained(const iris *k) { if (!k) return 0; return k->trai
    and after a save and a load. 1.0 before any fit, after iris_clear and
    after a run that ended unfitted. A record or a delete does not re-measure
    it: until the next training run it describes the demonstrations the fit
-   was made on. */
+   was made on. A load does measure it, over the demonstrations in the file,
+   so on a stale instrument (iris_is_trained 0) the figure changes across a
+   save and a load; on a trained one it does not. */
 IRIS_API float iris_last_error(const iris *k) { if (!k) return 0.0f; return k->last_error; }
 IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->seed; }
 
@@ -4016,7 +4018,13 @@ IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_b
    learning rate and momentum are the defaults every instrument starts with,
    the record of which demonstration fights the others (PART 8f) is empty,
    any sliced training run is over, the status is IRIS_STATUS_OK, and
-   iris_last_error is measured afresh over the demonstrations.
+   iris_last_error is measured afresh over the demonstrations. For an
+   instrument whose fit still matches its demonstrations that is the figure
+   it reported before the save, to the bit. For a stale one -- a take
+   recorded or deleted since the last fit -- it is not: the saved instrument
+   still reported the error over the demonstrations it was fitted on, and
+   the load measures the same weights over the demonstrations the file
+   holds now.
 
    WHY FITTED AND TRAINED ARE TWO BITS. `fitted` means this instrument has
    produced a fit and plays it; `trained` means that fit still describes the
@@ -4288,8 +4296,11 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
 
   /* The training error is not in the file, but the fit and the demonstrations
      are, so it is measured exactly as every trainer measures it when it
-     finishes (iris_internal_recall_error): a loaded instrument reports the
-     bits the saved one did. */
+     finishes (iris_internal_recall_error). A loaded instrument whose fit
+     matches its demonstrations reports the bits the saved one did; a stale
+     one reports the error over the demonstrations it holds now, which the
+     saved one, not re-measured since its last fit, did not (see AFTER A
+     LOAD above). */
   { float x[IRIS_MAX_IN];
     k->last_error = iris_internal_recall_error(k, x); }
   return 1;
