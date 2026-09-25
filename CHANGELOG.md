@@ -73,6 +73,11 @@ Interface:
   the x87 unit, its old 80-bit floating-point unit: there every instrument came
   out different with no diagnostic.
   Build with `-msse2 -mfpmath=sse`.
+- `IRIS_TINY`, the threshold below which a velocity or a decayed weight is
+  flushed to zero, can no longer be defined before the `#include`: a
+  different value changed the arithmetic, so the same seed gave different
+  bits. The macros a program may use or define are listed at the top of
+  `iris.h`; every other `IRIS_` macro is internal.
 - The contraction pragmas now end with the header, so your own code after the
   `#include` contracts `a*b + c` as your compiler's default says. A program
   that computes its demonstrations itself and needs the same bits from two
