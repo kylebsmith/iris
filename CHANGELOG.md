@@ -142,6 +142,12 @@ Behaviour changes on the playing path:
 - `iris_train`, `iris_loo_error` and the reroll calls reseeded before finding a
   non-finite demonstration, so a refusal destroyed the instrument;
   `iris_loo_error` returned a not-a-number where it promised -1.
+- A gradient run that met a not-a-number partway (finite demonstrations whose
+  width overflows) returned 1.0 from `iris_continue` and
+  `iris_continue_to_plateau`, neither a refusal nor a real error, and left
+  not-a-number in the worst-demonstration ledger. It now returns -1, with
+  `IRIS_NAN_TRAPPED`, and leaves the instrument at its seed's unfitted start
+  with the ledger empty; `iris_train` returns 0 there, as before.
 - The stuck-divergence refusal fired only on every second warm call, and any
   call that overwrote the status let a warm run through; it now keys on the
   pinned weights and holds on every call.

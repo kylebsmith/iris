@@ -23,6 +23,10 @@
      5. iris_suggest_smoothing puts every byte of the arena back, on a stale
         instrument that is still playing with live momentum, and its answer
         does not move when one output is recorded in units 1000 times larger.
+     6. A not-a-number met partway through a gradient run -- finite
+        demonstrations whose width overflows -- makes the trainer return -1
+        (iris_train 0) and leaves the seed's unfitted start, the ledger empty
+        and the status IRIS_NAN_TRAPPED.
 
    Not-a-number and infinity are built with __builtin_nanf and __builtin_inff,
    never by dividing by zero, so -fsanitize=float-divide-by-zero can run over
@@ -465,6 +469,58 @@ int main(void) {
                (double)LADDER[argmin5(raw[0])], (double)LADDER[argmin5(raw[1])], (double)worst);
     }
     check("the suggestion ignores the units an output is recorded in", ok_all, msg);
+  }
+
+  /* ---- 6. a not-a-number partway through a run ----------------------------
+     Six demonstrations, trained, then two more at -2e38 and 2e38 on the
+     first input: every value is finite, so every trainer accepts the store,
+     but the input's width overflows to infinity and normalising either end
+     gives a not-a-number in the first epoch. Each gradient trainer must
+     return -1 (iris_train 0; a slice ends its run) and leave the instrument
+     exactly where iris_reseed(k, iris_seed(k)) puts one, with an empty
+     worst-demonstration ledger, the status IRIS_NAN_TRAPPED and nothing
+     fitted. */
+  {
+    int right = 0; char wrong[160] = "";
+    for (int t = 0; t < 4; ++t) {
+      iris *k = iris_init(A, sizeof A, 2, 12, 1, 16, 99u);
+      for (int i = 0; i < 6; ++i) {
+        float in[2] = { (float)i, (float)(i % 3) }, out[1] = { (float)i };
+        iris_record(k, in, out);
+      }
+      iris_train(k);
+      { float in[2] = { -2e38f, 0.0f }, out[1] = { 0.0f }; iris_record(k, in, out); }
+      { float in[2] = { 2e38f, 1.0f }, out[1] = { 1.0f }; iris_record(k, in, out); }
+      int ret_ok;
+      switch (t) {
+        case 0:  ret_ok = iris_continue(k, 50) == -1.0f; break;
+        case 1:  ret_ok = iris_continue_to_plateau(k, 0, 0, 0) == -1.0f; break;
+        case 2:  ret_ok = iris_train(k) == 0; break;
+        default: ret_ok = iris_train_begin(k, 0) == 1 && iris_train_slice(k, 50) == 0
+                          && !iris_train_busy(k); break;
+      }
+      /* the weights must be the ones the seed draws: reseed a snapshot of
+         the arena and compare, then put the arena back */
+      static float w_after[12 * 2 + 12 + 1 * 12 + 1];
+      memcpy(SNAP, A, sizeof A);
+      memcpy(w_after, k->w1, sizeof w_after);
+      iris_reseed(k, iris_seed(k));
+      const int seed_weights = memcmp(w_after, k->w1, sizeof w_after) == 0;
+      memcpy(A, SNAP, sizeof A);
+      float stress = iris_example_stress(k, 0);
+      const int ok = ret_ok && seed_weights && iris_get_status(k) == IRIS_NAN_TRAPPED
+                  && !iris_is_trained(k) && !k->fitted && iris_last_error(k) == 1.0f
+                  && stress == -1.0f && !iris_train_busy(k);
+      right += ok;
+      if (!ok && !wrong[0])
+        snprintf(wrong, sizeof wrong, " -- trainer %d: return %d, seed weights %d, status %d, "
+                 "trained %d, fitted %d, last error %g, stress %g",
+                 t, ret_ok, seed_weights, (int)iris_get_status(k), iris_is_trained(k),
+                 k->fitted, (double)iris_last_error(k), (double)stress);
+    }
+    snprintf(d, sizeof d, "%d of 4 gradient trainers returned -1 (iris_train 0) and left the "
+             "seed's unfitted start%s", right, wrong);
+    check("a not-a-number partway returns -1 and resets to the seed", right == 4, d);
   }
 
   if (fails) printf("\n  %d FAILING\n", fails);

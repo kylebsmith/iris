@@ -1218,12 +1218,14 @@ struct iris {
    iris_train_elm returns the number of ridge doublings it needed, so 0 is
    its BEST outcome and reads as false. The warm trainers return a
    measurement, and -1 is an ordinary non-zero float, so a refusal reads as
-   true. And one path answers with neither rule: when a warm trainer meets a
-   not-a-number partway through a run (demonstrations spread wider than the
-   largest float can span, say), it reseeds to a finite start, sets
-   IRIS_NAN_TRAPPED and returns 1.0, with iris_is_trained 0. iris_is_trained
-   reads one flag that every trainer sets on success and none sets otherwise,
-   so it gives the same answer whichever door you came in by. What it
+   true. One more path returns -1 without being a refusal: when a gradient
+   run meets a not-a-number partway (demonstrations spread wider than the
+   largest float can span, say), its fit is lost, so it resets the
+   instrument to its seed's starting weights, unfitted, sets
+   IRIS_NAN_TRAPPED and returns -1 (iris_train returns 0), with
+   iris_is_trained 0. iris_is_trained reads one flag that every trainer sets
+   on success and none sets otherwise, so it gives the same answer whichever
+   door you came in by. What it
    answers is whether the fit matches the demonstrations stored now: a call
    refused for a mistake in its arguments changes nothing, so an instrument
    trained before that call still reads 1 after it.
@@ -2123,8 +2125,9 @@ IRIS_API float iris_novelty(iris *k, const float *in) { if (!k) return -1.0f;
 
 /* Guard sweep, run once per epoch: a not-a-number or infinity in any weight
    (or in the epoch's error) means the numbers are gone, so report it and
-   recover to a finite state; a weight past IRIS_W_LIMIT means a divergence
-   in progress, so clamp it, report and stop. It costs one pass over the
+   recover to a finite state (iris_internal_trap_nan, below); a weight past
+   IRIS_W_LIMIT means a divergence in progress, so clamp it, report and
+   stop. It costs one pass over the
    weights per EPOCH, where backpropagation passes over them once per
    DEMONSTRATION, so it adds less than 1/n_ex to the work.                  */
 #ifndef IRIS_NO_GUARDS
@@ -2154,6 +2157,29 @@ IRIS_API int iris_internal_pinned(const iris *k) {
   for (int i = 0; i < nw; ++i)
     if (w[i] == IRIS_W_LIMIT || w[i] == -IRIS_W_LIMIT) return 1;
   return 0;
+}
+
+/* A NOT-A-NUMBER PARTWAY THROUGH A RUN. The stored demonstrations were all
+   finite when the run began (iris_internal_trainable), so a not-a-number
+   in the epoch's error or in a weight was made by the arithmetic itself:
+   demonstrations spread wider than a float can span, whose width overflows
+   to infinity (PART 5). The weights are then gone, so the run cannot hand
+   back a fit. It puts the instrument where iris_reseed(k, iris_seed(k))
+   puts it -- the starting weights the seed draws, the random state back at
+   the seed, velocities zero, not fitted and not trained, iris_last_error 1
+   -- empties the worst-demonstration ledger (PART 8f), which the failed
+   epoch filled with not-a-number, ends any sliced run, and reports
+   IRIS_NAN_TRAPPED. The trainer then returns -1, as it does when it
+   refuses, and iris_train returns 0. Unlike a refusal the call has changed
+   the instrument: it no longer plays its old fit, but the centre of the
+   demonstrated range (IRIS_NOT_FITTED), until a trainer succeeds. */
+IRIS_API float iris_internal_trap_nan(iris *k) {
+  iris_reseed(k, k->seed);
+  for (int i = 0; i < k->cap; ++i) k->ex_res[i] = 0.0f;
+  k->res_epochs = 0;
+  k->tr_running = 0;
+  k->status = IRIS_NAN_TRAPPED;
+  return -1.0f;
 }
 #endif
 
@@ -2287,11 +2313,14 @@ IRIS_API void iris_internal_begin_session(iris *k, int ceiling) {
      resume  : 0 = start a session (iris_internal_begin_session), run it and
                    end it -- a blocking call
                1 = continue the session already in k -- one slice of it
-   Returns the last epoch's mean squared error, or -1 if it refused. */
+   Returns the last epoch's mean squared error, or -1 if it refused or met
+   a not-a-number partway. */
 /* REFUSAL CONVENTION (one convention, whole library): a train call that did
    no training returns -1.0f and leaves `trained` alone, so a caller reading
    only the return value can tell a refusal from a repeat of the previous
-   run. */
+   run. A run that meets a not-a-number partway returns -1.0f too, having
+   reset the instrument to its seed's unfitted start
+   (iris_internal_trap_nan). */
 IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume,
                            iris_progress_fn cb, void *user) { if (!k) return -1.0f;
   /* Refuse before writing anything else. epochs <= 0 is "do nothing", not
@@ -2522,22 +2551,10 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
        activation this epoch, so it is a one-float summary of the network's
        numerical health; the weight sweep catches saturation-style divergence
        the error can't see (err stays finite while weights run away).        */
-    if (iris_internal_isbad(err)) {
-      iris_reseed(k, k->seed);                 /* finite again, deterministic */
-      k->status = IRIS_NAN_TRAPPED;
-      k->last_error = 1.0f;
-      k->tr_running = 0;
-      return 1.0f;
-    }
+    if (iris_internal_isbad(err)) return iris_internal_trap_nan(k);
     {
       int st = iris_internal_check_weights(k);
-      if (st == IRIS_NAN_TRAPPED) {
-        iris_reseed(k, k->seed);
-        k->status = IRIS_NAN_TRAPPED;
-        k->last_error = 1.0f;
-        k->tr_running = 0;
-        return 1.0f;
-      }
+      if (st == IRIS_NAN_TRAPPED) return iris_internal_trap_nan(k);
       if (st == IRIS_TRAINING_DIVERGED) {      /* clamped; stop and report */
         k->status = IRIS_TRAINING_DIVERGED;
         k->tr_running = 0;
@@ -2643,17 +2660,18 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
    Both refuse (-1) what every trainer refuses (iris_internal_trainable),
    and while a weight sits exactly on ±IRIS_W_LIMIT they refuse with
    IRIS_DIVERGED_STUCK on every call, that status being the one thing they
-   write; iris_train is the way out. One path answers with neither: a
-   not-a-number met partway through a run reseeds the instrument to a
-   finite, unfitted start, sets IRIS_NAN_TRAPPED and returns 1.0 (see the
-   failure rules above iris_get_status).
+   write; iris_train is the way out. A run that meets a not-a-number
+   partway also returns -1, but that one has changed the instrument: it is
+   back at its seed's starting weights, unfitted, with IRIS_NAN_TRAPPED (see
+   iris_internal_trap_nan and the failure rules above iris_get_status).
    -------------------------------------------------------------------------- */
 
 /* THE FIXED-EPOCH TRAINER: exactly `epochs` more epochs from the current
    weights, fewer only if the error floor or the divergence guard stops the
    run (iris_train_epochs_done says how many ran). Returns the last epoch's
    mean squared error, or -1 if it refused, which it also does for a budget
-   of zero or less. Mind THE HAZARD above: after deleting a take, call
+   of zero or less, or if it met a not-a-number partway, which leaves the
+   instrument at its seed's unfitted start (iris_internal_trap_nan). Mind THE HAZARD above: after deleting a take, call
    iris_train, not this.
 
    It matches Weka MultilayerPerceptron's per-weight update recursion and its
@@ -2691,7 +2709,8 @@ IRIS_API float iris_continue(iris *k, int epochs) { if (!k) return -1.0f;
    cb may be NULL; otherwise it is called every IRIS_CONV_WINDOW epochs with
    (user, epochs done, ceiling, error), and returning 0 from it ends the run
    there, leaving a usable, partly trained instrument. Returns the final mean
-   squared error, or -1 if it refused. Mind THE HAZARD above: after deleting
+   squared error, or -1 if it refused or met a not-a-number partway (as
+   iris_continue). Mind THE HAZARD above: after deleting
    a take, call iris_train, not this. */
 IRIS_API float iris_continue_to_plateau(iris *k, int ceiling, iris_progress_fn cb,
                                         void *user) { if (!k) return -1.0f;
@@ -2808,14 +2827,10 @@ IRIS_API int iris_train(iris *k) {
      what happens between takes, the escape is iris_continue(k, 400000) after
      this. That is a real choice with a real cost, which is why it is
      written here rather than made for you. */
-  /* ASK THE FLAG, NOT THE SIGN. A run that trapped a not-a-number partway
-     leaves a non-negative error behind while never fitting (it re-seeds to a
-     finite start and clears `trained`), so the sign of the error alone would
-     return 1 with iris_is_trained 0 and status 2, which Rule 1 says cannot
-     happen. k->trained is set by the run itself and is the same answer
-     iris_is_trained gives every other caller. */
-  { float e = iris_continue_to_plateau(k, 0, 0, 0);
-    return (e >= 0.0f && k->trained) ? 1 : 0; }
+  /* The run returns -1 both when it refuses and when it meets a
+     not-a-number partway (iris_internal_trap_nan), and a non-negative error
+     exactly when it fitted, which is when it sets `trained`. */
+  return iris_continue_to_plateau(k, 0, 0, 0) >= 0.0f ? 1 : 0;
 }
 
 
