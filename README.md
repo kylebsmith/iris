@@ -14,11 +14,16 @@ the C language, which every microcontroller compiler accepts.
 
 static unsigned char memory[IRIS_ARENA(2, 12, 3, 64)];   /* fixed, no malloc */
 
-iris *k = iris_init(memory, sizeof memory, 2, 12, 3, 64, /*seed=*/1234);
+int main(void) {
+  float gesture[2] = { 0.2f, 0.7f };               /* two sensor readings */
+  float sound[3] = { 440.0f, 0.5f, 0.1f };         /* three sound parameters */
+  iris *k = iris_init(memory, sizeof memory, 2, 12, 3, 64, /*seed=*/1234);
 
-iris_record(k, gesture, sound);        /* do this a few times */
-iris_train(k);                         /* fit them, starting from the seed */
-iris_predict(k, gesture, sound);       /* now play it */
+  iris_record(k, gesture, sound);      /* do this a few times */
+  iris_train(k);                       /* fit them, starting from the seed */
+  iris_predict(k, gesture, sound);     /* now play it */
+  return 0;
+}
 ```
 
 Recorded a bad take? `iris_delete_id(k, id)`, then `iris_train(k)` again.
@@ -28,6 +33,15 @@ deleted leaves nothing behind.
 ```sh
 cd examples && cc -std=c99 -O2 -Wall -Wextra -I.. -o min 00_minimal.c && ./min
 ```
+
+`cc` is your C compiler, run from a terminal. On macOS,
+`xcode-select --install` provides it; on Debian or Ubuntu,
+`sudo apt install gcc`; on Windows, use gcc under WSL (the Windows Subsystem
+for Linux) or MSYS2. For the Arduino example, `examples/iris_smallest/`, the
+library has to be installed first: in the Arduino IDE (its integrated
+development environment), Sketch > Include Library > Add .ZIP Library with a
+zip of this repository, or copy the repository folder into your
+`Arduino/libraries` folder.
 
 That example is short enough to read in one sitting and compiles with **zero
 warnings** under `-Wall -Wextra`. If you can write the block above, you can use
@@ -87,9 +101,8 @@ nice-to-have. It is the whole product.
 
 ## What it is
 
-`iris.h` is a single header of 4,505 lines, 1,290 of them code once comments
-and blank lines are stripped, implementing the interactive machine learning
-loop that Wekinator made standard in 2009, rebuilt for boards that have no
+`iris.h` is a single header, most of it explanation, implementing the
+interactive machine learning loop that Wekinator made standard in 2009, rebuilt for boards that have no
 operating system. The interface is 41 functions, listed with one line each at
 the top of the header.
 
@@ -396,7 +409,13 @@ whole public interface. Anything named `iris_internal_` can change or disappear
 in any release: do not call it.
 
 **The file format has its own number.** 0.2.0 writes format 7. Every later
-release reads every format from 7 on, for ever. A file from a newer release
+release reads every format from 7 on, for ever. A file loads into an
+instrument made with the same shape (inputs, hidden units, outputs) and a
+capacity at least the number of takes it holds; the shape is in the file, as
+three little-endian 32-bit numbers at bytes 16, 20 and 24, followed by the
+number of takes at byte 28 (the table in PART 9 of `iris.h`), so a program
+that receives a file it did not make can read them and call `iris_init` to
+match. A file from a newer release
 that this one does not understand is refused cleanly: `iris_load` returns 0 and
 the instrument you passed in is untouched. Formats 1 to 6 belong to the 0.1.0
 preview and are not read.
