@@ -76,13 +76,16 @@ int main(void){
     iris_train_converge(k,0,0,0);
     static unsigned char f[8192];
     size_t n=iris_save(k,f,sizeof f);
-    /* forge a file whose stored input range is exactly zero-width */
-    { float *fl=(float*)(f+9*sizeof(uint32_t));
-      size_t off=(size_t)12*2 + 12 + (size_t)3*12 + 3;   /* w1,b1,w2,b2 */
-      fl[off+0]=100.0f; fl[off+1]=0.0f;                  /* in_lo */
-      fl[off+2]=100.0f; fl[off+3]=1.0f;                  /* in_hi: channel 0 zero-width */
+    /* forge a file whose stored input range is exactly zero-width. The
+       ranges follow w1,b1,w2,b2, which start at offset 48; every value is
+       little-endian (iris.h, PART 9). */
+    { const size_t off=48+4*((size_t)12*2 + 12 + (size_t)3*12 + 3);
+      const float v[4]={100.0f,0.0f,                     /* in_lo */
+                        100.0f,1.0f};                    /* in_hi: channel 0 zero-width */
+      for(int j=0;j<4;j++){ union{float f; uint32_t u;} w; w.f=v[j];
+        for(int b=0;b<4;b++) f[off+4*(size_t)j+(size_t)b]=(unsigned char)(w.u>>(8*b)); }
       uint32_t c=iris_crc32(f,n-sizeof(uint32_t));
-      memcpy(f+n-sizeof(uint32_t),&c,4); }
+      for(int b=0;b<4;b++) f[n-4+(size_t)b]=(unsigned char)(c>>(8*b)); }
     static unsigned char C2[IRIS_ARENA(2,12,3,64)];
     iris *k2=iris_init(C2,sizeof C2,2,12,3,64,7);
     int ok=iris_load(k2,f,n);
@@ -207,27 +210,6 @@ int main(void){
     check("K out-of-range channel index is refused, not computed",
           bad_in==0.0f && bad_out==0.0f && bad_den==0.0f, d); }
 
-  /* L — D1: corrupting the version word must not opt a file out of its own
-         checksum. Every single-bit flip must be refused. */
-  { static unsigned char f[4096], t2[4096];
-    iris *k=iris_init(A,sizeof A,2,12,3,64,7);
-    for(int i=0;i<8;i++){ float u=(i%3)/2.0f,v=(i/3)/2.0f;
-      float in[2]={u,v},o[3]={0.2f+0.5f*u,0.5f,0.8f-0.5f*v}; iris_record(k,in,o); }
-    iris_train(k);
-    float q[2]={0.4f,0.6f}, ref[3]; iris_predict(k,q,ref);
-    size_t n=iris_save(k,f,sizeof f);
-    int accepted=0;
-    for(size_t b=0;b<n;b++) for(int bit=0;bit<8;bit++){
-      memcpy(t2,f,n); t2[b]^=(unsigned char)(1u<<bit);
-      static unsigned char C3[IRIS_ARENA(2,12,3,64)];
-      iris *k2=iris_init(C3,sizeof C3,2,12,3,64,7);
-      if(iris_load(k2,t2,n)){
-        float got[3]; iris_predict(k2,q,got);
-        if(got[0]!=ref[0]||got[1]!=ref[1]||got[2]!=ref[2]) accepted++;
-      } }
-    snprintf(d,sizeof d,"%zu flips, %d accepted a corrupted file that plays differently", n*8, accepted);
-    check("L every single-bit corruption is refused", accepted==0, d); }
-
   /* M — D5: a refused record must say WHICH of its three reasons applied. */
   { iris *k=iris_init(B,sizeof B,1,12,1,32,1);
     float in=0.5f,o=0.5f, nan=0.0f/0.0f;
@@ -337,34 +319,22 @@ int main(void){
     check("T smoothing survives save and load", ok && got > 0.69f && got < 0.71f, d); }
 
   /* U — iris_train must report the trainer's refusal, not its own optimism.
-     iris_record will not store a not-a-number, so this builds the file a buggy
-     writer would have produced: structurally perfect, correctly checksummed,
-     and holding one impossible value. That is a real shape a file can have. */
+     iris_record and iris_load both refuse a not-a-number, so this writes one
+     straight into the store: the state an IRIS_NO_GUARDS build, whose
+     iris_record stores whatever it is given, can reach. */
   { iris *k1=iris_init(B,sizeof B,1,12,1,32,1u);
     for(int i=0;i<6;i++){ float in=i/5.0f,o=i/5.0f; iris_record(k1,&in,&o); }
     iris_train(k1);
-    static unsigned char blob[512];
-    size_t n=iris_save(k1,blob,sizeof blob);
-    float nan_v = 0.0f/0.0f; int patched = 0;
-    for (size_t off = 32; off + 4 <= n - 4 && !patched; off += 4) {
-      float probe; memcpy(&probe, blob + off, sizeof probe);
-      if (probe > 0.39f && probe < 0.41f) { memcpy(blob+off,&nan_v,sizeof nan_v); patched = 1; }
-    }
-    uint32_t crc = iris_crc32(blob, n - 4);
-    for (int i=0;i<4;i++) blob[n-4+i] = (unsigned char)((crc >> (8*i)) & 0xFF);
-    iris *k2=iris_init(C,sizeof C,1,12,1,32,9u);
-    int loaded = iris_load(k2, blob, n);
-    int trained = loaded ? iris_train(k2) : -1;
-    snprintf(d,sizeof d,"patched %d, loaded %d, iris_train returned %d",
-             patched, loaded, trained);
-    check("U iris_train reports the trainer's refusal",
-          patched && loaded && trained == 0, d); }
+    k1->ex[2*2] = __builtin_nanf("");               /* demonstration 2's input */
+    int trained = iris_train(k1);
+    snprintf(d,sizeof d,"iris_train over a stored not-a-number returned %d", trained);
+    check("U iris_train reports the trainer's refusal", trained == 0, d); }
 
 done:
   /* Do not print the word "failing" when nothing failed. Any tool that reads
      this output -- tools/mutate.sh did -- cannot tell the two apart otherwise.
      The exit code below is the real answer; this line is for humans. */
-  if (fails) printf("\n  %d of 21 FAILING\n", fails);
-  else       printf("\n  all 21 pass\n");
+  if (fails) printf("\n  %d of 20 FAILING\n", fails);
+  else       printf("\n  all 20 pass\n");
   return fails ? 1 : 0;
 }

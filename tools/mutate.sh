@@ -103,9 +103,9 @@ run_mutation "remove the degenerate-range floor"            's/if \(k->in_hi\[i\
 
 echo
 echo "-- the file format --"
-run_mutation "skip the checksum on save"                    's/\*tail = iris_crc32\(buf, need - sizeof\(uint32_t\)\);/*tail = 0u;/'
-run_mutation "skip checksum verification on load"           's/if \(iris_crc32\(buf, bytes - sizeof\(uint32_t\)\) != stored\) return 0;/;/'
-run_mutation "stop writing the smoothing word"              's/\*sm = k->l2;/*sm = 0.0f;/'
+run_mutation "skip the checksum on save"                    's/iris_internal_put_u32\(p, iris_crc32\(b, need - 4u\)\);/iris_internal_put_u32(p, 0u);/'
+run_mutation "skip checksum verification on load"           's/if \(iris_crc32\(b, bytes - 4u\) != iris_internal_get_u32\(b \+ bytes - 4u\)\) return 0;/;/'
+run_mutation "stop writing the smoothing word"              's/iris_internal_put_f32\(b \+ 44, iris_get_smoothing\(k\)\);/iris_internal_put_f32(b + 44, 0.0f);/'
 
 echo
 echo "-- the reporting, and the two return conventions --"

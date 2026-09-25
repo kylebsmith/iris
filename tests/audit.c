@@ -60,22 +60,24 @@ static uint32_t fnv1a(const void *p, size_t n) {
   return h;
 }
 
-/* Reduce a saved file to the bytes that describe the INSTRUMENT, discarding
-   the file plumbing: the random-number word in the header, the trailing
-   smoothing word and the checksum. The version word is overwritten with a
-   fixed value (1), so the hash covers the shape, seed, weights, ranges,
-   demonstrations and identifiers, and nothing a change of file format can
-   move -- a hash that moves for bookkeeping reasons teaches you to re-pin it
-   without asking why. */
+/* Reduce a saved file (iris.h, PART 9) to the bytes that describe the
+   INSTRUMENT, discarding the file plumbing: magic, version, header size,
+   flags, the random-number word, the smoothing word and the checksum. What is
+   left is the shape, n_ex, seed and next_id (offsets 16 to 39), then the
+   weights, ranges, demonstrations and identifiers (offset 48 up to the
+   checksum), all little-endian -- nothing a change of file format can move,
+   because a hash that moves for bookkeeping reasons teaches you to re-pin it
+   without asking why.
+   The record opens with eight fixed bytes, 'E' 'W' 'E' 'K' 1 0 0 0, which
+   describe nothing: they are part of the byte sequence the pinned hash below
+   was taken over, so they stay. */
 static size_t instrument_bytes(unsigned char *buf, size_t n) {
-  uint32_t *h = (uint32_t *)buf;
-  if (n < 11 * sizeof(uint32_t)) return n;
-  n -= 2 * sizeof(uint32_t);                     /* smoothing word + checksum */
-  memmove(buf + 8 * sizeof(uint32_t), buf + 9 * sizeof(uint32_t),
-          n - 9 * sizeof(uint32_t));             /* the random-number word */
-  n -= sizeof(uint32_t);
-  h[1] = 1u;
-  return n;
+  static const unsigned char prefix[8] = { 'E', 'W', 'E', 'K', 1, 0, 0, 0 };
+  if (n < 52) return 0;
+  memmove(buf + 8, buf + 16, 24);                /* shape, n_ex, seed, next_id */
+  memmove(buf + 32, buf + 48, n - 52);           /* weights .. identifiers */
+  memcpy(buf, prefix, sizeof prefix);
+  return 32 + (n - 52);
 }
 
 #define NI 2
@@ -1040,22 +1042,27 @@ int main(void) {
     }
     iris_retrain_new(a, 4321, 100);
     static unsigned char blob[8 * 1024], evil[8 * 1024];
+    static unsigned char arena_before[sizeof arena_b];
     size_t n = iris_save(a, blob, sizeof blob);
-    float before[NO]; float probe[NI] = { 0.4f, 0.6f };
-    iris_predict(a, probe, before);
+    memcpy(arena_before, arena_b, sizeof arena_b);
     int refuse = 0, total = 0;
+    /* n_ex is the little-endian word at offset 28 (iris.h, PART 9). The
+       checksum is recomputed after each edit, so the count and length checks
+       decide, not the checksum. */
     /* (a) n_ex high byte -> huge/negative count */
-    memcpy(evil, blob, n); evil[23] = 0xFF;
+    memcpy(evil, blob, n); evil[31] = 0xFF;
+    { uint32_t c = iris_crc32(evil, n - 4);
+      for (int i = 0; i < 4; ++i) evil[n - 4 + i] = (unsigned char)(c >> (8 * i)); }
     total++; if (!iris_load(a, evil, n)) refuse++;
     /* (b) plausible n_ex, truncated body */
-    memcpy(evil, blob, n); evil[20] = (unsigned char)200;
+    memcpy(evil, blob, n); evil[28] = (unsigned char)200;
+    { uint32_t c = iris_crc32(evil, n - 4);
+      for (int i = 0; i < 4; ++i) evil[n - 4 + i] = (unsigned char)(c >> (8 * i)); }
     total++; if (!iris_load(a, evil, n)) refuse++;
     /* (c) body physically cut short */
     memcpy(evil, blob, n);
     total++; if (!iris_load(a, evil, n / 2)) refuse++;
-    float after[NO];
-    iris_predict(a, probe, after);
-    int intact = (memcmp(before, after, sizeof before) == 0) && iris_count(a) == 6;
+    int intact = memcmp(arena_before, arena_b, sizeof arena_b) == 0 && iris_count(a) == 6;
     ok("loader refuses corrupt counts and truncated bodies",
        refuse == total && intact,
        "%d/%d corruptions refused; instrument intact after refusals: %s",
