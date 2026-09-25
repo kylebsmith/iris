@@ -1,0 +1,68 @@
+name: nightly
+
+# Long runs that only report. Nothing here gates a merge: a crash that the
+# hour of loader fuzzing finds fails its job, so the failure is seen and the
+# input that caused it is kept, and the mutation run is a report that never
+# fails on a survivor.
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  fuzz-load-long:
+    name: fuzz-load (libFuzzer on iris_load, one hour)
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    env:
+      CC: clang
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends clang llvm
+          sudo sysctl -w vm.mmap_rnd_bits=28
+      - name: the corpus the last run grew
+        uses: actions/cache@v4
+        with:
+          path: build/fuzz-load/corpus
+          key: fuzz-load-corpus-${{ github.run_id }}
+          restore-keys: fuzz-load-corpus-
+      - name: fuzz iris_load past the checksum
+        run: sh build.sh fuzz-load 3600
+      - name: keep the input that failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-load-artifacts
+          path: build/fuzz-load/artifacts/
+          if-no-files-found: ignore
+
+  mutate:
+    name: mutate (400 seeded mutants of iris.h, a report)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      CC: gcc
+    steps:
+      - uses: actions/checkout@v4
+      - name: the mutation run
+        run: |
+          set -o pipefail
+          sh build.sh mutate --sample 400 --jobs 4 | tee mutation-report.txt
+      - name: keep the report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: mutation-report.txt
+          if-no-files-found: ignore
