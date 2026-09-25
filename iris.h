@@ -1544,7 +1544,16 @@ IRIS_API void iris_internal_span(const iris *k, int c, float *lo, float *hi) {
    changes nothing in 32-bit floating point, because the gap between
    representable numbers there is already wider, so the width stayed zero and
    every prediction became not-a-number. Measured: an absolute floor worked up
-   to 31.77 and failed from 32.72. */
+   to 31.77 and failed from 32.72.
+
+   A LIMIT, STATED RATHER THAN GUARDED. A width is a float, so demonstrations
+   that span more than the largest float, about 3.4e38 end to end (values
+   beyond about 1.7e38 on both sides of zero), give a width that overflows to
+   infinity. Normalising a demonstration at either end of such a range then
+   gives not-a-number, so training traps it and does not fit (measured: two
+   inputs, one demonstrated at -2e38 and 2e38; iris_train returns 0 with
+   IRIS_NAN_TRAPPED), and iris_save refuses an instrument holding such a range
+   (PART 9). No sensor reads numbers of that size. */
 IRIS_API void iris_fit_ranges(iris *k) { if (!k) return;
   if (k->n_ex == 0) return;
   for (int i = 0; i < k->n_in; ++i) {
@@ -2782,6 +2791,22 @@ IRIS_API float iris_suggest_smoothing(iris *k, void *scratch, size_t scratch_byt
    displaced output, and none of this has been checked against a recorded
    human gesture.
 
+   THE FLAG IS NOT SILENT ON CLEAN SESSIONS, AND IT CAN MISS. Measured with
+   `tests/elm.c measure` on the protocol of the note named below (12 hidden
+   units, 8 outputs, 200 clean sessions at each of 20, 50 and 100
+   demonstrations): after iris_train the largest clean margin is 3.23, 4.05
+   and 3.22, and 7, 15 and 6 of the 200 reach IRIS_STRESS_FLAG; after the
+   closed-form trainer, whose ledger is the miss that remains after its solve
+   (PART 8d), 25, 14 and 24 of 200 reach it, the largest 9.99. With one
+   output of one take offset by 0.05 to 0.40, iris_train ranks that take
+   first in 18 to 20 of 20 sessions, the closed-form ledger in 13 to 20 of 20
+   (13 to 15 at 20 demonstrations). So a flag is a take to listen to again,
+   not a take to delete unheard, and no flag does not prove every take is
+   good. A candidate improvement for the closed-form trainer, not built: the
+   leave-one-out residual, each demonstration's miss divided by one minus its
+   leverage (its diagonal entry of the solve's hat matrix), which the same
+   Cholesky factor gives in about n times (nh+1) squared operations.
+
    COST. sizeof(float) * cap in the arena -- 512 B at cap 128, 1 KB at cap 256
    -- and one float add per example per epoch, under 0.1% of the backprop work
    already being done for that example. Not free; that is the price.
@@ -2793,7 +2818,8 @@ IRIS_API float iris_suggest_smoothing(iris *k, void *scratch, size_t scratch_byt
 /* Fewer demonstrations than this and there is no crowd to disagree with. */
 #define IRIS_STRESS_MIN_EX 12
 /* Margin (worst / second-worst) at which a UI should say something out loud.
-   Above every clean-data margin measured at 20, 50 and 100 examples. */
+   Most clean sessions stay below it and some do not: see THE FLAG IS NOT
+   SILENT ON CLEAN SESSIONS above. */
 #define IRIS_STRESS_FLAG 2.5f
 
 /* Relative stress of one example: its integrated training error divided by
