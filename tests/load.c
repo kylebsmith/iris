@@ -369,11 +369,12 @@ static void rules(void) {
   /* Ranges: each rule on its own, inputs and outputs. */
   { struct { const char *name; size_t lo, hi; float vlo, vhi; int ok; } R[] = {
       { "input range inverted (lo > hi)",           L.in_lo,      L.in_hi,      0.5f, 0.25f, 0 },
-      { "input range of zero width",                L.in_lo,      L.in_hi,      0.5f, 0.5f,  0 },
+      { "input range of zero width at infinity",    L.in_lo,      L.in_hi,      __builtin_inff(), __builtin_inff(), 0 },
       { "input range whose width overflows",        L.in_lo + 4,  L.in_hi + 4, -3e38f, 3e38f, 0 },
       { "output range inverted (lo > hi)",          L.out_lo + 4, L.out_hi + 4, 0.8f, 0.2f,  0 },
       { "output range of zero width",               L.out_lo,     L.out_hi,     0.4f, 0.4f,  0 },
       { "output range whose width overflows",       L.out_lo + 8, L.out_hi + 8, -2e38f, 2e38f, 0 },
+      { "input range of zero width (a still input)", L.in_lo,     L.in_hi,      0.5f, 0.5f,  1 },
       { "input range one step wide",                L.in_lo,      L.in_hi,      1.0f, 1.00000012f, 1 },
       { "input range -1.5e38 to 1.5e38",            L.in_lo + 4,  L.in_hi + 4, -1.5e38f, 1.5e38f, 1 },
       { "output range one step wide",               L.out_lo,     L.out_hi,     1.0f, 1.00000012f, 1 },
@@ -807,7 +808,7 @@ int main(int argc, char **argv) {
   round_trip("round trip, 3-16-2 at full capacity",               (shape){ 3, 16, 2, 8 }, 8, 0.7f, 1);
   round_trip("round trip, the maxima (32-64-16)",
              (shape){ IRIS_MAX_IN, IRIS_MAX_HID, IRIS_MAX_OUT, 6 }, 6, 1.0f, 2);
-  round_trip("round trip, one demonstration (every range floored)", (shape){ 2, 12, 3, 4 }, 1, 0.0f, 1);
+  round_trip("round trip, one demonstration (inputs still, outputs floored)", (shape){ 2, 12, 3, 4 }, 1, 0.0f, 1);
   save_after_record();
   unfitted_and_emptied();
   after_load_at_rest();

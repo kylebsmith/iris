@@ -155,7 +155,7 @@ static const char *rules_broken(const iris *k) {
       for (size_t i = 0; i < len[a]; ++i)
         if (bad(arr[a][i]) || arr[a][i] > IRIS_W_LIMIT || arr[a][i] < -IRIS_W_LIMIT) return "weight"; }
   for (int i = 0; i < k->n_in; ++i)
-    if (bad(k->in_lo[i]) || bad(k->in_hi[i]) || !(k->in_lo[i] < k->in_hi[i]) || bad(k->in_hi[i] - k->in_lo[i])) return "input range";
+    if (bad(k->in_lo[i]) || bad(k->in_hi[i]) || !(k->in_lo[i] <= k->in_hi[i]) || bad(k->in_hi[i] - k->in_lo[i])) return "input range";
   for (int o = 0; o < k->n_out; ++o)
     if (bad(k->out_lo[o]) || bad(k->out_hi[o]) || !(k->out_lo[o] < k->out_hi[o]) || bad(k->out_hi[o] - k->out_lo[o])) return "output range";
   for (size_t i = 0; i < (size_t)k->n_ex * (size_t)(k->n_in + k->n_out); ++i) if (bad(k->ex[i])) return "demonstration";

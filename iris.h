@@ -3351,7 +3351,9 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
          44  smoothing                            f32      finite, 0 to 1
          48  w1, b1, w2, b2                       f32s     finite, magnitude at most
                                                            IRIS_W_LIMIT
-          .  in_lo, in_hi, out_lo, out_hi         f32s     finite, lo < hi, and
+          .  in_lo, in_hi                         f32s     finite, lo <= hi, and
+                                                           hi - lo finite
+          .  out_lo, out_hi                       f32s     finite, lo < hi, and
                                                            hi - lo finite
           .  demonstrations, each one n_in        f32s     finite
              inputs then n_out outputs
@@ -3382,10 +3384,14 @@ IRIS_API int iris_retrain_elm_new(iris *k, uint32_t seed, float lam0,
      - A weight past IRIS_W_LIMIT is past the clamp backpropagation enforces
        (see the note at IRIS_W_LIMIT), and a unit driven that hard is
        saturated anyway.
-     - lo < hi, strictly: a range of zero width makes the normalisation in
-       PART 5 divide by zero. iris_fit_ranges never leaves one -- it gives a
-       channel that never moved a small width of its own -- so a file that
-       carries one did not come from this library.
+     - An input range may have zero width, an output range may not. An
+       input that never moved during the demonstrations is stored with
+       in_hi = in_lo, and iris_norm_in reads it as 0 (PART 5), so that is a
+       range this library writes. An output that never moved is given a small
+       width of its own by iris_fit_ranges, because the output scaling in
+       PART 5 divides by the width, so a file carrying an output range of
+       zero width did not come from this library. Either way lo must not pass
+       hi, and the width must be a finite number.
      - An identifier that repeats would make "delete #3" ambiguous, and one
        at or above next_id would be handed out again by the next record.
 
@@ -3511,12 +3517,13 @@ IRIS_API size_t iris_internal_file_bytes(const iris *k, uint32_t n_ex) {
   return IRIS_FILE_HEADER + 4u * (floats + (size_t)n_ex) + 4u;
 }
 
-/* One stored range: both ends finite, lo strictly below hi, and a width that
-   is itself a finite number. Two tests are enough for all of that: lo < hi is
-   false when either end is not-a-number, and hi - lo is infinite whenever an
-   end that passed it is infinite. */
-IRIS_API int iris_internal_range_ok(float lo, float hi) {
-  return lo < hi && !iris_isbad(hi - lo);
+/* One stored range: both ends finite, lo below hi -- or equal to it when
+   zero_width_ok is set, which the input ranges are (see the table above) --
+   and a width that is itself a finite number. Two tests are enough for all of
+   that: the comparison is false when either end is not-a-number, and hi - lo
+   is infinite or not-a-number whenever an end that passed it is infinite. */
+IRIS_API int iris_internal_range_ok(float lo, float hi, int zero_width_ok) {
+  return (zero_width_ok ? lo <= hi : lo < hi) && !iris_isbad(hi - lo);
 }
 
 /* EVERY RULE IN THE TABLE ABOVE, reading the file and writing nothing. It
@@ -3557,11 +3564,11 @@ IRIS_API int iris_internal_file_ok(const iris *k, const unsigned char *b, size_t
   }
   for (i = 0; i < ni; ++i)                       /* in_lo[i] against in_hi[i] */
     if (!iris_internal_range_ok(iris_internal_get_f32(p + 4 * i),
-                                iris_internal_get_f32(p + 4 * (ni + i)))) return 0;
+                                iris_internal_get_f32(p + 4 * (ni + i)), 1)) return 0;
   p += 8 * ni;
   for (i = 0; i < no; ++i)                     /* out_lo[i] against out_hi[i] */
     if (!iris_internal_range_ok(iris_internal_get_f32(p + 4 * i),
-                                iris_internal_get_f32(p + 4 * (no + i)))) return 0;
+                                iris_internal_get_f32(p + 4 * (no + i)), 0)) return 0;
   p += 8 * no;
   for (i = 0; i < (size_t)n_ex * (ni + no); ++i, p += 4)
     if (iris_isbad(iris_internal_get_f32(p))) return 0;
