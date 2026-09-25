@@ -167,8 +167,8 @@
    x86; RISC-V and PowerPC; and WebAssembly, the format web browsers run.
    ============================================================================ */
 
-#ifndef IRIS_H
-#define IRIS_H
+#ifndef IRIS_INTERACTIVE_ML_H
+#define IRIS_INTERACTIVE_ML_H
 
 /* ============================================================================
    The whole interface
@@ -200,6 +200,8 @@
                                           more), or 0 if refused
      int  iris_count(k)                   how many are stored
      int  iris_capacity(k)                how many can be
+     int  iris_shape(k, &in, &hid, &out, &cap)
+                                          the shape iris_init took; 1, or 0
      int  iris_get(k, idx, in, out)       copy one out; its identifier, or 0
      int  iris_index_of(k, id)            position of an identifier, or -1
      int  iris_id_at(k, idx)              identifier at a position, or -1
@@ -640,10 +642,14 @@ typedef enum {
                                 is a different run. This status means a
                                 diverged gradient run and nothing else.      */
   IRIS_STORE_FULL        = 6,  /* iris_record was refused because the store is
-                                full. A poisoned reading reports
+                                full: delete a demonstration to make room.
+                                When the instrument has handed out every
+                                identifier it can (IRIS_ID_LIMIT), deleting
+                                does not help, and only a new instrument
+                                records again. A poisoned reading reports
                                 IRIS_NAN_TRAPPED instead: both return 0, and
-                                the status tells a student whether to delete
-                                a demonstration or to check the sensor.      */
+                                the status tells a student whether to make
+                                room or to check the sensor.                 */
   IRIS_SOLVE_COLLAPSED   = 7   /* the closed-form solve (iris_train_elm)
                                 produced a constant mapping: the fit is valid
                                 and installed, but it ignores the inputs. On
@@ -1496,6 +1502,28 @@ IRIS_API float iris_get_smoothing(const iris *k) { if (!k) return 0.0f; return k
 IRIS_API int iris_count(const iris *k) { if (!k) return 0; return k->n_ex; }
 IRIS_API int iris_capacity(const iris *k) { if (!k) return 0; return k->cap; }
 
+/* The shape the instrument was made with, the four numbers iris_init took.
+   Any pointer may be null, to skip that number. Returns 1, or 0 for a null
+   instrument, leaving the outputs untouched.
+
+   A refused iris_load looks the same whatever the reason, and this is how to
+   tell a wrong shape from a damaged file. A saved file carries its shape as
+   three little-endian 32-bit numbers at bytes 16, 20 and 24 (inputs, hidden
+   units, outputs) and its number of takes at byte 28 (the table in PART 9).
+   If they differ from what iris_shape reports, or the takes exceed the
+   capacity, the file belongs to another instrument: make one of that shape
+   with iris_init and load into it. If they match and iris_load still refuses,
+   the file is damaged, was written by a later format, or carries identifiers
+   past this machine's IRIS_ID_LIMIT (a laptop's file on an AVR board). */
+IRIS_API int iris_shape(const iris *k, int *n_in, int *n_hid, int *n_out, int *cap) {
+  if (!k) return 0;
+  if (n_in)  *n_in  = k->n_in;
+  if (n_hid) *n_hid = k->n_hid;
+  if (n_out) *n_out = k->n_out;
+  if (cap)   *cap   = k->cap;
+  return 1;
+}
+
 /* Identifiers have to fit the machine's int, because they are returned as
    one. They are stored as int32_t, and iris_record, iris_get, iris_id_at,
    iris_classify_1nn and iris_worst_example_id hand them back as int. Where
@@ -1503,11 +1531,15 @@ IRIS_API int iris_capacity(const iris *k) { if (!k) return 0; return k->cap; }
    as -32,768, 65,535 as -1 (the answer that means "none") and 65,536 as 0
    (the answer that means "refused"), and iris_delete_id could not name them.
    So an identifier stays below this: 2^31 - 1, the largest int32_t, where int
-   has 32 bits, and 32,767 where it has 16. iris_record refuses once next_id
-   reaches it, and iris_load refuses a file whose next_id is not below it, so
-   a laptop's file with identifiers past 32,766 does not load on an AVR board
-   (PART 9). Identifiers are never reused, so it counts every take ever
-   recorded into the instrument, deleted ones included. */
+   has 32 bits, and 32,767 where it has 16. Identifiers are never reused, so
+   the limit counts every take ever recorded into the instrument, deleted
+   ones and those before an iris_clear included: on an AVR board an
+   instrument records 32,766 takes in its life. After the last one,
+   iris_record refuses with IRIS_STORE_FULL, and the instrument still plays,
+   saves and loads; to record again, start a new instrument with iris_init
+   and record its takes afresh. iris_load refuses a file whose next_id is
+   above the limit, so a laptop's file with identifiers past 32,766 does not
+   load on an AVR board (PART 9). */
 #define IRIS_ID_LIMIT ((int32_t)(sizeof(int) >= 4 ? 0x7FFFFFFFL : 0x7FFFL))
 
 /* Lengths: unchecked, as everywhere (see the interface block). Reads exactly
@@ -1517,7 +1549,7 @@ IRIS_API int iris_record(iris *k, const float *in, const float *out) { if (!k) r
   /* Identifiers are never reused, so they can run out: once next_id reaches
      IRIS_ID_LIMIT, handing it out would give an identifier the return type
      cannot carry, or adding one would overflow. */
-  if (k->next_id >= IRIS_ID_LIMIT) return 0;
+  if (k->next_id >= IRIS_ID_LIMIT) { k->status = IRIS_STORE_FULL; return 0; }
 
 #ifndef IRIS_NO_GUARDS
   /* Refuse a poisoned demonstration at the door. A not-a-number or an
@@ -1911,7 +1943,15 @@ IRIS_API float iris_internal_centre(const iris *k, int o) {
     if (k->n_ex == 0) return 0.0f;
     iris_internal_span(k, k->n_in + o, &lo, &hi);
   }
-  return 0.5f * lo + 0.5f * hi;
+  {
+    /* The substitute a refusal plays must itself be a number. iris_record
+       and iris_load keep non-finite values out of the store, but the store is
+       memory the caller can write, and on an instrument never fitted the
+       centre is read from it: a poisoned take would make the substitute the
+       poison. 0 is what an empty instrument plays. */
+    const float c = 0.5f * lo + 0.5f * hi;
+    return iris_internal_isbad(c) ? 0.0f : c;
+  }
 }
 
 /* The playing call. It writes the network's activations and, when it has
@@ -3781,7 +3821,7 @@ IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_b
          28  n_ex, demonstrations stored          u32      at most the receiver's
                                                            capacity
          32  seed                                 u32      not 0
-         36  next_id, the next identifier         u32      1 <= next_id <
+         36  next_id, the next identifier         u32      1 <= next_id <=
                                                            IRIS_ID_LIMIT
          40  random-number state                  u32      not 0
          44  smoothing                            f32      finite, 0 to 1
@@ -3812,12 +3852,12 @@ IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_b
        IRIS_MAX_IN (see the note above iris_internal_shape_fits).
      - Unsigned throughout: a count with its top bit set is a large number
        that fails "at most the capacity", not a negative one that passes it.
-     - next_id stays below IRIS_ID_LIMIT -- 2^31 - 1, the largest int32_t,
-       where int has 32 bits, and 32,767 where it has 16 -- so a loaded
-       instrument has at least one identifier left to hand out, and every
-       identifier fits the int the functions return it as. iris_record hands
-       out next_id and adds one, and refuses once next_id reaches the limit,
-       so the count never overflows. The limit belongs to the receiving
+     - next_id is at most IRIS_ID_LIMIT -- 2^31 - 1, the largest int32_t,
+       where int has 32 bits, and 32,767 where it has 16 -- so every
+       identifier, being below next_id, fits the int the functions return it
+       as. iris_record hands out next_id and adds one, and refuses once
+       next_id reaches the limit, so the count never overflows; an instrument
+       at the limit saves, loads and plays, and records no more. The limit belongs to the receiving
        machine, like the capacity: the bytes mean the same everywhere.
      - A weight need only be finite. IRIS_W_LIMIT is backpropagation's
        detector for a runaway run, not a rule about valid instruments: the
@@ -3997,7 +4037,7 @@ IRIS_API int iris_internal_file_ok(const iris *k, const unsigned char *b, size_t
   if (iris_internal_crc32(b, bytes - 4u) != iris_internal_get_u32(b + bytes - 4u)) return 0;
   if (iris_internal_get_u32(b + 32) == 0u) return 0;                   /* seed */
   next_id = iris_internal_get_u32(b + 36);
-  if (next_id < 1u || next_id >= (uint32_t)IRIS_ID_LIMIT) return 0;
+  if (next_id < 1u || next_id > (uint32_t)IRIS_ID_LIMIT) return 0;
   if (iris_internal_get_u32(b + 40) == 0u) return 0;       /* random state */
   { const float s = iris_internal_get_f32(b + 44);
     if (iris_internal_isbad(s) || s < 0.0f || s > 1.0f) return 0; }
@@ -4553,4 +4593,4 @@ IRIS_API int iris_classify_1nn(iris *k, const float *in, float *out) { if (!k) r
 #pragma GCC pop_options
 #endif
 
-#endif /* IRIS_H */
+#endif /* IRIS_INTERACTIVE_ML_H */

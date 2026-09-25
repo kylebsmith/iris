@@ -45,7 +45,7 @@ Interface:
   `iris_forward_norm`, `iris_shape_fits`, `iris_zero_velocity`, `iris_artanh`,
   `iris_logit`, `iris_crc32`), are renamed `iris_internal_*`. Anything with
   that prefix is outside the interface and may change in any release. The
-  interface is the 41 functions listed at the top of `iris.h`.
+  interface is the functions listed at the top of `iris.h`.
 - `iris_predict`, `iris_knn_predict`, `iris_classify_1nn` and `iris_novelty`
   take `iris *`, not `const iris *`: the first three write the status, and the
   neighbour functions and `iris_novelty` fit the ranges of an instrument never
@@ -109,6 +109,13 @@ Removed:
 - `experimental/iris_lbfgs.h`, the limited-memory quasi-Newton trainer (L-BFGS,
   the Broyden–Fletcher–Goldfarb–Shanno method with a bounded history), with its
   checks and hashes. It had no caller outside the tests.
+- `extras/` (the output ports and the browser benchmark) and the historical
+  study documents and decision records in `docs/`, which are archived in
+  [iris-studies](https://github.com/kylebsmith/iris-studies). Nothing in
+  `iris.h` used them.
+- The include guard is `IRIS_INTERACTIVE_ML_H`, not `IRIS_H`, which another
+  project's `iris.h` also uses: including both now fails loudly instead of
+  silently skipping one.
 
 Behaviour changes on the playing path:
 
@@ -204,13 +211,20 @@ Behaviour changes on the playing path:
   the neighbour paths.
 - `iris_record` could overflow a signed integer handing out the last
   identifier, reachable through a loaded file; it now refuses once
-  identifiers run out.
+  identifiers run out, with `IRIS_STORE_FULL`.
+- An instrument that had handed out its last identifier could not be saved,
+  because the loader refused its `next_id`. `iris_load` now accepts a
+  `next_id` equal to `IRIS_ID_LIMIT`, so such an instrument saves, loads and
+  plays; it records no more.
+- On an instrument never fitted whose store was poisoned directly in memory,
+  a refused prediction played the poison as its substitute; the substitute
+  is now 0 whenever the centre is not a number.
 - Where `int` is 16 bits (the Arduino AVR boards) identifiers above 32,767
   came back from `iris_record`, `iris_get`, `iris_id_at`, `iris_classify_1nn`
   and `iris_worst_example_id` negative, as -1 or as 0. Identifiers now stay
   below `IRIS_ID_LIMIT`, 32,767 there and 2^31 - 1 elsewhere: `iris_record`
-  refuses at the limit, and `iris_load` refuses a file whose `next_id` is not
-  below it, so a file with identifiers past 32,766 does not load on an AVR
+  refuses at the limit, and `iris_load` refuses a file whose `next_id` is
+  above it, so a file with identifiers past 32,766 does not load on an AVR
   board.
 - The square root called the C library's `sqrtf` on the ESP32-S3 and, for
   negative inputs, on GCC (the GNU Compiler Collection) and Linux clang, so
@@ -229,6 +243,11 @@ Behaviour changes on the playing path:
   that differs from the header's.
 
 ### Additions
+
+- `iris_shape(k, &n_in, &n_hid, &n_out, &cap)` reads back the shape an
+  instrument was made with. With the shape a saved file carries at bytes 16
+  to 28, it tells a file for another instrument from a damaged one, which a
+  refused `iris_load` does not.
 
 - Tests: `tests/load.c` (every rule of the save format, round trips, a
   committed format 7 instrument in `tests/golden/` played back bit for bit),

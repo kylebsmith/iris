@@ -340,6 +340,28 @@ int main(void) {
           o == 3.0f && knn_status == IRIS_NAN_TRAPPED && id == -1 && c == 3.0f
           && iris_get_status(k) == IRIS_NAN_TRAPPED, d); }
 
+  /* ---- a poisoned store on an instrument never fitted -------------------
+     Never trained, so the substitute a refusal plays is the centre of the
+     demonstrated output range, read from the store. With a not-a-number
+     written into one take's output, that centre is not a number, and the
+     substitute must be 0 instead, from iris_predict, iris_knn_predict and
+     iris_classify_1nn alike (the neighbour functions refuse because their
+     own fitting of the ranges meets the poison). */
+  { static unsigned char M[IRIS_ARENA(2, 8, 1, 8)];
+    iris *k = iris_init(M, sizeof M, 2, 8, 1, 8, 1u);
+    float a[2] = { 0.0f, 0.0f }, ya = 2.0f, b[2] = { 1.0f, 1.0f }, yb = 4.0f;
+    iris_record(k, a, &ya); iris_record(k, b, &yb);
+    k->ex[2] = __builtin_nanf("");
+    const float q[2] = { 0.5f, 0.5f };
+    float p = -1.0f, o = -1.0f, c = -1.0f;
+    iris_predict(k, q, &p);
+    iris_knn_predict(k, q, &o, 2);
+    iris_classify_1nn(k, q, &c);
+    snprintf(d, sizeof d, "predict %g, k-NN %g, 1-NN %g", (double)p, (double)o, (double)c);
+    check("a poisoned store never fitted plays 0, not the poison",
+          p == 0.0f && o == o && c == c && (o == 0.0f || (o >= 2.0f && o <= 4.0f))
+          && (c == 0.0f || c == 2.0f || c == 4.0f), d); }
+
   /* ---- a still input is ignored: moving it changes nothing ---------------
      For inputs resting at 500 (a sensor mid-range), 4095 (a 12-bit rail), 0
      (a switch) and -2.5, trained both ways, every playing function must give

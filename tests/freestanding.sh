@@ -129,7 +129,7 @@ int iris_probe(void) {
     out[0] = in[0]; out[1] = in[1]; out[2] = in[0] - in[1];
     SINKI += iris_record(k, in, out);
   }
-  SINKI += iris_count(k) + iris_capacity(k);
+  SINKI += iris_count(k) + iris_capacity(k) + iris_shape(k, 0, 0, 0, 0);
   SINKI += iris_index_of(k, 3) + iris_id_at(k, 2) + iris_get(k, 1, in, out);
   iris_internal_fit_ranges(k);
   SINKF += iris_internal_norm_in(k, 0, SINKF) + iris_internal_norm_out(k, 0, SINKF)

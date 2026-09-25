@@ -64,7 +64,8 @@ static void s_setup(void) {
 static void s_record(void) {
   float in[NI], out[NO];
   demos(K, 40);
-  SINK = (float)(iris_count(K) + iris_capacity(K) + iris_get(K, 3, in, out)
+  SINK = (float)(iris_count(K) + iris_capacity(K) + iris_shape(K, 0, 0, 0, 0)
+               + iris_get(K, 3, in, out)
                + iris_index_of(K, 4) + iris_id_at(K, 5));
 }
 static void s_train(void)    { SINK = (float)iris_train(K) + (float)iris_is_trained(K) + iris_last_error(K); }

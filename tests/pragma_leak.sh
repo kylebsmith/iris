@@ -103,7 +103,7 @@ void w_learning(void)   { iris_internal_set_learning(K, IN[0], IN[1]); }
 void w_l2(void)         { iris_internal_set_l2(K, F); F = iris_internal_get_l2(K); }
 void w_smoothing(void)  { iris_set_smoothing(K, F); F = iris_get_smoothing(K); }
 void w_record(void)     { I = iris_record(K, IN, OUT); }
-void w_store(void)      { I = iris_count(K); I = iris_capacity(K);
+void w_store(void)      { I = iris_count(K); I = iris_capacity(K); I = iris_shape(K, 0, 0, 0, 0);
                           I = iris_index_of(K, I); I = iris_id_at(K, I);
                           I = iris_get(K, I, IN, OUT); }
 void w_ranges(void)     { iris_internal_fit_ranges(K); }

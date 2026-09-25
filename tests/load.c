@@ -14,8 +14,9 @@
        is refused -- and every byte of the receiving arena, its status
        included, is the same afterwards. Boundary values that obey the rules
        are loaded, so no rule can pass by refusing everything;
-     - a file with the largest next_id leaves one identifier to hand out,
-       and the record after it refuses instead of overflowing;
+     - a file one identifier short of the limit hands out that one, the
+       record after it refuses with IRIS_STORE_FULL instead of overflowing,
+       and the instrument, its identifiers spent, saves, loads and plays;
      - a buffer at any alignment works;
      - a translation unit that shrank IRIS_MAX_IN refuses an instrument too
        big for it instead of overflowing its own stack;
@@ -289,7 +290,6 @@ static const edit REFUSE[] = {
   { "next_id 0",                                at_next, 0u },
   { "next_id equal to the largest id (8)",      at_next, 8u },
   { "next_id below stored ids (5)",             at_next, 5u },
-  { "next_id 2^31 - 1",                         at_next, 0x7FFFFFFFu },
   { "next_id 2^31",                             at_next, 0x80000000u },
   { "next_id 2^32 - 1",                         at_next, 0xFFFFFFFFu },
   { "random-number state 0",                    at_rng, 0u },
@@ -320,6 +320,7 @@ static const edit ACCEPT[] = {
   { "seed 2^32 - 1",                            at_seed, 0xFFFFFFFFu },
   { "next_id one above the largest id (9)",     at_next, 9u },
   { "next_id 2^31 - 2",                         at_next, 0x7FFFFFFEu },
+  { "next_id 2^31 - 1, every identifier spent", at_next, 0x7FFFFFFFu },
   { "random-number state 1",                    at_rng, 1u },
   { "smoothing 0",                              at_smooth, 0u },
   { "smoothing -0",                             at_smooth, 0x80000000u },
@@ -617,20 +618,22 @@ static void unfitted_and_emptied(void) {
     /* With no identifiers stored, only the next_id rule itself can refuse. */
     wr32(f, 36, 0u); fixcrc(f, n);
     int zero = refused_cleanly(S2, f, n);
-    wr32(f, 36, 0x7FFFFFFFu); fixcrc(f, n);
+    wr32(f, 36, 0x80000000u); fixcrc(f, n);
     int top = refused_cleanly(S2, f, n);
     wr32(f, 36, 1u); fixcrc(f, n);
     int one = accepted(S2, f, n);
-    snprintf(d, sizeof d, "next_id 0 %s, 2^31 - 1 %s, 1 %s", zero ? "refused" : "ACCEPTED",
+    snprintf(d, sizeof d, "next_id 0 %s, 2^31 %s, 1 %s", zero ? "refused" : "ACCEPTED",
              top ? "refused" : "ACCEPTED", one ? "loaded" : "REFUSED");
     check("with no demonstrations, next_id is still checked", zero && top && one, d);
     free(f); drop(&a); drop(&b); }
 }
 
-/* The largest next_id a file may carry leaves exactly one identifier to hand
-   out. The record after that one must refuse rather than overflow next_id
-   (UndefinedBehaviorSanitizer reports the overflow), and the instrument, its
-   identifiers spent, no longer saves. */
+/* A file one short of IRIS_ID_LIMIT leaves exactly one identifier to hand
+   out. The record after that one must refuse with IRIS_STORE_FULL rather
+   than overflow next_id (UndefinedBehaviorSanitizer reports the overflow).
+   The instrument, its identifiers spent, must still save, and the file must
+   load into a fresh instrument that plays the same bits and records no
+   more. */
 static void identifiers_run_out(void) {
   char d[200];
   box a = make(S2, 1234u);
@@ -643,14 +646,24 @@ static void identifiers_run_out(void) {
   const int last = iris_record(b.k, in, out);
   const int count = iris_count(b.k);
   const int none = iris_record(b.k, in, out);
+  const int st = (int)iris_get_status(b.k);
   unsigned char *g = (unsigned char *)xmalloc(iris_save_size(b.k));
   const size_t saved = iris_save(b.k, g, iris_save_size(b.k));
-  snprintf(d, sizeof d, "load %d, last identifier %d, then %d (count %d -> %d, status %d), save %zu",
-           ok, last, none, count, iris_count(b.k), (int)iris_get_status(b.k), saved);
-  check("identifiers run out: the next record refuses",
+  box c = make(S2, 5u);
+  const int back = saved && iris_load(c.k, g, saved);
+  float pb[3], pc[3];
+  iris_predict(b.k, in, pb); iris_predict(c.k, in, pc);
+  const int same = memcmp(pb, pc, sizeof pb) == 0;
+  const int again = iris_record(c.k, in, out);
+  snprintf(d, sizeof d, "load %d, last identifier %d, then %d (count %d -> %d, status %d), "
+           "save %zu, reload %d plays the same %d, records %d (status %d)",
+           ok, last, none, count, iris_count(b.k), st, saved, back, same, again,
+           (int)iris_get_status(c.k));
+  check("identifiers run out: the next record refuses, and it still saves",
         ok && last == 0x7FFFFFFE && none == 0 && count == 3 && iris_count(b.k) == 3
-        && iris_get_status(b.k) == IRIS_STATUS_OK && saved == 0, d);
-  free(g); free(f); drop(&a); drop(&b);
+        && st == IRIS_STORE_FULL && saved == iris_save_size(b.k) && back && same
+        && again == 0 && iris_get_status(c.k) == IRIS_STORE_FULL, d);
+  free(g); free(f); drop(&a); drop(&b); drop(&c);
 }
 
 static void save_side(void) {
@@ -840,6 +853,26 @@ int main(int argc, char **argv) {
   flips("flips refused at the maxima (a bit in every byte)",
         (shape){ IRIS_MAX_IN, IRIS_MAX_HID, IRIS_MAX_OUT, 3 }, 3, 0);
   fixture(golden);
+
+  /* iris_shape reports what iris_init took, skips a null pointer, and
+     refuses a null instrument without writing; the shape it reports is the
+     one a saved file carries at bytes 16 to 24. */
+  { char d[160];
+    box a = make(S2, 3u);
+    demos(a.k, S2, 4, 0);
+    size_t n = 0; unsigned char *f = save(a.k, &n);
+    int ni = -1, nh = -1, no = -1, cap = -1, x = -7;
+    const int r = iris_shape(a.k, &ni, &nh, &no, &cap);
+    const int r_skip = iris_shape(a.k, 0, &x, 0, 0);
+    int y = -7; const int r_null = iris_shape(0, &y, &y, &y, &y);
+    snprintf(d, sizeof d, "returned %d: %d-%d-%d cap %d; with nulls %d (hidden %d); "
+             "null instrument %d, untouched %d", r, ni, nh, no, cap, r_skip, x, r_null, y == -7);
+    check("iris_shape reports the shape the file carries",
+          r == 1 && ni == S2.ni && nh == S2.nh && no == S2.no && cap == S2.cap
+          && (uint32_t)ni == rd32(f, 16) && (uint32_t)nh == rd32(f, 20)
+          && (uint32_t)no == rd32(f, 24)
+          && r_skip == 1 && x == S2.nh && r_null == 0 && y == -7, d);
+    free(f); drop(&a); }
 
   if (fails) printf("\n  %d of %d FAILING\n\n", fails, checks);
   else       printf("\n  all %d pass\n\n", checks);

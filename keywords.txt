@@ -13,6 +13,7 @@ iris_get_status	KEYWORD2
 iris_record	KEYWORD2
 iris_count	KEYWORD2
 iris_capacity	KEYWORD2
+iris_shape	KEYWORD2
 iris_get	KEYWORD2
 iris_index_of	KEYWORD2
 iris_id_at	KEYWORD2

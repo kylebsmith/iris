@@ -23,7 +23,7 @@ positive control that must be counted. Hard limits: 32 inputs, 16 outputs, 64
 hidden units (8 minimum), and 4,096 demonstrations (255 where `size_t` is 16
 bits), all overridable downwards before the `#include`.
 
-The public interface is 41 functions, three types (`iris`, `iris_status`,
+The public interface is a list of functions, three types (`iris`, `iris_status`,
 `iris_progress_fn`) and a handful of macros, listed at the top of the header.
 Every other function is named `iris_internal_*` and is outside the version
 promise.

@@ -60,6 +60,7 @@ int main(void) {
   { int bad = 0;
     if (iris_count(0)          != 0)    bad++;
     if (iris_capacity(0)       != 0)    bad++;
+    if (iris_shape(0, 0, 0, 0, 0) != 0) bad++;
     if (iris_record(0, in, out) != 0)   bad++;
     if (iris_train(0)          != 0)    bad++;
     if (iris_is_trained(0)     != 0)    bad++;

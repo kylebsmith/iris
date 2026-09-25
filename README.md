@@ -428,7 +428,10 @@ capacity at least the number of takes it holds; the shape is in the file, as
 three little-endian 32-bit numbers at bytes 16, 20 and 24, followed by the
 number of takes at byte 28 (the table in PART 9 of `iris.h`), so a program
 that receives a file it did not make can read them and call `iris_init` to
-match. A file from a newer release
+match; `iris_shape` reads the same four numbers back from an instrument, so
+a refused load can be told apart: a shape that differs means another
+instrument's file, a shape that matches means a damaged file, one from a later format, or, on
+an AVR board, one whose identifiers run past what that board's `int` holds. A file from a newer release
 that this one does not understand is refused cleanly: `iris_load` returns 0 and
 the instrument you passed in is untouched. Formats 1 to 6 belong to the 0.1.0
 preview and are not read.
