@@ -367,12 +367,20 @@ int main(int argc, char **argv) {
         int r = iris_train_elm(k, 1e-4f, scratch, sizeof scratch);
         cases++;
         if (!refused_cleanly(r)) { bad++; snprintf(which, sizeof which, "poisoned demonstration %d", p); }
-        /* a bad lam0 as well: the mistake in the call is found first, and
-           leaves the status alone */
+        /* a mistake in the call as well -- a bad lam0, too little scratch,
+           no scratch -- is found first, and leaves the status alone */
         snap(k, IRIS_RIDGE_ESCALATED);
         r = iris_train_elm(k, -1.0f, scratch, sizeof scratch);
         cases++;
         if (!refused_cleanly(r)) { bad++; snprintf(which, sizeof which, "poisoned demonstration %d, lam0 -1", p); }
+        snap(k, IRIS_RIDGE_ESCALATED);
+        r = iris_train_elm(k, 1e-4f, scratch, need - 1);
+        cases++;
+        if (!refused_cleanly(r)) { bad++; snprintf(which, sizeof which, "poisoned demonstration %d, one byte short", p); }
+        snap(k, IRIS_RIDGE_ESCALATED);
+        r = iris_train_elm(k, 1e-4f, 0, sizeof scratch);
+        cases++;
+        if (!refused_cleanly(r)) { bad++; snprintf(which, sizeof which, "poisoned demonstration %d, no scratch", p); }
         /* the reroll door sets a new seed before it solves, and must put the
            old one back when the solve refuses */
         snap(k, IRIS_RIDGE_ESCALATED);
@@ -609,9 +617,9 @@ int main(int argc, char **argv) {
 
     /* the check still fires: an enormous ridge, and a frozen layer that ignores
        its inputs, both map every gesture to one sound. The report is a status
-       of its own, IRIS_SOLVE_COLLAPSED, and it must never lock the warm
-       trainers, which refuse only a diverged gradient run: one warm epoch
-       from the collapsed solve trains. */
+       of its own, IRIS_SOLVE_COLLAPSED, whose value 7 a sketch may print, and
+       it must never lock the warm trainers, which refuse only a diverged
+       gradient run: one warm epoch from the collapsed solve trains. */
     const struct recipe *r = &R[0];
     iris *c1 = iris_init(arena, sizeof arena, r->ni, r->nh, r->no, 64, r->seed);
     record_recipe(c1, r);
@@ -627,7 +635,8 @@ int main(int argc, char **argv) {
              "gain_w 0: ret %d status %d, then a warm epoch %g status %d",
              r1, s1, (double)warm1, r2, s2, (double)warm2, s2w);
     check("a real collapse is reported, and warm training still runs",
-          r1 >= 0 && s1 == IRIS_SOLVE_COLLAPSED && warm1 >= 0.0f
+          (int)IRIS_SOLVE_COLLAPSED == 7
+          && r1 >= 0 && s1 == IRIS_SOLVE_COLLAPSED && warm1 >= 0.0f
           && r2 >= 0 && s2 == IRIS_SOLVE_COLLAPSED && warm2 >= 0.0f
           && s2w != IRIS_DIVERGED_STUCK, d);
   }
