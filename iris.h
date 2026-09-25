@@ -497,8 +497,12 @@ typedef enum {
                                 doubled to factor. Result is valid; the data
                                 was harder than usual.                       */
   IRIS_NOT_FITTED        = 4,  /* iris_predict was called on an instrument that
-                                has never been fitted. Outputs are the centre of
-                                the demonstrated range (0 with no
+                                has never been fitted, or a playing function
+                                (iris_predict, iris_knn_predict,
+                                iris_classify_1nn) on one whose shape is too
+                                big for this translation unit's working
+                                arrays (see iris_shape_fits). Outputs are the
+                                centre of the demonstrated range (0 with no
                                 demonstrations), never the forward pass over
                                 random weights.                              */
   IRIS_STORE_FULL        = 6,  /* iris_record was refused because the store is
