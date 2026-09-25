@@ -374,6 +374,84 @@ int main(void) {
     check("an empty store gives 0 from both neighbour functions",
           a[0] == 0.0f && a[1] == 0.0f && b[0] == 0.0f && b[1] == 0.0f && id == -1, d); }
 
+  /* ---- iris_delete_nearest measures in normalised units -------------------
+     Two takes, (500 mm, -2 g) and (510 mm, +2 g), the hand at (506 mm, -2 g):
+     the first take is nearest in fractions of each range (0.36 against
+     1.16), though the second is nearer in raw units (32 against 36). */
+  { iris *k = iris_init(A, sizeof A, 2, 12, 2, 64, 1u);
+    float a_in[2] = { 500.0f, -2.0f }, b_in[2] = { 510.0f, 2.0f }, o[2] = { 0.0f, 0.0f };
+    const int id_a = iris_record(k, a_in, o);
+    iris_record(k, b_in, o);
+    float hand[2] = { 506.0f, -2.0f };
+    const int named = iris_classify_1nn(k, hand, 0);
+    const int deleted = iris_delete_nearest(k, hand);
+    const int a_gone = iris_index_of(k, id_a) < 0;
+    snprintf(d, sizeof d, "1-NN names id %d, delete returned %d, id %d deleted %d",
+             named, deleted, id_a, a_gone);
+    check("delete_nearest deletes the take the classifier names",
+          named == id_a && deleted == 1 && a_gone && iris_count(k) == 1, d); }
+
+  /* The same property over random stores: scaling one input by 1000 (in the
+     demonstrations and in the hand) must not change which take is deleted,
+     and it must be the one iris_classify_1nn names. */
+  { int differ = 0, not_named = 0, trials = 0;
+    lcg_state = 4242u;
+    for (int t = 0; t < 300; ++t) {
+      float ins[12][2], outs[12][2];
+      for (int r = 0; r < 12; ++r) {
+        ins[r][0] = lcg01(); ins[r][1] = lcg01() * 4.0f - 2.0f;
+        outs[r][0] = (float)r; outs[r][1] = 0.0f;
+      }
+      float hand[2] = { lcg01() * 1.2f - 0.1f, lcg01() * 4.4f - 2.2f };
+      float hand_s[2] = { hand[0] * 1000.0f, hand[1] };
+      iris *x = iris_init(A, sizeof A, 2, 12, 2, 64, 1u);
+      iris *y = iris_init(B, sizeof B, 2, 12, 2, 64, 1u);
+      for (int r = 0; r < 12; ++r) {
+        float s_in[2] = { ins[r][0] * 1000.0f, ins[r][1] };
+        iris_record(x, ins[r], outs[r]);
+        iris_record(y, s_in, outs[r]);
+      }
+      const int named = iris_classify_1nn(x, hand, 0);
+      iris_delete_nearest(x, hand);
+      iris_delete_nearest(y, hand_s);
+      int gone_x = -1, gone_y = -1;
+      for (int id = 1; id <= 12; ++id) {
+        if (iris_index_of(x, id) < 0) gone_x = id;
+        if (iris_index_of(y, id) < 0) gone_y = id;
+      }
+      if (gone_x != gone_y) differ++;
+      if (gone_x != named) not_named++;
+      trials++;
+    }
+    snprintf(d, sizeof d, "%d trials: scaled store deleted a different take %d, "
+             "deleted take not the classifier's %d", trials, differ, not_named);
+    check("delete_nearest ignores the units an input is measured in",
+          differ == 0 && not_named == 0, d); }
+
+  /* ---- a finite query far outside still finds its neighbours --------------
+     With ranges 1 wide, a hand 1e16 away has a squared distance near 1e32:
+     finite, and far past any big round number a search might start from.
+     All three neighbour paths must answer it normally, and a not-a-number
+     must still find nothing. */
+  { iris *k = iris_init(A, sizeof A, 2, 12, 2, 64, 1u);
+    for (int r = 0; r < 4; ++r) {
+      float in[2] = { (float)(r & 1), (float)(r >> 1) }, out[2] = { (float)r, 1.0f };
+      iris_record(k, in, out);
+    }
+    float far[2] = { 1e16f, 0.0f }, o[2];
+    k->status = IRIS_STATUS_OK;
+    const int id = iris_classify_1nn(k, far, o);
+    const int nn_ok = id > 0 && iris_get_status(k) == IRIS_STATUS_OK;
+    iris_knn_predict(k, far, o, 2);
+    const int knn_ok = iris_get_status(k) == IRIS_STATUS_OK && !iris_isbad(o[0]);
+    const int del = iris_delete_nearest(k, far);
+    float nanq[2] = { __builtin_nanf(""), 0.0f };
+    const int del_nan = iris_delete_nearest(k, nanq);
+    snprintf(d, sizeof d, "1-NN id %d ok %d, k-NN ok %d, delete far %d, delete NaN %d, "
+             "count %d", id, nn_ok, knn_ok, del, del_nan, iris_count(k));
+    check("a finite query far outside still finds its nearest",
+          nn_ok && knn_ok && del == 1 && del_nan == 0 && iris_count(k) == 3, d); }
+
   /* ---- the playing functions take a non-const instrument -----------------
      The pointers above only compile against the non-const signatures; this
      plays once through each so the check is also exercised at run time. */

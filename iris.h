@@ -1156,21 +1156,30 @@ IRIS_API int iris_delete_index(iris *k, int idx) { if (!k) return 0;
 IRIS_API int iris_delete_id(iris *k, int id) { if (!k) return 0; return iris_delete_index(k, iris_index_of(k, id)); }
 IRIS_API int iris_delete_last(iris *k) { if (!k) return 0; return iris_delete_index(k, k->n_ex - 1); }
 
+/* The nearest-demonstration search, defined in PART 10 beside the neighbour
+   functions that share it. */
+IRIS_API int iris_internal_nearest(iris *k, const float *in);
+
 /* Delete whichever example is closest to where you are standing right now.
    On a device with three buttons this is how you say "not THAT one" without
-   needing to read a list. */
+   needing to read a list.
+
+   "Closest" is measured exactly as iris_classify_1nn measures it, with each
+   input counted in fractions of its demonstrated range and the
+   earliest-recorded demonstration winning a tie, so this deletes the one the
+   classifier would name. In raw units a millimetre sensor would outvote a
+   g-force sensor: with takes at (500 mm, -2 g) and (510 mm, +2 g) and the
+   hand at (506 mm, -2 g), the raw squared distances are 36 and 32, which
+   picks the second take, while in fractions of each range they are 0.36 and
+   1.16 and the first take is the one you are standing on.
+
+   Deletes nothing, and returns 0, when the store is empty or the reading is
+   not finite. On an instrument that has never been fitted it fits the ranges
+   first, as the neighbour functions do. */
 /* LENGTHS, same rule as iris_predict and just as unchecked.
    Reads exactly n_in floats from `in`. */
 IRIS_API int iris_delete_nearest(iris *k, const float *in) { if (!k) return 0;
-  int best = -1; float best_d = 1e30f;
-  const int stride = k->n_in + k->n_out;
-  for (int r = 0; r < k->n_ex; ++r) {
-    const float *row = k->ex + (size_t)r * stride;
-    float d = 0.0f;
-    for (int i = 0; i < k->n_in; ++i) { float t = row[i] - in[i]; d += t * t; }
-    if (d < best_d) { best_d = d; best = r; }
-  }
-  return iris_delete_index(k, best);
+  return iris_delete_index(k, iris_internal_nearest(k, in));
 }
 
 IRIS_API void iris_clear(iris *k) {
@@ -3130,6 +3139,44 @@ IRIS_API void iris_internal_neighbour_scale(const iris *k, float *inv) {
   }
 }
 
+/* The squared distance from `in` to one stored row, every input counted in
+   fractions of its range by the scale above. */
+IRIS_API float iris_internal_distance2(const iris *k, const float *inv,
+                                       const float *row, const float *in) {
+  float d = 0.0f;
+  for (int i = 0; i < k->n_in; ++i) {
+    const float t = (row[i] - in[i]) * inv[i];
+    d += t * t;
+  }
+  return d;
+}
+
+/* THE NEAREST DEMONSTRATION: the index of the stored row closest to `in`, the
+   earliest-recorded on a tie (strict <, the Weka rule), or -1 when there is
+   none -- an empty store, a shape too big for this translation unit, or a
+   query whose distance to every row is not finite (a not-a-number reading,
+   or one so far out that its square overflows). The search starts at the
+   largest finite float, so every smaller distance counts however far outside
+   the demonstrations the query is. Like iris_knn_predict it fits the ranges
+   of an instrument that has never been fitted.
+
+   iris_classify_1nn and iris_delete_nearest (PART 4) both use it, so the
+   demonstration you delete by standing on it is the one the classifier
+   names. */
+IRIS_API int iris_internal_nearest(iris *k, const float *in) {
+  if (!iris_shape_fits(k) || k->n_ex == 0) return -1;
+  if (!k->fitted) iris_fit_ranges(k);
+  float inv[IRIS_MAX_IN];
+  iris_internal_neighbour_scale(k, inv);
+  const int stride = k->n_in + k->n_out;
+  int best = -1; float best_d = IRIS_FLT_MAX;
+  for (int r = 0; r < k->n_ex; ++r) {
+    const float d = iris_internal_distance2(k, inv, k->ex + (size_t)r * stride, in);
+    if (d < best_d) { best_d = d; best = r; }
+  }
+  return best;
+}
+
 /* k-NN inverse-squared-distance-weighted regression. k neighbours (default
    choice: 3), weight 1/(d^2 + guard) each. Standing exactly on a
    demonstration gives that row a weight of ~1e9 — recall exact to float
@@ -3148,12 +3195,11 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
     k->status = IRIS_NOT_FITTED;
     return;
   }
-  /* The distance measure needs the input ranges, and those are only set by a
-     fit. Called on a recorded-but-never-trained instrument this silently used
-     the default range of 0..1 and gave a quietly wrong answer. Fit them here:
-     it is the same work iris_fit_ranges does, it depends on nothing but the
-     demonstrations, and a caller who has to remember an ordering rule will
-     eventually forget it. */
+  /* The distance needs input ranges, and an instrument that has never been
+     fitted has none of its own: iris_init's 0..1 describes nothing it was
+     shown. So they are fitted here from the demonstrations -- the same work
+     iris_fit_ranges does, depending on nothing else -- rather than leaving
+     the caller an ordering rule to forget. */
   if (!k->fitted && k->n_ex > 0) iris_fit_ranges(k);
   const int NIn = k->n_in, NOut = k->n_out;
   if (k->n_ex == 0) { for (int o = 0; o < NOut; ++o) out[o] = 0.0f; return; }
@@ -3170,15 +3216,10 @@ IRIS_API void iris_knn_predict(iris *k, const float *in, float *out, int kk) { i
      and gcc-15 at -O2 and -O3 warned that bi might be read uninitialised. */
   int   bi[IRIS_KNN_MAXK];
   float bd[IRIS_KNN_MAXK];
-  for (int n = 0; n < IRIS_KNN_MAXK; ++n) { bi[n] = -1; bd[n] = 1e30f; }
+  for (int n = 0; n < IRIS_KNN_MAXK; ++n) { bi[n] = -1; bd[n] = IRIS_FLT_MAX; }
 
   for (int r = 0; r < k->n_ex; ++r) {
-    const float *row = k->ex + (size_t)r * stride;
-    float d = 0.0f;
-    for (int i = 0; i < NIn; ++i) {
-      float t = (row[i] - in[i]) * inv[i];
-      d += t * t;
-    }
+    const float d = iris_internal_distance2(k, inv, k->ex + (size_t)r * stride, in);
     /* strict < : on a tie the earlier example keeps its slot (Weka rule) */
     int p = kk;
     while (p > 0 && d < bd[p - 1]) --p;
@@ -3276,36 +3317,18 @@ IRIS_API int iris_classify_1nn(iris *k, const float *in, float *out) { if (!k) r
     k->status = IRIS_NOT_FITTED;
     return -1;
   }
-  /* Same reason as iris_knn_predict: the distance measure needs the input
-     ranges, and only a fit sets them. Without this, a classifier called on a
-     recorded-but-never-trained instrument used the default 0..1 range and
-     could return the wrong class with a healthy status. */
-  if (!k->fitted && k->n_ex > 0) iris_fit_ranges(k);
   const int NIn = k->n_in, NOut = k->n_out;
   if (k->n_ex == 0) {                 /* nothing to snap to: 0, as iris_predict */
     if (out) for (int o = 0; o < NOut; ++o) out[o] = 0.0f;
     return -1;
   }
-  float inv[IRIS_MAX_IN];
-  iris_internal_neighbour_scale(k, inv);
-  const int stride = NIn + NOut;
-  int best = -1; float best_d = 1e30f;
-  for (int r = 0; r < k->n_ex; ++r) {
-    const float *row = k->ex + (size_t)r * stride;
-    float d = 0.0f;
-    for (int i = 0; i < NIn; ++i) {
-      float t = (row[i] - in[i]) * inv[i];
-      d += t * t;
-    }
-    if (d < best_d) { best_d = d; best = r; }
-  }
+  int best = iris_internal_nearest(k, in);   /* fits a never-fitted instrument */
 #ifndef IRIS_NO_GUARDS
-  /* A non-finite query makes every comparison false, so nothing is ever
-     chosen. `best` used to start at 0, which meant a disconnected sensor
-     reliably returned the FIRST demonstration and its identifier as though
-     they were a real answer, with a healthy status — for a classifier, that
-     is a confident wrong class every time. Starting at -1 and refusing here
-     matches iris_knn_predict, which has always guarded this case. */
+  /* A query whose distance to every demonstration is not finite -- a
+     disconnected sensor reading not-a-number -- has no nearest row. Answering
+     with the first demonstration would give a classifier a confident wrong
+     class and a healthy status, so it refuses instead, as iris_knn_predict
+     does: the substitute, and IRIS_NAN_TRAPPED. */
   if (best < 0) {
     if (out) for (int o = 0; o < NOut; ++o) out[o] = iris_internal_centre(k, o);
     k->status = IRIS_NAN_TRAPPED;
@@ -3315,7 +3338,7 @@ IRIS_API int iris_classify_1nn(iris *k, const float *in, float *out) { if (!k) r
   if (best < 0) best = 0;
 #endif
   if (out) {
-    const float *row = k->ex + (size_t)best * stride;
+    const float *row = k->ex + (size_t)best * (NIn + NOut);
     for (int o = 0; o < NOut; ++o) out[o] = row[NIn + o];
 #ifndef IRIS_NO_GUARDS
     /* Verbatim means verbatim for every healthy value — but a NaN stored in
