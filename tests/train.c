@@ -26,8 +26,9 @@
    never by dividing by zero, so -fsanitize=float-divide-by-zero can run over
    this file.
 
-   Build and run, from the repository root:
-     cc -std=c99 -O2 -Wall -Wextra -I. -o build/train tests/train.c && ./build/train
+   Build and run, from the repository root (build/ is not tracked, so a fresh
+   checkout has to make it):
+     mkdir -p build && cc -std=c99 -O2 -Wall -Wextra -I. -o build/train tests/train.c && ./build/train
    The exit status is non-zero if any check fails.
    ========================================================================= */
 #include "iris.h"
