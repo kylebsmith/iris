@@ -11,9 +11,9 @@ number iris computed. `run.py` replays the recipe in the reference and compares.
 The reference computes in binary64, the 64-bit floating-point format with 53
 significant bits. iris computes in binary32, with 24. The two therefore agree
 only up to binary32's rounding, and every tolerance below is derived from that
-rounding, calibrated by measuring it, or set and then checked against both. Throughout, u = 2⁻²⁴ is binary32's
-unit roundoff: a correctly rounded binary32 operation is wrong by at most u
-relative to its exact result.
+rounding, calibrated by measuring it, or set and then checked against both.
+Throughout, u = 2⁻²⁴ is binary32's unit roundoff: a correctly rounded binary32
+operation is wrong by at most u relative to its exact result.
 
 ## Running it
 
@@ -25,11 +25,11 @@ python3 tests/reference/run.py --quick    # every check, no task table: about 70
 
 It runs from any directory and finds `iris.h` from its own location. It builds
 `export.c` with `$CC` (default `cc`) at `-std=c99 -O2 -Wall -Wextra -Werror`
-into a temporary directory, or into `--workdir DIR`, where each recipe's output
-then stays to be read. That output is JSON (JavaScript Object Notation, a
-plain-text data format). `--only NAME` runs the recipes whose names contain
-NAME; `--seeds` and `--demos` size the task table; `--cc` names another
-compiler.
+into a temporary directory, removed when the run ends, or into `--workdir DIR`,
+where each recipe's output then stays to be read. That output is JSON
+(JavaScript Object Notation, a plain-text data format). `--only NAME` runs the
+recipes whose names contain NAME; `--seeds` and `--demos` size the task table;
+`--cc` names another compiler.
 
 It prints one line per check, PASS or FAIL, with the number the verdict rests
 on. The exit status is 1 if any check failed and 2 if the export could not be
@@ -69,7 +69,7 @@ nothing into the repository. The times above were measured on an Apple M4 Max.
 | noisy | 2-12-3 | 30 random points of the same function, noise 0.05 | 77 | 0 | 12,000, plateau; 50 warm | noisy data |
 | noisy-smoothing | 2-12-3 | the same | 77 | 0.5 | 4,000, plateau; 50 warm | weight decay |
 | plateau-edge | 2-12-3 | 20 random points, noise 0.03 | 6 | 0 | 10,000, plateau | two plateau tests just above the tolerance |
-| sensors | 3-16-3 | 25: millimetres, g, and an input held at 500; hertz, 0 to 127, and an output held at 64 | 4242 | 0.15 | 4,000, plateau; 50 warm | raw units, a still input, the output floor |
+| sensors | 3-16-3 | 25: millimetres, g, and an input held at 500; hertz, a controller value on the 0 to 127 scale, and an output held at 64 | 4242 | 0.15 | 4,000, plateau; 50 warm | raw units, a still input, the output floor |
 | grid | 2-12-1 | 9 on a 3 × 3 grid | 9 | 0 | 6,040, error floor; 50 warm | the error-floor stop, and exact ties for the neighbours |
 | classes | 5-12-4 | 40: millimetres, g, an input held at 3.3, and two inputs either side of the still-input threshold; a class label 0 to 3, two continuous outputs, and one held at 440 | – | – | not trained | the neighbour samplers on an instrument that fits its own ranges; the still-input threshold |
 

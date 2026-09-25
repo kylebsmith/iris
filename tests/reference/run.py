@@ -15,8 +15,10 @@ run. README.md explains every check and derives every tolerance.
 """
 
 import argparse
+import atexit
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -725,8 +727,13 @@ def main():
     ap.add_argument("--only", help="run only the recipes whose names contain this")
     args = ap.parse_args()
 
-    workdir = args.workdir or tempfile.mkdtemp(prefix="iris-reference-")
-    os.makedirs(workdir, exist_ok=True)
+    if args.workdir:
+        workdir = args.workdir
+        os.makedirs(workdir, exist_ok=True)
+    else:
+        # removed at exit: every run writes about 80 megabytes of JSON
+        workdir = tempfile.mkdtemp(prefix="iris-reference-")
+        atexit.register(shutil.rmtree, workdir, True)
     print(f"iris against its binary64 reference (numpy {np.__version__})")
     exe = build_export(args.cc, workdir)
     rep = Report()

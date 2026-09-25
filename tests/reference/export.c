@@ -147,7 +147,8 @@ static void print_epoch(const iris *k, int first) {
 
 /* tests/audit.c's instrument_bytes: the saved file without its plumbing
    (magic, version, header size, flags, random state, smoothing, checksum),
-   behind the eight fixed bytes that hash was first taken with. */
+   behind the eight fixed bytes that open the byte sequence the pinned hash
+   is taken over. */
 static uint32_t instrument_hash(unsigned char *buf, size_t n) {
   static const unsigned char prefix[8] = { 'E', 'W', 'E', 'K', 1, 0, 0, 0 };
   uint32_t h = 2166136261u;
