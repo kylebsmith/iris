@@ -1359,7 +1359,14 @@ IRIS_API void iris_internal_zero_velocity(iris *k) { if (!k) return;
    closed-form trainer (PART 8d). The random state starts again from the new
    seed. The new starting weights replace the old ones at once, so if the
    trainer then refuses -- no demonstrations, say -- the instrument is left
-   unfitted and plays as one (IRIS_NOT_FITTED) until a trainer succeeds. */
+   unfitted and plays as one (IRIS_NOT_FITTED) until a trainer succeeds.
+
+   A sliced run in flight ends here, as it does at iris_clear, a closed-form
+   solve and a load: its remaining slices would train the new seed's weights
+   inside the old run's session, with its shuffle, its epoch count and its
+   plateau reference, and give an instrument that neither seed reproduces.
+   iris_train_slice returns 0 from then on; iris_train or iris_train_begin
+   starts the run for the new seed. */
 IRIS_API void iris_reseed(iris *k, uint32_t seed) { if (!k) return;
   k->seed = seed ? seed : 1u;
   k->rng.s = k->seed;
@@ -1374,6 +1381,7 @@ IRIS_API void iris_reseed(iris *k, uint32_t seed) { if (!k) return;
   k->fitted  = 0;          /* random weights are not a fit */
   k->last_error = 1.0f;
   k->status = IRIS_STATUS_OK;
+  k->tr_running = 0;
 }
 
 /* The learning rate and momentum every instrument starts with, 0.10 and 0.85,
@@ -2209,10 +2217,9 @@ IRIS_API int iris_internal_pinned(const iris *k) {
    the instrument: it no longer plays its old fit, but the centre of the
    demonstrated range (IRIS_NOT_FITTED), until a trainer succeeds. */
 IRIS_API float iris_internal_trap_nan(iris *k) {
-  iris_reseed(k, k->seed);
+  iris_reseed(k, k->seed);                 /* which also ends a sliced run */
   for (int i = 0; i < k->cap; ++i) k->ex_res[i] = 0.0f;
   k->res_epochs = 0;
-  k->tr_running = 0;
   k->status = IRIS_NAN_TRAPPED;
   return -1.0f;
 }

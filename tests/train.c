@@ -43,6 +43,8 @@
         delete, and a delete followed by a record, which leaves the count as
         it was -- and restarts its plateau window, so the edit is not read as
         a plateau that ends the run at the next window test.
+    12. iris_reseed ends a sliced run in flight: no later slice trains the
+        new seed's weights inside the old run.
 
    Not-a-number and infinity are built with __builtin_nanf and __builtin_inff,
    never by dividing by zero, so -fsanitize=float-divide-by-zero can run over
@@ -758,6 +760,31 @@ int main(void) {
     }
     snprintf(d, sizeof d, "%d of 4 runs went on past the window test after the edit%s", right, first);
     check("a sliced run restarts its window after any edit", right == 4, d);
+  }
+
+  /* ---- 12. a reseed ends a sliced run -----------------------------------
+     A reroll button pressed while a sliced run is going. After iris_reseed
+     the run must be over: iris_train_busy 0, and a slice returns 0 having
+     changed no byte, so the instrument holds exactly the new seed's
+     starting weights until a trainer runs. iris_train then gives the
+     instrument a fresh one with that seed and those demonstrations gives. */
+  {
+    iris *k = lived_in(2, 12, 3, 32, 14, 21u);
+    iris_train_begin(k, 0);
+    iris_train_slice(k, 300);
+    iris_reseed(k, 42u);
+    const int busy = iris_train_busy(k);
+    memcpy(SNAP, A, sizeof A);
+    const int more = iris_train_slice(k, 500);
+    const int still = same_arena();
+    iris_train(k);
+    memcpy(RA, A, sizeof A);
+    memcpy(A, SNAP, sizeof A);           /* the same demonstrations, seed 42 */
+    iris_train(k);
+    const int fresh = memcmp(RA, A, sizeof A) == 0;
+    snprintf(d, sizeof d, "busy after the reseed %d, a slice then returned %d and changed "
+             "nothing %d; iris_train gives the seed-42 instrument %d", busy, more, still, fresh);
+    check("iris_reseed ends a sliced run in flight", !busy && !more && still && fresh, d);
   }
 
   if (fails) printf("\n  %d FAILING\n", fails);
