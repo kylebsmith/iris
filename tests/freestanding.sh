@@ -39,9 +39,9 @@
 # Section 3 below rebuilds without each flag and prints what comes back, so
 # a flag that stops being needed shows up (as a NOTE, not a failure).
 #
-# ON THE ESP32-S3 THE LIST IS NOT EMPTY. Every entry but one comes from
-# libgcc, the compiler's own support library; the one C library function is
-# memcpy (xtensa-esp32s3-elf-gcc, the flags above, -O0, -O2 and -Os):
+# ON THE ESP32-S3 THE LIST IS NOT EMPTY. Every entry comes from libgcc, the
+# compiler's own support library, and none from the C library
+# (xtensa-esp32s3-elf-gcc, the flags above, -O0, -O2 and -Os):
 #   the playing path (init, record, train, predict, novelty, neighbours,
 #   delete, clear):    __divsf3 and nothing else. The processor has divide
 #                      step instructions but no single divide instruction,
@@ -51,10 +51,10 @@
 #                      double-precision routines behind the leave-one-out
 #                      sweep iris_loo_error and iris_suggest_smoothing share
 #                      (its double accumulator, and the comparison that skips
-#                      an output whose demonstrations never moved), and
-#                      memcpy, which GCC for this processor uses to copy the
-#                      constant five-entry table in iris_suggest_smoothing
-#                      onto the stack.
+#                      an output whose demonstrations never moved).
+#                      iris_suggest_smoothing's five-entry table of settings
+#                      is static const, so GCC for this processor no longer
+#                      copies it onto the stack with memcpy.
 # Section 5 requires exactly these lists, the ones the masthead of iris.h
 # states, so a symbol that appears or disappears fails here until the
 # masthead and EVERY below are brought up to date together.
@@ -315,7 +315,7 @@ else
   XF="-std=c99 -ffreestanding -fno-stack-protector -fno-tree-loop-distribute-patterns -mlongcalls"
   # every function: the list the masthead of iris.h states, in nm's order
   EVERY=$(printf '%s\n' __divsf3 __adddf3 __divdf3 __extendsfdf2 __floatsidf \
-    __ledf2 __muldf3 __subdf3 __truncdfsf2 memcpy | sort -u | tr '\n' ' ' | sed 's/ *$//')
+    __ledf2 __muldf3 __subdf3 __truncdfsf2 | sort -u | tr '\n' ' ' | sed 's/ *$//')
   for O in -O0 -O2 -Os; do
     if ! "$XT" $XF $O -I"$ROOT" -c "$T/play.c" -o "$T/x.o" 2> "$T/err"; then
       echo "  FAIL  playing path $O did not compile: $(head -1 "$T/err")"; fail=1; continue

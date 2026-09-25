@@ -44,16 +44,15 @@
                                __muldf3 __subdf3 __truncdfsf2, and __ledf2
                                at -O0
      + iris_suggest_smoothing  + __ledf2, a comparison of doubles in its
-                               scoring, and memcpy, to copy its five-entry
-                               constant table
+                               scoring
      + iris_train_elm        adds nothing
 
    __divsf3 is single-precision DIVISION: the S3's floating-point unit has
    divide-step instructions but no single divide instruction, so every float
    division is a routine in libgcc, the compiler's own support library, as
-   are the double-precision routines. memcpy is the one C library function.
-   None of this is a call this source writes, and all of it is present on
-   every Arduino build anyway; tests/freestanding.sh checks this list too.
+   are the double-precision routines. None of it is a C library function,
+   none of it is a call this source writes, and all of it is present on every
+   Arduino build anyway; tests/freestanding.sh checks this list too.
 
    THE DOUBLES ARE REAL AND THEY ARE ONE SWEEP. The double-precision
    routines above are 64-bit soft float, which rule 3 below says this library
@@ -2705,7 +2704,7 @@ IRIS_API float iris_suggest_smoothing(iris *k, void *scratch, size_t scratch_byt
     unsigned char *inst = (unsigned char *)k, *copy = (unsigned char *)scratch;
     const size_t span = (size_t)((unsigned char *)(k->order + k->cap) - inst);
     const size_t need = iris_size(k->n_in, k->n_hid, k->n_out, k->cap);
-    const float ladder[5] = { 0.0f, 0.05f, 0.15f, 0.5f, 1.0f };
+    static const float ladder[5] = { 0.0f, 0.05f, 0.15f, 0.5f, 1.0f };
     float best_v = 0.0f, best_e = 0.0f;
     /* need == 0 first: size_t is unsigned, so `scratch_bytes < 0` would wave
        any buffer through (the sentinel trap described above iris_size). */
