@@ -5,6 +5,17 @@
    which needs two builds of the core and so lives outside this binary. */
 
 #include "../iris.h"
+/* This file computes its own demonstrations (truth() below), and the golden
+   blob check pins an instrument trained on them. iris.h switches fused
+   multiply-add contraction off for its own code only, so this file switches
+   it off for its own arithmetic too, for the same reason: a*b+c fused by one
+   compiler and not by another would be different demonstrations, and so a
+   different instrument, before iris.h did anything at all. */
+#if defined(__clang__)
+#pragma STDC FP_CONTRACT OFF
+#elif defined(__GNUC__)
+#pragma GCC optimize ("fp-contract=off")
+#endif
 
 /* HOST -> ESP32-S3 SCALING. This was a bare 32.0 sprinkled through the cost
    tables, and it was wrong by ~8x. The ONE on-device training measurement in

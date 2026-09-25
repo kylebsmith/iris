@@ -240,27 +240,45 @@
      && FLT_EVAL_METHOD != 0 && FLT_EVAL_METHOD != 16 && FLT_EVAL_METHOD != 32)
 #error "iris: this build carries float arithmetic in a wider format than float (see __FLT_EVAL_METHOD__), which changes every instrument. On 32-bit x86, build with -msse2 -mfpmath=sse."
 #endif
-/* 3. Forbid contraction at the source level. Clang honours this pragma at
-      default and -ffp-contract=on (measured: blob becomes bit-identical to
-      a -ffp-contract=off build); clang IGNORES it under -ffp-contract=fast.
-      THIS LINE USED TO SAY GCC IGNORES IT ALWAYS. That is wrong, and wrong in
-      the direction that undersold our own defence: measured 2026-08-30 with
-      gcc-15 -O2 -ffp-contract=fast, the pragma present gives the SAME
-      prediction hash as the clang baseline, and stripping the pragma from a
-      copy changes it. The pragma is honoured on GCC and is the thing doing the
-      work. A -ffp-contract=fast clang build still must
-      pass -ffp-contract=off explicitly. The golden-blob audit check catches
-      any build where neither defence held.                                 */
-/* GNU compilers ignore the standard pragma, and in GNU mode -- which is what
-   the Arduino IDE builds with, g++ -std=gnu++17 -O2 -- they contract by
-   default. Measured: the same seed and the same demonstrations produced a
-   DIFFERENT instrument there, which breaks the one promise this library
-   exists to keep. They do honour this, at file scope, in every mode. */
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC optimize ("fp-contract=off")
-#endif
+/* 3. Forbid contraction in this file's code, and only there.
+
+      Clang honours #pragma STDC FP_CONTRACT OFF at its default and at
+      -ffp-contract=on: the blob becomes bit-identical to a -ffp-contract=off
+      build (measured). Clang IGNORES it under -ffp-contract=fast, so a
+      -ffp-contract=fast clang build must also pass -ffp-contract=off.
+
+      GNU compilers ignore the standard pragma and contract by default in
+      every GNU mode (-std=gnu17; the Arduino IDE's -std=gnu++2a) and in ISO
+      C++; only ISO C (-std=c99) leaves contraction off. They do honour
+      #pragma GCC optimize ("fp-contract=off"), even under -ffp-contract=fast:
+      built with gcc-15 -O2 -ffp-contract=fast, the golden hash in
+      tests/audit.c holds with it and moves without it (measured), and the
+      ESP32-S3 compiler emits no fused instruction in this file with it and
+      dozens without it (tests/pragma_leak.sh prints the count).
+
+      BOTH ARE SCOPED TO THIS FILE. float_control(push) saves clang's whole
+      floating-point state and push_options saves GCC's optimisation
+      settings; the matching pops are the last lines of this file. Code after
+      the #include therefore compiles exactly as it would without iris.h,
+      contraction included where the compiler's default allows it.
+      tests/pragma_leak.sh checks both halves on the generated assembly: a*b+c
+      in a function after the include still becomes a fused multiply-add, and
+      no iris function contains one.
+
+      Two consequences. GCC does not inline a function that carries an
+      optimize setting into a function whose settings differ, so when your
+      code contracts, your calls into iris stay calls (measured with gcc-15);
+      that is what keeps iris's arithmetic unfused inside your functions.
+      And your own arithmetic is yours: a program that computes its
+      demonstrations itself and needs the same bits from two compilers (a
+      laptop and a board, say) switches contraction off in its own code too,
+      as tests/audit.c does.                                                */
 #if defined(__clang__)
+#pragma float_control(push)
 #pragma STDC FP_CONTRACT OFF
+#elif defined(__GNUC__)
+#pragma GCC push_options
+#pragma GCC optimize ("fp-contract=off")
 #endif
 /* 4. Golden-blob audit vector (in tests/audit.c) — the runtime backstop.   */
 
@@ -3230,5 +3248,14 @@ IRIS_API int iris_classify_1nn(const iris *k, const float *in, float *out) { if 
   }
   return k->ex_id[best];
 }
+
+/* The end of the floating-point scope opened in the determinism contract at
+   the top of this file: code after the #include compiles as if iris.h had
+   never touched the compiler's settings. */
+#if defined(__clang__)
+#pragma float_control(pop)
+#elif defined(__GNUC__)
+#pragma GCC pop_options
+#endif
 
 #endif /* IRIS_H */
