@@ -163,7 +163,7 @@ int iris_probe(void) {
   SINKU += iris_crc32(file, n);
   SINKU += (unsigned long)iris_internal_file_bytes(k, 3u)
          + iris_internal_get_u32(file + 4);
-  SINKI += iris_internal_file_ok(k, file, n) + iris_internal_range_ok(xn[0], xn[1]);
+  SINKI += iris_internal_file_ok(k, file, n) + iris_internal_range_ok(xn[0], xn[1], 1);
   SINKF += iris_internal_get_f32(file + 44);
   SINKU += (unsigned long)(iris_internal_get_f32s(file + 48, xn, NI) - file);
   iris_internal_put_u32(word, 7u);
