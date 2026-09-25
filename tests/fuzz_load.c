@@ -4,10 +4,10 @@
    A libFuzzer harness. Build with Homebrew clang and run from the repository
    root:
 
+     mkdir -p build/fuzz_load_corpus
      /opt/homebrew/opt/llvm/bin/clang -std=c99 -g -O1 -I. \
        -fsanitize=fuzzer,address,undefined,float-divide-by-zero \
        -fno-sanitize-recover=all -o build/fuzz_load tests/fuzz_load.c
-     mkdir -p build/fuzz_load_corpus
      ./build/fuzz_load -max_total_time=600 build/fuzz_load_corpus
 
    It exits non-zero, with the offending input written to a crash-* file, on
@@ -36,9 +36,10 @@
        included;
      - after an accepted load: any rule of the format table (iris.h PART 9)
        broken by the loaded instrument, checked by this file's own copy of
-       the rules, not the library's; velocities, the residual ledger or the
-       training progress not reset; a status other than OK; a last_error that
-       is not a finite number;
+       the rules, not the library's (the checksum and the smoothing field,
+       which the loaded instrument does not show, are read from the file);
+       velocities, the residual ledger or the training progress not reset; a
+       status other than OK; a last_error that is not a finite number;
      - iris_save refusing the loaded instrument; a re-save that differs from
        the file anywhere except the smoothing field and the checksum; save,
        load, save not byte-identical;
@@ -210,6 +211,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
   { const char *why = rules_broken(k);
     if (why) { fprintf(stderr, "fuzz_load: accepted a file that breaks a rule: %s\n", why); abort(); } }
+  /* Two rules the loaded instrument cannot show: the checksum is not kept,
+     and iris_set_smoothing clamps whatever the smoothing field held, or
+     ignores it if it is not a number. So these two are read from the file. */
+  if (iris_crc32(file, n - 4) != rd32(file, n - 4)) fail("accepted a file with a wrong checksum");
+  { union { uint32_t u; float f; } sm; sm.u = rd32(file, 44);
+    if (bad(sm.f) || sm.f < 0.0f || sm.f > 1.0f) fail("accepted a file that breaks a rule: smoothing field"); }
   if (!at_rest(k)) fail("velocities, ledger or training progress survived the load");
   if (iris_get_status(k) != IRIS_STATUS_OK) fail("status not OK after a load");
   if (bad(iris_last_error(k)) || iris_last_error(k) < 0.0f) fail("last_error not a finite measurement");

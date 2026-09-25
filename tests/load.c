@@ -27,6 +27,7 @@
    compiled twice: once as the translation unit with smaller maxima, once as
    the test itself.
 
+     mkdir -p build
      cc -std=c99 -O2 -Wall -Wextra -DLOAD_SMALL_UNIT -c tests/load.c -o build/load_small.o
      cc -std=c99 -O2 -Wall -Wextra -c tests/load.c -o build/load_main.o
      cc build/load_main.o build/load_small.o -o build/load && ./build/load
@@ -132,7 +133,7 @@ static void probe_in(shape s, int p, float *in) {
 }
 /* Twelve predictions, including gestures outside the demonstrated range. */
 static void play(iris *k, shape s, float out[NPROBE][IRIS_MAX_OUT]) {
-  float in[IRIS_MAX_IN];
+  float in[IRIS_MAX_IN] = { 0 };
   memset(out, 0, sizeof(float) * NPROBE * IRIS_MAX_OUT);
   for (int p = 0; p < NPROBE; ++p) { probe_in(s, p, in); iris_predict(k, in, out[p]); }
 }
