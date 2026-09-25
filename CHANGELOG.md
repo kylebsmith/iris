@@ -46,9 +46,10 @@ Interface:
   `iris_logit`, `iris_crc32`), are renamed `iris_internal_*`. Anything with
   that prefix is outside the interface and may change in any release. The
   interface is the 41 functions listed at the top of `iris.h`.
-- `iris_predict`, `iris_knn_predict` and `iris_classify_1nn` take `iris *`,
-  not `const iris *`: they write the status, and the neighbour functions fit
-  the ranges of an instrument never fitted.
+- `iris_predict`, `iris_knn_predict`, `iris_classify_1nn` and `iris_novelty`
+  take `iris *`, not `const iris *`: the first three write the status, and the
+  neighbour functions and `iris_novelty` fit the ranges of an instrument never
+  fitted.
 - `iris_train_begin` now reseeds from the instrument's seed, as `iris_train`
   does, so a sliced run is bit-identical to `iris_train`.
 - `iris_suggest_smoothing` needs `IRIS_ARENA(n_in, n_hid, n_out, cap)` bytes of
@@ -111,6 +112,10 @@ Behaviour changes on the playing path:
 - `iris_delete_nearest` measures distance in fractions of each input's range,
   as the neighbour functions do, so it deletes the take `iris_classify_1nn`
   names.
+- `iris_novelty` on an instrument never fitted measures in the demonstrated
+  ranges, as the neighbour functions do, instead of the 0..1 ranges `iris_init`
+  starts with: one input demonstrated at 0 and 1000 read 1 at 10 before the
+  first training run and 0.04 after it, and now reads 0.04 in both.
 - The neighbour searches accept a finite query however far outside the
   demonstrations it is.
 

@@ -31,11 +31,13 @@ static float lcg01(void) {
 
 /* The playing functions write into the instrument -- the status, the
    network's activations, the ranges of a never-fitted instrument -- so they
-   take a non-const one. These three lines stop compiling if a signature
-   goes back to const iris *. */
-static void (*const play_net)(iris *, const float *, float *) = iris_predict;
-static void (*const play_knn)(iris *, const float *, float *, int) = iris_knn_predict;
-static int  (*const play_1nn)(iris *, const float *, float *) = iris_classify_1nn;
+   take a non-const one, and so does iris_novelty, which fits those ranges
+   too. These four lines stop compiling if a signature goes back to
+   const iris *. */
+static void  (*const play_net)(iris *, const float *, float *) = iris_predict;
+static void  (*const play_knn)(iris *, const float *, float *, int) = iris_knn_predict;
+static int   (*const play_1nn)(iris *, const float *, float *) = iris_classify_1nn;
+static float (*const play_nov)(iris *, const float *) = iris_novelty;
 
 static unsigned char A[IRIS_ARENA(2, 12, 2, 64)];
 static unsigned char B[IRIS_ARENA(2, 12, 2, 64)];
@@ -87,9 +89,9 @@ static float span_of(const sweep *s) {
    0 unfitted, 1 iris_train, 2 iris_train_elm, 3 k-NN, 4 1-NN. Returns how
    many of the 15 x 15 probes broke the property.
 
-   iris_novelty is held to the input property too, but only once ranges have
-   been fitted (paths 1 to 4; the neighbour functions fit them): on an
-   instrument never fitted it measures in the 0..1 ranges iris_init starts
+   iris_novelty is held to the input property on every path: on an
+   instrument never fitted it fits the demonstrated ranges, as the neighbour
+   functions do, rather than measuring in the 0..1 ranges iris_init starts
    with, which are in raw units. */
 static void scaled_store(iris *k, float in_scale, float out_scale) {
   lcg_state = 31337u;
@@ -123,7 +125,7 @@ static int scaling_breaks(int path, int which) {
     play_path(b, path, q2, pb);
     if (which == 0) {
       if (memcmp(pa, pb, sizeof pa) != 0) broken++;
-      if (path != 0 && iris_novelty(a, q) != iris_novelty(b, q2)) broken++;
+      if (iris_novelty(a, q) != iris_novelty(b, q2)) broken++;
     } else {
       if (pb[0] != 2.0f * pa[0] || pb[1] != 2.0f * pa[1]) broken++;
     }
@@ -622,6 +624,33 @@ int main(void) {
     check("doubling inputs changes nothing, doubling outputs doubles",
           in_broken == 0 && out_broken == 0, d); }
 
+  /* ---- novelty before the first fit: the demonstrated ranges ------------
+     One input demonstrated at 0 and 1000. A reading of 10 is 0.02 of the
+     way across the normalised range [-1,+1] from the nearest take, which
+     novelty divides by sqrt(1)/2: 0.04, before training and after it, to the
+     bit. Measured in the 0..1 ranges iris_init starts with it would read 1.
+     A reading that is not finite reads 1 and is answered before any
+     fitting, so it leaves every byte of the arena as it was. */
+  { static unsigned char M[IRIS_ARENA(1, 8, 1, 8)], snap[sizeof M];
+    iris *k = iris_init(M, sizeof M, 1, 8, 1, 8, 1u);
+    const float a = 0.0f, b = 1000.0f, o0 = 0.0f, o1 = 1.0f, q = 10.0f;
+    const float nan_q = __builtin_nanf("");
+    iris_record(k, &a, &o0);
+    iris_record(k, &b, &o1);
+    memcpy(snap, M, sizeof M);
+    const float n_bad = iris_novelty(k, &nan_q);
+    const int untouched = memcmp(snap, M, sizeof M) == 0;
+    const float before = iris_novelty(k, &q);
+    const int ranges = k->in_lo[0] == 0.0f && k->in_hi[0] == 1000.0f;
+    iris_train(k);
+    const float after = iris_novelty(k, &q);
+    snprintf(d, sizeof d, "never fitted %.4f, trained %.4f; ranges fitted %d; "
+             "not finite %.1f, arena untouched %d",
+             (double)before, (double)after, ranges, (double)n_bad, untouched);
+    check("novelty before the first fit uses the demonstrated ranges",
+          before == after && before > 0.039f && before < 0.041f && ranges
+          && n_bad == 1.0f && untouched, d); }
+
   /* ---- the playing functions take a non-const instrument -----------------
      The pointers above only compile against the non-const signatures; this
      plays once through each so the check is also exercised at run time. */
@@ -631,8 +660,11 @@ int main(void) {
     play_net(k, in, o);
     play_knn(k, in, o, 3);
     const int id = play_1nn(k, in, o);
-    snprintf(d, sizeof d, "compiled against iris *; 1-NN answered id %d", id);
-    check("iris_predict, iris_knn_predict, iris_classify_1nn take iris *", id > 0, d); }
+    const float nov = play_nov(k, in);
+    snprintf(d, sizeof d, "compiled against iris *; 1-NN answered id %d, novelty %.3f",
+             id, (double)nov);
+    check("the playing functions and iris_novelty take iris *",
+          id > 0 && nov >= 0.0f && nov <= 1.0f, d); }
 
   printf("\n  %s (%d failed)\n\n", fails ? "SOME CHECKS FAILED" : "ALL CHECKS PASSED", fails);
   return fails ? 1 : 0;

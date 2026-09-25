@@ -1159,7 +1159,8 @@ struct iris {
    the main loop, even if both only play it. iris_predict, iris_knn_predict
    and iris_classify_1nn write inside the instrument (the network's working
    values, the status, and on an instrument never fitted the neighbour
-   ranges), which is why they take a non-const iris *. An interrupt landing
+   ranges), and iris_novelty fits those ranges too, which is why all four
+   take a non-const iris *. An interrupt landing
    mid-call leaves both answers wrong. Give the interrupt its own instrument.
    Functions that take a const iris * write nothing, but reading an
    instrument while another thread writes it is still a race.
@@ -1760,9 +1761,9 @@ IRIS_API void iris_internal_span(const iris *k, int c, float *lo, float *hi) {
 
 /* THE RANGES. Every input and every output gets the smallest and largest value
    the demonstrations gave it. Every trainer calls this before it starts; the
-   neighbour functions (PART 10) and iris_delete_nearest call it on an
-   instrument that has never been fitted. With no demonstrations it leaves the
-   ranges as they are.
+   neighbour functions (PART 10), iris_delete_nearest and iris_novelty call it
+   on an instrument that has never been fitted. With no demonstrations it
+   leaves the ranges as they are.
 
    AN INPUT THAT NEVER MOVED IS IGNORED. A switch left in one position, a
    sensor resting against its rail, a light sensor under steady light: an input
@@ -2044,13 +2045,26 @@ IRIS_API void iris_predict(iris *k, const float *in, float *out) { if (!k) retur
    know when it is improvising rather than recalling, which you can map to
    anything you like: noise, detuning, a light.
 
-   A reading that is not finite reads as 1, as far from home as it gets;
-   iris_novelty writes nothing, the status included.
+   THE RANGES are the ones the neighbour functions measure in (PART 10): the
+   instrument's own once it has been fitted, and on an instrument that has
+   never been fitted the ranges of the demonstrations it holds, fitted on
+   every call. That fitting is the one thing iris_novelty writes, and why it
+   takes a non-const instrument. Without it, an instrument that has only been
+   shown takes would measure in the 0..1 ranges iris_init starts with, which
+   describe nothing it was shown: with one input demonstrated at 0 and 1000,
+   a reading of 10 would read 1 before the first training run and 0.04 after
+   it; it reads 0.04 in both.
+
+   A reading that is not finite reads as 1, as far from home as it gets, and
+   is answered before any fitting, so then iris_novelty writes nothing, the
+   status included. An empty store reads 1 as well.
    ========================================================================== */
 
-IRIS_API float iris_novelty(const iris *k, const float *in) { if (!k) return 0.0f;
+IRIS_API float iris_novelty(iris *k, const float *in) { if (!k) return 0.0f;
   if (!iris_internal_shape_fits(k)) return 0.0f;
   if (k->n_ex == 0) return 1.0f;
+  for (int i = 0; i < k->n_in; ++i) if (iris_internal_isbad(in[i])) return 1.0f;
+  if (!k->fitted) iris_internal_fit_ranges(k);
   const int stride = k->n_in + k->n_out;
   float best = 1e30f;
   for (int r = 0; r < k->n_ex; ++r) {
