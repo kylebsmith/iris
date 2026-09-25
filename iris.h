@@ -172,28 +172,29 @@
    "Same seed, same instrument" is a bitwise promise, and fused multiply-add
    contraction breaks it: the same source at -ffp-contract=off / on / fast
    produces three DIFFERENT weight blobs on Apple clang 17 / M4 (measured).
-   Three defences, cheapest first:
+   Four defences, cheapest first:
 
-   1. -ffast-math tripwire. fast-math implies contract=fast AND removes the
-      NaN semantics the guards below depend on. Refuse to compile.          */
+   1. Tripwires for the flags that change the arithmetic. -ffast-math implies
+      contract=fast AND removes the NaN semantics the guards below depend on.
+      Refuse to compile.                                                    */
 #if defined(__FAST_MATH__)
 #error "iris: -ffast-math / -Ofast breaks same-seed bit-determinism and disables NaN trapping. If you did not pass this yourself, your board package did: check compiler.optimization_flag in its platform.txt (Adafruit nRF52 sets -Ofast there). Build without it."
 #endif
 /* -ffinite-math-only is one of the flags -ffast-math turns on, but on its own
-   it does NOT set __FAST_MATH__, so this tripwire used to stay silent while
-   every guard in the library was optimised away: iris_isbad folded to false,
-   poisoned demonstrations were accepted, and a broken sensor produced a
-   plausible number and a healthy status. Measured on Apple clang 17. */
+   it does NOT set __FAST_MATH__, so it needs a tripwire of its own. Without
+   one, every guard in the library is optimised away: iris_isbad folds to
+   false, poisoned demonstrations are accepted, and a broken sensor produces a
+   plausible number and a healthy status. Measured on Apple clang 17 with this
+   tripwire removed. */
 #if defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__
 #error "iris: -ffinite-math-only tells the compiler no NaN or infinity can exist, which deletes every guard in this library. Build without it."
 #endif
 /* THE COMPONENT FLAGS, which -ffast-math turns on and which also work alone.
-   Measured 2026-08-30: -freciprocal-math, -funsafe-math-optimizations and
-   -fassociative-math each change the instrument, with no diagnostic of any
-   kind, exactly like -ffinite-math-only did before the tripwire above. GCC
-   announces them and clang does not, so this catches them on GCC only -- which
-   is the compiler for every ESP32, AVR and RP2040 build, and is where it
-   matters most. Say so rather than pretend it is complete.
+   -freciprocal-math, -funsafe-math-optimizations and -fassociative-math each
+   change the instrument with no diagnostic of any kind (measured). GCC
+   announces them and clang does not, so this catches them on GCC only --
+   which is the compiler for every ESP32, AVR and RP2040 build, and is where
+   it matters most.
    No Arduino core passes any of these: checked platform.txt for arduino:avr,
    esp32:esp32, rp2040:rp2040 and STMicroelectronics:stm32. Reaching this
    #error takes a deliberate flag.
@@ -202,15 +203,44 @@
    -freciprocal-math and -funsafe-math-optimizations are caught on GCC (the
    latter defines all four macros). -fassociative-math passed DIRECTLY defines
    no macro at all on gcc-15 -- measured with -dM -E -- so it is undetectable
-   here and it does change the instrument. And on clang no component flag is
-   detectable, because clang defines none of these macros. */
+   here and it does change the instrument. On clang no component flag is
+   detectable, because clang defines none of these macros, and clang 22's
+   -ffp-model=fast defines only __FINITE_MATH_ONLY__ as 0: it compiles without
+   a word and moves the golden hash in tests/audit.c (measured). */
 #if defined(__RECIPROCAL_MATH__) && __RECIPROCAL_MATH__
 #error "iris: -freciprocal-math rewrites division as multiplication by a reciprocal and changes the instrument. Build without it."
 #endif
 #if defined(__ASSOCIATIVE_MATH__) && __ASSOCIATIVE_MATH__
 #error "iris: -fassociative-math / -funsafe-math-optimizations reorders floating-point arithmetic and changes the instrument. Build without it."
 #endif
-/* 2. Forbid contraction at the source level. Clang honours this pragma at
+/* 2. Wider intermediate results. C lets a compiler carry float arithmetic in
+      a wider format and round only when a value is stored, and
+      __FLT_EVAL_METHOD__ (FLT_EVAL_METHOD in <float.h>) says which format:
+
+        0        every operation rounds to its own type. This file is pinned
+                 to this arithmetic.
+        16, 32   the same as 0 for float: only the half-precision type
+                 _Float16 is widened. GCC reports 16 on 64-bit ARM in GNU mode
+                 when half-precision arithmetic is enabled, for example
+                 -std=gnu17 -mcpu=cortex-a76, the Raspberry Pi 5's core; the
+                 golden hash in tests/audit.c holds there (measured).
+        1, 2     float carried as double, or as the 80-bit x87 format. 32-bit
+                 x86 without SSE reports 2, and there the golden hash and
+                 every other instrument hash measured come out different,
+                 with no diagnostic (measured: clang 22
+                 --target=i686-linux-gnu -mno-sse -mfpmath=387).
+        -1       not known. There is nothing to pin.
+
+      Anything but 0, 16 or 32 refuses to compile. tests/targets.sh checks
+      that this fires on x87 and stays silent on every other target this
+      library is built for.                                                 */
+#if (defined(__FLT_EVAL_METHOD__) && __FLT_EVAL_METHOD__ != 0 \
+     && __FLT_EVAL_METHOD__ != 16 && __FLT_EVAL_METHOD__ != 32) \
+ || (!defined(__FLT_EVAL_METHOD__) && defined(FLT_EVAL_METHOD) \
+     && FLT_EVAL_METHOD != 0 && FLT_EVAL_METHOD != 16 && FLT_EVAL_METHOD != 32)
+#error "iris: this build carries float arithmetic in a wider format than float (see __FLT_EVAL_METHOD__), which changes every instrument. On 32-bit x86, build with -msse2 -mfpmath=sse."
+#endif
+/* 3. Forbid contraction at the source level. Clang honours this pragma at
       default and -ffp-contract=on (measured: blob becomes bit-identical to
       a -ffp-contract=off build); clang IGNORES it under -ffp-contract=fast.
       THIS LINE USED TO SAY GCC IGNORES IT ALWAYS. That is wrong, and wrong in
@@ -232,7 +262,7 @@
 #if defined(__clang__)
 #pragma STDC FP_CONTRACT OFF
 #endif
-/* 3. Golden-blob audit vector (in tests/audit.c) — the runtime backstop.   */
+/* 4. Golden-blob audit vector (in tests/audit.c) — the runtime backstop.   */
 
 #include <stddef.h>
 #include <stdint.h>
