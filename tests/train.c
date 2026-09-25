@@ -48,6 +48,8 @@
     13. The divergence guard reaches every weight and bias, the last of each
         array included: one past the limit is clamped to exactly the limit
         and the run reports IRIS_TRAINING_DIVERGED.
+    14. After a record or a delete between two slices, the shuffle covers
+        every take in the store exactly once.
 
    Not-a-number and infinity are built with __builtin_nanf and __builtin_inff,
    never by dividing by zero, so -fsanitize=float-divide-by-zero can run over
@@ -840,6 +842,48 @@ int main(void) {
     }
     snprintf(d, sizeof d, "%d of 8 planted weights clamped to the limit and reported%s", right, first);
     check("the divergence guard reaches the last of every array", right == 8, d);
+  }
+
+  /* ---- 14. after an edit between slices the shuffle covers the store -----
+     The shuffle permutes positions 0 to n_ex - 1, and a sliced run keeps its
+     permutation from one slice to the next. An edit between slices must
+     rebuild it: after a delete the old permutation still holds the position
+     one past the end, so a deleted take would be visited and a live one
+     skipped; after a record the new slot holds whatever an earlier run left
+     there. Each edit below is followed by one slice, and the first n_ex
+     entries of the order must then be every position exactly once. The
+     record case starts from 21 takes trained once and the last one deleted,
+     so the slot the record reuses holds a stale entry from that run. */
+  {
+    int right = 0; char first[200] = "";
+    const char *names[3] = { "delete", "record", "delete then record" };
+    for (int t = 0; t < 3; ++t) {
+      iris *k = iris_init(A, sizeof A, 2, 12, 1, 64, 5u);
+      for (int i = 0; i < 21; ++i) {
+        const float u = (float)((i * 7919) % 97) / 97.0f, v = (float)((i * 6131) % 89) / 89.0f;
+        float in[2] = { u, v }, out[1] = { u * v };
+        iris_record(k, in, out);
+      }
+      iris_continue(k, 50);
+      iris_delete_last(k);
+      iris_train_begin(k, 0);
+      iris_train_slice(k, 10);
+      float in[2] = { 0.3f, 0.7f }, out[1] = { 0.2f };
+      if (t == 0 || t == 2) iris_delete_index(k, 3);
+      if (t == 1 || t == 2) iris_record(k, in, out);
+      iris_train_slice(k, 1);
+      int seen[64] = { 0 }, perm = 1;
+      for (int i = 0; i < k->n_ex; ++i) {
+        const int o = k->order[i];
+        if (o < 0 || o >= k->n_ex || seen[o]++) perm = 0;
+      }
+      right += perm;
+      if (!perm && !first[0])
+        snprintf(first, sizeof first, " -- after a %s the order is not a permutation of 0..%d",
+                 names[t], k->n_ex - 1);
+    }
+    snprintf(d, sizeof d, "%d of 3 edits left an order covering every take once%s", right, first);
+    check("an edit between slices rebuilds the shuffle over the store", right == 3, d);
   }
 
   if (fails) printf("\n  %d FAILING\n", fails);

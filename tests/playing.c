@@ -287,6 +287,32 @@ int main(void) {
              iris_id_at(k, 0));
     check("neighbours answer takes far outside the fitted ranges", knn_ok && one_ok && del_ok, d); }
 
+  /* ---- the same, with the nearest far take in the first row ---------------
+     The takes of the check above in the other order: A recorded first, so
+     after the deletes it is row 0. The rescan with the far distance must
+     start at row 0, or it never sees the nearest take and names B. */
+  { static unsigned char M[IRIS_ARENA(3, 8, 1, 8)];
+    iris *k = iris_init(M, sizeof M, 3, 8, 1, 8, 1u);
+    float a[3] = { 0.0f, 0.0f, 7.0f }, ya = 0.0f, b[3] = { 1.0f, 1.0f, 7.0f }, yb = 1.0f;
+    float fb[3] = { 1e20f, 1e20f, 3e38f }, y_b = 0.75f;
+    float fa[3] = { 1e21f, 0.5f, 3e38f }, y_a = 0.25f;
+    iris_record(k, a, &ya); iris_record(k, b, &yb);
+    iris_train(k);
+    iris_record(k, fa, &y_a); iris_record(k, fb, &y_b);   /* identifiers 3 and 4 */
+    iris_delete_index(k, 0); iris_delete_index(k, 0);
+    const float q[3] = { 0.5f, 0.5f, -3e38f };
+    float o = -1.0f, c = -1.0f;
+    iris_knn_predict(k, q, &o, 2);
+    const int knn_ok = o > 0.25f && o < 0.5f && iris_get_status(k) == IRIS_STATUS_OK;
+    const int id = iris_classify_1nn(k, q, &c);
+    const int one_ok = id == 3 && c == 0.25f && iris_get_status(k) == IRIS_STATUS_OK;
+    const int deleted = iris_delete_nearest(k, q);
+    const int del_ok = deleted == 1 && iris_count(k) == 1 && iris_id_at(k, 0) == 4;
+    snprintf(d, sizeof d, "k-NN %g (status %d), 1-NN id %d playing %g, delete_nearest %d "
+             "leaving id %d", (double)o, (int)iris_get_status(k), id, (double)c, deleted,
+             iris_id_at(k, 0));
+    check("the far rescan starts at the first row", knn_ok && one_ok && del_ok, d); }
+
   /* ---- a store poisoned in memory has no nearest take ---------------------
      iris_record and iris_load refuse a value that is not finite, but the
      store is memory the caller can reach. With a not-a-number written into
