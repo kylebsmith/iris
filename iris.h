@@ -2340,8 +2340,8 @@ IRIS_API float iris_loo_error(iris *k, int epochs) { return iris_internal_loo(k,
    WHAT IT SCORES IS A PROXY. Every fold is a fixed 600-epoch fit from the
    instrument's seed, NOT the plateau run iris_train makes and you then play:
    a plateau fit costs about 25 times more, averaging 14,000 to 15,600 epochs
-   at 20 demonstrations (the error-floor note in the engine has the
-   measurement). The proxy has a price. Measured on 36 datasets (six target
+   at 20 demonstrations over the runs behind the error-floor table in the
+   engine (clean to noise sigma 0.10). The proxy has a price. Measured on 36 datasets (six target
    shapes, three noise levels, two draws of 20 demonstrations) with 8 rerolls
    each, against held-out error on a clean grid: the pick was the best of the
    five settings for the 600-epoch fit it scores 41% of the time, and for the
