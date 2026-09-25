@@ -591,7 +591,8 @@ struct iris {
      One float per example slot: the example's squared error SUMMED OVER
      EVERY EPOCH of the last training session. Not the final residual — see
      the measurements in PART 8f for why the final residual is worthless once
-     you train to convergence. */
+     you train to convergence. A closed-form solve (PART 8d) has no epochs; it
+     stores each example's squared miss under the solve, with res_epochs 1. */
   float   *ex_res;
   int32_t  res_epochs;   /* how many epochs are summed into ex_res */
 
@@ -2404,56 +2405,132 @@ IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->see
 /* ==========================================================================
    PART 8d — THE INSTANT TRAINER  (ELM: freeze the randomness, solve the rest)
 
-   The third trainer, and the fastest thing in this file by two orders of
-   magnitude: retrain at 50 examples in ~0.2 ms estimated on the S3 (nh=12),
-   300-425x the 600-epoch backprop path. The trick is to stop training half
-   the network. Draw the hidden layer once from the seed and FREEZE it; the
-   output layer is then a linear least-squares problem with an exact
-   closed-form answer — one (nh+1)x(nh+1) Cholesky solve, no epochs, no
-   iteration, no possibility of divergence (the ridged normal matrix is
-   symmetric positive definite BY CONSTRUCTION). This idea has a name in the
-   literature — extreme learning machine, ELM — and a 20-year argument about
-   whether it deserves one; we use it because it is measured to work here.
+   The fastest trainer in this file. On a laptop, at 50 demonstrations, two
+   inputs and nh=12, a solve takes about 8 microseconds where 600 epochs of
+   backprop take 2.5 ms -- roughly 300x (tests/audit.c prints the table as
+   TRAINING COST). It has not been timed on the ESP32-S3. The ratio shrinks as
+   inputs are added, because the frozen layer is redrawn for every
+   demonstration (see NOTHING CHANGES UNLESS THE SOLVE WORKS, below).
 
-   Two findings make it work in float32 on this network:
+   The trick is to stop training half the network. Draw the hidden layer once
+   from the seed and FREEZE it; the output layer is then a linear least-squares
+   problem with an exact closed-form answer — one (nh+1)x(nh+1) Cholesky solve,
+   no epochs, no iteration. This idea has a name in the literature — extreme
+   learning machine, ELM — and a 20-year argument about whether it deserves
+   one; it is here because it is measured to work here.
 
-   GAIN. The backprop init (1/sqrt(n_in)) relies on training to grow the
-   weights. Frozen, at that scale, tanh of a normalised input barely bends --
-   the random features are nearly collinear and the normal matrix is
-   numerically rank-deficient. The frozen layer is drawn at 2/sqrt(n_in)
-   instead, wide enough that the features have real capacity.
+   Two measurements make it work in float32 on this network:
 
-   PROVENANCE OF THE 2/sqrt(n_in), settled 2026-08-30. This comment used to
-   cite a measured optimum from a sweep that was not in the tree, and then said
-   plainly that the number was unsupported. The sweep IS reachable through the
-   public API -- iris_train_elm_ex takes gain_w and gain_b -- so it was re-run
-   and is now docs/gain-sweep.c, one command to reproduce. Mean held-out error
-   over 4 target shapes x 16 seeds x {8,20,50} demonstrations x nh {12,24,48},
-   gain = M/sqrt(n_in):
+   GAIN. The backprop starting weights (1/sqrt(n_in)) rely on training to grow.
+   Frozen at that scale, tanh of a normalised input barely bends -- the random
+   features are nearly collinear and the normal matrix is numerically
+   rank-deficient. The frozen layer is drawn at 2/sqrt(n_in) instead, wide
+   enough that the features have real capacity. docs/gain-sweep.c measures the
+   choice in one command: mean held-out error over 4 target shapes x 16 seeds x
+   {8,20,50} demonstrations x nh {12,24,48}, gain = M/sqrt(n_in):
 
        M         0.25   0.50   1.00   1.50   2.00   3.00   4.00   8.00
        error    .1143  .1025  .0946  .0919  .0905  .0894  .0920  .1087
 
-   The structural argument holds: M=2 beats the backprop init at M=1 by 4.3%.
-   The minimum is BROAD and M=2 sits inside it. Stated honestly, M=3 is
-   marginally better (1.2%) and the optimum drifts upward with width -- best at
-   1.5 for nh=12 and at 3.0 for nh=48 -- so 2 is a good constant rather than
-   the best one, and it stays because moving it would move every frozen hash in
-   the audit for a 1.2% gain.
+   M=2 beats the backprop starting scale M=1 by 4.3%. The minimum is BROAD and
+   M=2 sits inside it. M=3 is marginally better (1.2%) and the optimum drifts
+   upward with width -- best at 1.5 for nh=12 and at 3.0 for nh=48 -- so 2 is a
+   good constant rather than the best one, and it stays because moving it would
+   move every frozen hash in the audit for a 1.2% gain.
 
    RIDGE, MANDATORY. Even with the wider gain, the unridged float32 normal
-   matrix failed Cholesky in EVERY realistic scenario measured -- including 20
+   matrix fails Cholesky in EVERY realistic scenario measured -- including 20
    well-spread examples. The ridge is relative (lam0 * trace/(nh+1), so it
-   scales with the data) and escalates deterministically: double lambda on a
-   failed factorisation, at most 8 times, report the count. If escalation was
-   needed the status says IRIS_RIDGE_ESCALATED -- the result is valid, the data
-   was harder than usual. The campaign behind that: docs/adr/0009-ridge-is-mandatory.md.
+   scales with the data) plus a floor of 1e-7, and it escalates
+   deterministically: double it on a failed factorisation, at most 8 times, and
+   report the count. If escalation was needed the status says
+   IRIS_RIDGE_ESCALATED -- the result is valid, the data was harder than usual.
+   The campaign behind that: docs/adr/0009-ridge-is-mandatory.md. Escalation
+   can still run out: lam0 = 0 on 32 demonstrations that share one input fails
+   all nine attempts, and that is an ordinary refusal (below).
+
+   SMOOTHING reaches this trainer as extra ridge on the output weights, and
+   never on the output biases: a penalised bias drags every output toward the
+   middle of its range, where an unpenalised one lets heavy smoothing settle
+   near the average of what was demonstrated (averaged in logit units). Smoothing s is stored as weight
+   decay 0.3 s (PART 3); the solve adds four times that, 1.2 s, to the diagonal
+   entry of every output weight, on top of the relative ridge above. At
+   smoothing 0 the added term is exactly zero, so the solve is bit-for-bit
+   the unsmoothed one. The extra ridge is absolute, not relative to the data:
+   like backprop's weight decay, its pull stays fixed while the evidence grows
+   with every demonstration, so smoothing matters most with few takes.
+
+   THE FOUR IS MEASURED, NOT DERIVED. Carrying backprop's weight decay into
+   logit units at the sigmoid's steepest slope (0.25) gives sixteen. With
+   sixteen, the best setting for noisy demonstrations sat between 0.05 and 0.2
+   and smoothing 1 cost clean demonstrations 25% at 20 takes; with four, the
+   best setting sits between 0.1 and 1 and smoothing 1 costs clean ones 8%.
+   The table is `tests/elm.c measure` (the figures for sixteen come from the
+   same program with the constant edited): nh 12, lam0 1e-4, 4 target shapes
+   x 16 seeds, outputs spanning about 0..1. Each cell is two root-mean-square
+   errors: at the demonstrations, then on fresh points against the clean
+   target.
+
+       demos noise   smoothing 0     0.1             0.3             1.0
+         8   0.10    .0260 .2123     .0698 .1339     .0793 .1283     .0909 .1264
+        20   0.00    .0309 .0747     .0456 .0718     .0513 .0747     .0592 .0804
+        20   0.05    .0507 .0907     .0644 .0800     .0693 .0812     .0762 .0851
+        20   0.10    .0834 .1239     .0984 .0980     .1031 .0954     .1094 .0954
+        50   0.00    .0430 .0529     .0516 .0586     .0556 .0619     .0614 .0671
+        50   0.05    .0659 .0607     .0736 .0645     .0770 .0676     .0818 .0723
+
+   Recall error rises at every step, which is what smoothing promises. On 8 or
+   20 noisy demonstrations the held-out error at 0.3 falls by 10% to 40%, most
+   with the fewest and noisiest takes; on 20 clean ones 0.3 costs nothing. On
+   50, where least squares already averages the noise away, smoothing only
+   adds bias: 0.3 costs 11% on lightly noisy takes and 17% on clean ones. The
+   default stays 0, for the reason PART 3 gives.
+
+   NOTHING CHANGES UNLESS THE SOLVE WORKS. Every refusal -- a bad argument, too
+   little scratch, a poisoned demonstration, or a factorisation that fails even
+   after escalation -- leaves every byte of the instrument as it was, status
+   included; the return value is the whole report. That takes some care,
+   because a solve needs the new ranges and the new frozen layer before it can
+   know whether it will succeed:
+     - the solve works in the caller's scratch, never in the weight arrays;
+     - the frozen layer is a pure function of the seed, so it is redrawn for
+       each demonstration one hidden unit at a time rather than stored, and
+       written into the instrument only once the solve has succeeded;
+     - the ranges are fitted in place, because every normalisation in this
+       file reads them from the instrument, and the old ones wait in scratch
+       and are put back byte for byte if the solve fails.
+   A solution containing a non-finite number is a failed solve too: it can only
+   come from demonstrations so far apart that their span overflows a float.
+
+   WHICH DEMONSTRATION IS FIGHTING (PART 8f). A solve has no epochs to sum
+   over, so it leaves each demonstration's squared miss under the solve in the
+   ledger, in the same normalised units, with res_epochs 1; whatever an earlier
+   backprop run left there is replaced. PART 8f explains why the endpoint
+   residual is worthless after backprop: given enough epochs the optimiser
+   bends onto the bad take. The ridged solve has only nh+1 numbers per output
+   to bend with, so the endpoint still carries the signal -- less of it than the
+   integrated ledger does. `tests/elm.c measure`, on the protocol of
+   docs/adr/0019-the-residual-ledger-integrates-it-does-not-sample.md (nh 12,
+   8 outputs, one take offset on one output; hits of 20 sessions, and clean
+   sessions whose margin reaches IRIS_STRESS_FLAG, of 200):
+
+                       demos   +0.05   +0.10   +0.20   +0.40   clean >= flag
+       iris_train_elm    20    13/20   15/20   14/20   15/20      25/200
+                         50    15/20   19/20   20/20   20/20      14/200
+                        100    14/20   19/20   20/20   20/20      24/200
+       iris_train        20    18/20   19/20   20/20   20/20       7/200
+                         50    20/20   20/20   20/20   19/20      15/200
+                        100    20/20   20/20   20/20   20/20       6/200
+
+   So after this trainer the flag speaks on 7-13% of clean sessions, about
+   twice as often as after backprop: treat a flagged take as one to listen to
+   again, not one to delete unheard.
 
    The solved instrument is an ordinary iris instrument: same w1/b1/w2/b2
    arrays, same iris_predict, saves and loads as a normal file. The solve
    targets logit space -- the exact inverse of our sigmoid -- so the shipping
-   forward pass lands on the normalized targets. Stated honestly: that makes it
-   a bounded-output VARIANT of the backprop head, not an equivalent.
+   forward pass lands on the normalised targets. That makes it a
+   bounded-output VARIANT of the backprop head, not an equivalent.
 
    THE 4.6e-2 FIGURE, SCOPED. It measures logit-space-sigmoid ELM against
    linear-head ELM -- an internal ablation between two ELM variants
@@ -2469,17 +2546,28 @@ IRIS_API uint32_t iris_seed(const iris *k)    { if (!k) return 0u; return k->see
    rather than shipping a config that breaks the reroll promise. Numbers and
    the recommended lam0 per width: docs/adr/0008-elm-same-network-better-math.md.
 
-   Determinism: the hidden layer is redrawn from k->seed by a LOCAL rng
-   (k->rng is never touched -- a closed-form solve is not an event in the
-   correction history), accumulation order is fixed by example order, and the
-   escalation schedule is fixed. Same seed + same examples => bit-identical
-   weights, verified at nh 12/24/48.
+   Determinism: the hidden layer is drawn from k->seed by a LOCAL random
+   number generator (k->rng is never touched -- a closed-form solve is not an
+   event in the correction history), accumulation order is fixed by example
+   order, and the escalation schedule is fixed. Same seed + same examples =>
+   bit-identical weights, verified at nh 12/24/48.
    ========================================================================== */
 
+/* The solve's working memory, in bytes, for n_hid = NH and n_out = NO.
+
+   It is sized by IRIS_MAX_IN rather than by n_in because this macro is not
+   given n_in: the ranges kept in case the solve fails, and one hidden unit's
+   frozen weights, each hold up to one float per input. The last
+   sizeof(float) - 1 bytes let the buffer start at any address: the solve
+   rounds the pointer up to a float boundary itself, so a plain
+   `static unsigned char scratch[IRIS_ELM_SCRATCH(12, 3)]` is fine. */
 #define IRIS_ELM_SCRATCH(NH, NO)                                                 \
-  ( sizeof(float) * ( (size_t)((NH)+1) * ((NH)+1)      /* A: normal matrix */  \
-                    + (size_t)((NH)+1) * (NO)          /* B: rhs           */  \
-                    + (size_t)((NH)+1) ) )             /* pristine diagonal */
+  ( sizeof(float) * ( (size_t)((NH)+1) * ((NH)+1) /* normal matrix, then factor */\
+                    + (size_t)((NH)+1) * (NO)     /* right side, then solution */ \
+                    + (size_t)((NH)+1)            /* its diagonal, kept        */ \
+                    + (size_t)2 * (IRIS_MAX_IN + (NO)) /* ranges, kept         */ \
+                    + (size_t)IRIS_MAX_IN )       /* one frozen hidden unit    */ \
+    + sizeof(float) - 1 )                         /* alignment padding         */
 
 /* arena + solve scratch in one block, for callers who want one number */
 #define IRIS_ARENA_ELM(NI, NH, NO, NEX)                                          \
@@ -2504,60 +2592,80 @@ IRIS_API float iris_artanh(float y) {
 /* Inverse of iris_sigmoid: the pre-activation z with iris_sigmoid(z) == t. */
 IRIS_API float iris_logit(float t) { return 2.0f * iris_artanh(2.0f * t - 1.0f); }
 
-/* The full-argument solve, with explicit hidden-layer gains. Returns the
-   number of ridge doublings used (0 = first try, status IRIS_RIDGE_ESCALATED
-   if > 0), or -1 refusing: nh < 8, no examples, scratch too small, or a
-   poisoned (NaN/Inf) example — weights untouched on every refusal. */
-IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
-                           void *scratch, size_t scratch_bytes) { if (!k) return -1;
-  if (!scratch || k->n_ex == 0) return -1;
-  if (!iris_shape_fits(k)) { k->status = IRIS_NOT_FITTED; return -1; }
-  const int NI_ = k->n_in, NH_ = k->n_hid, NO_ = k->n_out, K = NH_ + 1;
-  if (NH_ < 8) return -1;              /* below the measured reroll floor */
-  if (scratch_bytes < IRIS_ELM_SCRATCH(NH_, NO_)) return -1;
+/* INTERNAL: the solve itself, with the hidden-layer gains as arguments. Use
+   iris_train_elm, which passes the measured gains; this form exists for
+   iris_train_elm and for the gain measurement in docs/gain-sweep.c.
 
+   Returns the number of ridge doublings used (0 = first try; status
+   IRIS_RIDGE_ESCALATED if > 0), or -1 refusing, with nothing changed. It
+   refuses: a null instrument or scratch, no demonstrations, a shape this
+   translation unit cannot hold, nh < 8, scratch smaller than
+   IRIS_ELM_SCRATCH(nh, n_out), a lam0 or gain that is negative or not finite,
+   a poisoned (not-a-number or infinite) demonstration, and a solve that fails
+   even after escalation.
+
+   Zero is legal for all three numbers, and means:
+     lam0   = 0  no ridge in proportion to the data; only the 1e-7 floor, which
+                 escalation may still double. Near-duplicate demonstrations
+                 can then fail all nine attempts, which is a refusal.
+     gain_w = 0  the hidden units ignore the inputs, so every demonstration
+                 sees the same features and the solve can only return a
+                 constant. The collapse check below reports that.
+     gain_b = 0  every hidden unit's boundary passes through the centre of the
+                 demonstrated input range. A narrower family, still a mapping. */
+IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
+                               void *scratch, size_t scratch_bytes) {
+  /* --- refuse before touching anything ----------------------------------- */
+  if (!k || !scratch || k->n_ex == 0) return -1;
+  if (!iris_shape_fits(k) || k->n_hid < 8) return -1;  /* nh < 8: the reroll floor */
+  if (iris_isbad(lam0)   || !(lam0   >= 0.0f)) return -1;  /* !(x >= 0) is also */
+  if (iris_isbad(gain_w) || !(gain_w >= 0.0f)) return -1;  /* true for NaN      */
+  if (iris_isbad(gain_b) || !(gain_b >= 0.0f)) return -1;
+  if (scratch_bytes < IRIS_ELM_SCRATCH(k->n_hid, k->n_out)) return -1;
 #ifndef IRIS_NO_GUARDS
-  /* same door as every other trainer: refuse poisoned examples up front,
-     previous weights bit-preserved, the bad example still in the store */
-  {
-    const int st = NI_ + NO_;
-    for (int i = 0; i < k->n_ex * st; ++i)
-      if (iris_isbad(k->ex[i])) { k->status = IRIS_NAN_TRAPPED; return -1; }
-  }
-  k->status = IRIS_STATUS_OK;
+  /* a poisoned demonstration is refused here, before anything is written,
+     and stays in the store where the musician can find it and delete it */
+  for (int i = 0; i < k->n_ex * (k->n_in + k->n_out); ++i)
+    if (iris_isbad(k->ex[i])) return -1;
 #endif
 
-  float *A  = (float *)scratch;        /* K x K   */
-  float *B  = A + (size_t)K * K;       /* K x NO  */
-  float *dg = B + (size_t)K * NO_;     /* K       */
+  const int NI_ = k->n_in, NH_ = k->n_hid, NO_ = k->n_out, K = NH_ + 1;
+  const int stride = NI_ + NO_;
+  const uint32_t seed = k->seed ? k->seed : 1u;
 
+  /* --- carve the scratch, starting at the first float boundary ------------ */
+  unsigned char *p = (unsigned char *)scratch;
+  p += ((uintptr_t)p & (sizeof(float) - 1u))
+         ? sizeof(float) - (size_t)((uintptr_t)p & (sizeof(float) - 1u)) : 0u;
+  float *A    = (float *)p;               /* K x K: normal matrix, then factor */
+  float *B    = A + (size_t)K * K;        /* K x NO: right side, then solution */
+  float *dg   = B + (size_t)K * NO_;      /* K: the unridged diagonal          */
+  float *keep = dg + K;                   /* 2(NI+NO): the ranges as they were */
+  float *wj   = keep + 2 * (NI_ + NO_);   /* NI: one frozen hidden unit        */
+
+  for (int i = 0; i < NI_; ++i) { keep[i] = k->in_lo[i]; keep[NI_ + i] = k->in_hi[i]; }
+  for (int o = 0; o < NO_; ++o) { keep[2*NI_ + o] = k->out_lo[o];
+                                  keep[2*NI_ + NO_ + o] = k->out_hi[o]; }
   iris_fit_ranges(k);
-
-  /* --- the frozen layer, redrawn deterministically from the seed --------- */
-  {
-    iris_rng r = { k->seed ? k->seed : 1u };
-    for (int j = 0; j < NH_; ++j) {
-      float *w = k->w1 + (size_t)j * NI_;
-      for (int i = 0; i < NI_; ++i) w[i] = iris_rand_sym(&r) * gain_w;
-      k->b1[j] = iris_rand_sym(&r) * gain_b;
-    }
-  }
 
   /* --- accumulate the normal equations: A = H^T H (upper), B = H^T Z,
      where H is the hidden activations plus a bias column and Z is the
-     logit of the normalized targets. One pass over the examples. --------- */
+     logit of the normalised targets. One pass over the examples; the frozen
+     layer is redrawn from the seed for each one, in the order it will be
+     stored: unit by unit, its n_in weights and then its bias. ------------- */
+  float x[IRIS_MAX_IN];                  /* one normalised demonstration */
   for (int i = 0; i < K * K; ++i)   A[i] = 0.0f;
   for (int i = 0; i < K * NO_; ++i) B[i] = 0.0f;
   {
-    const int stride = NI_ + NO_;
-    float x[IRIS_MAX_IN], h[IRIS_MAX_HID + 1];
+    float h[IRIS_MAX_HID + 1];
     for (int n = 0; n < k->n_ex; ++n) {
       const float *row = k->ex + (size_t)n * stride;
       for (int i = 0; i < NI_; ++i) x[i] = iris_norm_in(k, i, row[i]);
+      iris_rng r = { seed };
       for (int j = 0; j < NH_; ++j) {
-        const float *w = k->w1 + (size_t)j * NI_;
-        float s = k->b1[j];
-        for (int i = 0; i < NI_; ++i) s += w[i] * x[i];
+        for (int i = 0; i < NI_; ++i) wj[i] = iris_rand_sym(&r) * gain_w;
+        float s = iris_rand_sym(&r) * gain_b;          /* the bias comes first */
+        for (int i = 0; i < NI_; ++i) s += wj[i] * x[i];
         h[j] = iris_tanh(s);
       }
       h[NH_] = 1.0f;                                   /* bias feature */
@@ -2584,13 +2692,14 @@ IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
                                  inputs); the relative term is then 0 and the
                                  solve needs SOME positive diagonal. 1e-7 is
                                  ~1 ulp at the |G|~1 scale tanh features give. */;
+  const float mu = k->l2 * 4.0f;   /* the smoothing ridge, weights only */
 
   int doublings = -1;
   for (int att = 0; att <= 8; ++att) {
     for (int i = 0; i < K; ++i) {                      /* restore + ridge */
       float *Ai = A + (size_t)i * K;
       for (int j = 0; j < i; ++j) Ai[j] = A[(size_t)j * K + i];
-      Ai[i] = dg[i] + lam;
+      Ai[i] = dg[i] + lam + (i < NH_ ? mu : 0.0f);
     }
     int okf = 1;                                       /* factor, lower only */
     for (int j = 0; j < K && okf; ++j) {
@@ -2608,122 +2717,132 @@ IRIS_API int iris_train_elm_ex(iris *k, float lam0, float gain_w, float gain_b,
     if (okf) { doublings = att; break; }
     lam *= 2.0f;
   }
+
+  /* --- back-substitute B in place: L y = B, then L^T beta = y ------------ */
+  if (doublings >= 0) {
+    for (int o = 0; o < NO_; ++o) {
+      for (int i = 0; i < K; ++i) {
+        float s = B[(size_t)i * NO_ + o];
+        for (int c = 0; c < i; ++c) s -= A[(size_t)i * K + c] * B[(size_t)c * NO_ + o];
+        B[(size_t)i * NO_ + o] = s / A[(size_t)i * K + i];
+      }
+      for (int i = K - 1; i >= 0; --i) {
+        float s = B[(size_t)i * NO_ + o];
+        for (int c = i + 1; c < K; ++c) s -= A[(size_t)c * K + i] * B[(size_t)c * NO_ + o];
+        B[(size_t)i * NO_ + o] = s / A[(size_t)i * K + i];
+      }
+    }
+    for (int i = 0; i < K * NO_; ++i) if (iris_isbad(B[i])) doublings = -1;
+  }
+
+  /* --- a failed solve puts the ranges back and changes nothing else ------- */
   if (doublings < 0) {
-    /* REACHABLE, despite what this comment said until 2026-08-30. It claimed
-       "unreachable by construction (measured zero failures across the whole
-       campaign)". The campaign used the shipped defaults; lam0 is a public
-       argument. Measured: iris_train_elm(k, 0.0f, ...) on 256 identical
-       demonstrations returns -1 with status 2. So this is an ordinary failure
-       path, not an impossible one — recover to a finite,
-       deterministic instrument and SAY SO, never sit on broken weights
-       (the hidden layer above was already overwritten). */
-    iris_reseed(k, k->seed);
-    k->status = IRIS_NAN_TRAPPED;
+    for (int i = 0; i < NI_; ++i) { k->in_lo[i] = keep[i]; k->in_hi[i] = keep[NI_ + i]; }
+    for (int o = 0; o < NO_; ++o) { k->out_lo[o] = keep[2*NI_ + o];
+                                    k->out_hi[o] = keep[2*NI_ + NO_ + o]; }
     return -1;
   }
 
-  /* --- back-substitute B in place: L y = B, then L^T beta = y ------------ */
-  for (int o = 0; o < NO_; ++o) {
-    for (int i = 0; i < K; ++i) {
-      float s = B[(size_t)i * NO_ + o];
-      for (int c = 0; c < i; ++c) s -= A[(size_t)i * K + c] * B[(size_t)c * NO_ + o];
-      B[(size_t)i * NO_ + o] = s / A[(size_t)i * K + i];
-    }
-    for (int i = K - 1; i >= 0; --i) {
-      float s = B[(size_t)i * NO_ + o];
-      for (int c = i + 1; c < K; ++c) s -= A[(size_t)c * K + i] * B[(size_t)c * NO_ + o];
-      B[(size_t)i * NO_ + o] = s / A[(size_t)i * K + i];
+  /* --- commit: the frozen layer exactly as the solve drew it, the solved
+     output layer, and no velocity -- velocities are backprop state that no
+     longer describes this instrument ------------------------------------ */
+  {
+    iris_rng r = { seed };
+    for (int j = 0; j < NH_; ++j) {
+      float *w = k->w1 + (size_t)j * NI_;
+      for (int i = 0; i < NI_; ++i) w[i] = iris_rand_sym(&r) * gain_w;
+      k->b1[j] = iris_rand_sym(&r) * gain_b;
     }
   }
-
-  /* --- install into the ordinary weight arrays; velocities are stale
-     backprop state that no longer describes this instrument — zero them */
   for (int o = 0; o < NO_; ++o) {
     float *w = k->w2 + (size_t)o * NH_;
     for (int j = 0; j < NH_; ++j) w[j] = B[(size_t)j * NO_ + o];
     k->b2[o] = B[(size_t)NH_ * NO_ + o];
   }
   iris_zero_velocity(k);
+  k->trained = 1;
+  k->fitted  = 1;                    /* a closed-form solve IS a fit */
+  k->status  = doublings > 0 ? IRIS_RIDGE_ESCALATED : IRIS_STATUS_OK;
 
-  /* --- recall error, in the same units iris_train_epochs reports ----------- */
+  /* --- recall error (in the units iris_train_epochs reports), the ledger,
+     and how far the demonstrations and the fitted outputs move ------------ */
   {
-    const int stride = NI_ + NO_;
-    float x[IRIS_MAX_IN], err = 0.0f;
+    float err = 0.0f;
+    float lo_y[IRIS_MAX_OUT], hi_y[IRIS_MAX_OUT];     /* fitted, normalised */
+    for (int o = 0; o < NO_; ++o) { lo_y[o] = 1e30f; hi_y[o] = -1e30f; }
+    for (int i = 0; i < k->cap; ++i) k->ex_res[i] = 0.0f;
     for (int n = 0; n < k->n_ex; ++n) {
       const float *row = k->ex + (size_t)n * stride;
+      float rse = 0.0f;
       for (int i = 0; i < NI_; ++i) x[i] = iris_norm_in(k, i, row[i]);
       iris_forward_norm(k, x);
       for (int o = 0; o < NO_; ++o) {
-        const float e = k->out[o] - iris_norm_out(k, o, row[NI_ + o]);
+        const float y = k->out[o], t = iris_norm_out(k, o, row[NI_ + o]);
+        const float e = y - t;
         err += e * e;
+        rse += e * e;
+        if (y < lo_y[o]) lo_y[o] = y;
+        if (y > hi_y[o]) hi_y[o] = y;
       }
+      k->ex_res[n] = rse;
     }
+    k->res_epochs = 1;
     k->last_error = err / (float)(k->n_ex * NO_);
-  }
-  k->trained = 1;
-  k->fitted  = 1;                    /* a closed-form solve IS a fit */
-  if (doublings > 0) k->status = IRIS_RIDGE_ESCALATED;
 
 #ifndef IRIS_NO_GUARDS
-  /* DID IT ACTUALLY LEARN A MAPPING? A large enough lam0 -- or a zero gain --
-     drives every weight toward nothing, and the solve then maps every gesture
-     to the same sound. That is not a failed solve by any numerical test: the
-     residual is small, no value is bad, and this returned success with a
-     healthy status while the instrument had become a constant.
-     So ask the only question that matters to a musician: does it still tell
-     two different gestures apart? Sweep the corners of the demonstrated input
-     range and measure how far the outputs move. */
-  { float lo_o[IRIS_MAX_OUT], hi_o[IRIS_MAX_OUT], probe[IRIS_MAX_IN];
-    for (int o = 0; o < NO_; ++o) { lo_o[o] = 1e30f; hi_o[o] = -1e30f; }
-    for (int c = 0; c < 4; ++c) {
-      /* NORMALISE THE CORNER BEFORE FEEDING IT FORWARD. in_lo and in_hi hold
-         RAW sensor values; iris_forward_norm's parameter is named x_norm and
-         every other call site normalises first. Handing it raw values made
-         this guard's verdict depend on the caller's UNITS: the same instrument
-         learning the same mapping reported a healthy solve when the sensor
-         spanned 0..1 or 0..4095, and IRIS_DIVERGED_STUCK when it spanned
-         0..0.001 -- a false fault telling the musician to reroll an instrument
-         that was fine. The header tells callers to feed raw readings and not to
-         scale anything (see "Units: none" in PART 1), so the units are the
-         caller's business and must not change a verdict. */
-      for (int i = 0; i < NI_; ++i)
-        probe[i] = iris_norm_in(k, i, ((c >> (i & 1)) & 1) ? k->in_hi[i]
-                                                           : k->in_lo[i]);
-      iris_forward_norm(k, probe);
-      /* Measure in NORMALISED output space, where the band is always
-         [0.1,0.9] whatever the demonstrations looked like. Comparing against
-         the raw demonstrated range instead would make a single 1e6 outlier
-         shrink every honest ratio to nothing and report a healthy solve as
-         collapsed -- which is a different defect, and not this one's to
-         report. */
+    /* DID IT ACTUALLY LEARN A MAPPING? A large enough lam0 or smoothing -- or a
+       zero gain_w -- drives every output weight toward nothing, and the solve
+       then maps every gesture to the same sound. That is not a failed solve by
+       any numerical test: no value is bad and the ridge did what it was asked.
+       So ask the only question that matters to a musician: do the gestures
+       they demonstrated still sound different? Everything is compared in
+       normalised units, so the answer does not depend on the caller's units.
+
+       Only ask when there was a mapping to learn: some input moved AND some
+       output changed across the demonstrations. When every demonstration
+       carried the same sound, or every take was made at the same gesture, a
+       constant is the right answer, and flagging it would report correct
+       behaviour as a fault. Both questions are asked of the demonstrations
+       themselves, not of the ranges, which iris_fit_ranges widens for a
+       constant.
+
+       Collapsed means: on every output the demonstrations changed, the fitted
+       outputs move less than half a percent as far as the demonstrations did
+       -- a constant with rounding on it. The status says IRIS_DIVERGED_STUCK;
+       the solve is still installed, and a smaller lam0 or smoothing, or a
+       larger gain_w, brings the mapping back. */
+    {
+      int moved = 0, changed = 0, collapsed;
+      for (int n = 1; n < k->n_ex && !moved; ++n)
+        for (int i = 0; i < NI_; ++i)
+          if (iris_norm_in(k, i, k->ex[(size_t)n * stride + i])
+              != iris_norm_in(k, i, k->ex[i])) moved = 1;
+      collapsed = moved;
       for (int o = 0; o < NO_; ++o) {
-        float y = k->out[o];
-        if (y < lo_o[o]) lo_o[o] = y;
-        if (y > hi_o[o]) hi_o[o] = y;
+        float lo_t = 1e30f, hi_t = -1e30f;           /* demonstrated, normalised */
+        for (int n = 0; n < k->n_ex; ++n) {
+          const float t = iris_norm_out(k, o, k->ex[(size_t)n * stride + NI_ + o]);
+          if (t < lo_t) lo_t = t;
+          if (t > hi_t) hi_t = t;
+        }
+        if (hi_t > lo_t) {
+          changed = 1;
+          if (hi_y[o] - lo_y[o] >= 0.005f * (hi_t - lo_t)) collapsed = 0;
+        }
       }
+      if (collapsed && changed) k->status = IRIS_DIVERGED_STUCK;
     }
-    float widest = 0.0f;
-    for (int o = 0; o < NO_; ++o) { float w = hi_o[o] - lo_o[o]; if (w > widest) widest = w; }
-
-    /* Only ask the question when there was a mapping to learn. If every
-       demonstration carried the same sound, a constant IS the right answer and
-       flagging it would be reporting correct behaviour as a fault.
-       iris_fit_ranges floors a degenerate range at 1e-6, so anything at or
-       near that floor means the targets never moved. */
-    int something_to_learn = 0;
-    for (int o = 0; o < NO_; ++o)
-      if (k->out_hi[o] - k->out_lo[o] > 1e-5f) something_to_learn = 1;
-
-    /* The normalised band is 0.8 wide. Moving less than half a percent of it
-       across the whole input range is a constant with rounding on it. */
-    if (something_to_learn && widest < 0.004f) k->status = IRIS_DIVERGED_STUCK;
-  }
 #endif
+  }
   return doublings;
 }
 
 /* The instant trainer with the measured-default gains: 2/sqrt(n_in) for
-   weights AND biases. lam0 = 1e-4 is the nh=12 default; 1e-3 at nh=48. */
+   weights AND biases. lam0 = 1e-4 is the nh=12 default; 1e-3 at nh=48.
+   The scratch is at least IRIS_ELM_SCRATCH(n_hid, n_out) bytes, at any
+   alignment. Returns the number of ridge doublings, or -1 having changed
+   nothing; see iris_train_elm_ex above for every refusal and for what a
+   lam0 of 0 means. */
 IRIS_API int iris_train_elm(iris *k, float lam0, void *scratch, size_t scratch_bytes) { if (!k) return -1;
   const float g = 2.0f / iris_sqrt((float)(k->n_in > 0 ? k->n_in : 1));
   return iris_train_elm_ex(k, lam0, g, g, scratch, scratch_bytes);
