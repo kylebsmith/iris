@@ -115,8 +115,21 @@ can_link() {
   printf 'int main(void) { return 0; }\n' > build/probe.c
   "$CC" "$@" -o build/probe build/probe.c > /dev/null 2>&1
 }
+# can_asan: can $CC build AND run AddressSanitizer programs here? On macOS only
+# clang's sanitizer runtime works. Homebrew gcc's links on some installs, but the
+# runtime is unsupported on Apple silicon and the program hangs at start (the tu
+# arm hangs this way on GitHub's macos-latest runner), so gcc on macOS never counts.
+can_asan() {
+  if [ "$(uname -s)" = Darwin ] && ! is_clang "$CC"; then return 1; fi
+  can_link -fsanitize=address,undefined
+}
+# can_tsan: the same rule for ThreadSanitizer.
+can_tsan() {
+  if [ "$(uname -s)" = Darwin ] && ! is_clang "$CC"; then return 1; fi
+  can_link -fsanitize=thread -pthread
+}
 need_asan() {
-  if can_link -fsanitize=address,undefined; then return 0; fi
+  if can_asan; then return 0; fi
   fail "$1 needs AddressSanitizer and UndefinedBehaviorSanitizer, which $CC cannot link (Homebrew gcc on macOS ships neither; use cc or clang there)"
 }
 # the functions a user calls: every IRIS_API definition not named iris_internal_
@@ -172,8 +185,8 @@ arm_portability() { "$CC" $CFLAGS -o build/portability tests/portability.c -lm; 
 arm_recipes()     { "$CC" $CFLAGS -o build/recipes tests/starter_recipes.c -lm; ./build/recipes; }
 arm_tu() {
   X="-O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all"
-  if ! can_link -fsanitize=address,undefined; then
-    X=-O2; say "note  $CC cannot link AddressSanitizer; tu runs without it"
+  if ! can_asan; then
+    X=-O2; say "note  $CC cannot run AddressSanitizer here; tu runs without it"
   fi
   "$CC" $STD $WARN $X -I. -c tests/tu/big.c -o build/tu_big.o
   "$CC" $STD $WARN $X -I. -c tests/tu/small.c -o build/tu_small.o
@@ -258,7 +271,7 @@ arm_sanitize() {
 }
 
 arm_threads() {
-  if ! can_link -fsanitize=thread -pthread; then fail "threads needs ThreadSanitizer, which $CC cannot link"; fi
+  if ! can_tsan; then fail "threads needs ThreadSanitizer, which $CC cannot run here (on macOS use cc or clang)"; fi
   X="$STD $WARN -O1 -g -fsanitize=thread -pthread -I."
   "$CC" $X -o build/threads tests/threads.c
   "$CC" $X -o build/threads_audit tests/audit.c -lm
@@ -544,9 +557,9 @@ arm_clean() { rm -rf build; trap - EXIT; }
 HOST_ARMS="audit regressions coverage load train elm playing portability recipes tu examples tiny docs noheap determinism pragma freestanding targets mpe sinks"
 arm_test() {
   arms=$HOST_ARMS
-  if can_link -fsanitize=address,undefined; then arms="$arms fuzz sanitize"
+  if can_asan; then arms="$arms fuzz sanitize"
   else say "note  $CC cannot link AddressSanitizer: fuzz and sanitize are not run"; fi
-  if can_link -fsanitize=thread -pthread; then arms="$arms threads"
+  if can_tsan; then arms="$arms threads"
   else say "note  $CC cannot link ThreadSanitizer: threads is not run"; fi
   for a in $arms; do
     say ""
