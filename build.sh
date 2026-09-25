@@ -20,8 +20,9 @@
 # instead of twice and so changes the bits. GNU C (-std=gnu99) is C with the
 # GNU compilers' extensions, the dialect Arduino builds use, and the one in
 # which gcc contracts by default; ISO C (-std=c99) is the language as the
-# International Organization for Standardization defines it. x87 is the 32-bit x86 floating-point unit,
-# which computes in 80 bits and so cannot give iris's bits.
+# International Organization for Standardization defines it. x87 is the
+# 32-bit x86 floating-point unit, which computes in 80 bits and so cannot
+# give iris's bits.
 #
 # THE TEST PROGRAMS, each its own arm, each built with -std=c99 -Wall -Wextra
 #   audit        tests/audit.c, the pinned golden hash and exact checks; then
@@ -62,9 +63,11 @@
 #   pragma       tests/pragma_leak.sh, contraction off for iris's code only
 #   determinism  the golden hash and the starter hashes at -O0 -O1 -O2 -O3
 #                -Os, with contraction off, on and at the compiler's default,
-#                in ISO C and, where the compiler is gcc, GNU C; then a
-#                positive control: without its contraction pragmas iris.h
-#                must lose the golden hash, wherever this processor can fuse
+#                in ISO C and, where the compiler is gcc, GNU C (with -mfma
+#                on an x86-64 processor that has fused multiply-add, which
+#                baseline x86-64 lacks); then a positive control: without its
+#                contraction pragmas iris.h must lose the golden hash,
+#                wherever this processor can fuse
 #
 # NEEDS MORE THAN A C COMPILER, SO NOT IN test
 #   fuzz-load [S]  tests/fuzz_load.c under libFuzzer for S seconds (60);
@@ -260,27 +263,10 @@ arm_targets()      { sh tests/targets.sh; }
 arm_pragma()       { sh tests/pragma_leak.sh; }
 
 arm_determinism() {
-  modes=$STD
-  if ! is_clang "$CC"; then modes="$STD -std=gnu99"; fi   # gcc contracts in GNU C by default
-  n=0
-  for std in $modes; do
-    for O in -O0 -O1 -O2 -O3 -Os; do
-      for fc in off on default; do
-        F="-ffp-contract=$fc"
-        if [ "$fc" = default ]; then F=""; fi
-        "$CC" $std $O $WARN $F -pthread -I. -o build/det_audit tests/audit.c -lm
-        "$CC" $std $O $WARN $F -I. -o build/det_recipes tests/starter_recipes.c -lm
-        ./build/det_audit golden > build/det_audit.out || { cat build/det_audit.out; fail "determinism: golden hash, $std $O contraction $fc"; }
-        ./build/det_recipes > build/det_recipes.out || { cat build/det_recipes.out; fail "determinism: starter recipes, $std $O contraction $fc"; }
-        say "PASS  $std $O contraction $fc: 0x6805FB0D, 0xB7FC47A0, 0x203834ED"
-        n=$((n + 1))
-      done
-    done
-  done
-  say "PASS  determinism: the golden hash and both starter hashes in all $n builds"
-  # The positive control: the same program against a copy of iris.h without
-  # its contraction pragmas must lose the golden hash, or the builds above
-  # could not have seen a contraction leak.
+  # Contraction can change a bit only where the processor has a fused
+  # multiply-add. Every 64-bit ARM processor has one; baseline x86-64 has
+  # none, so on an x86-64 processor that has it every build below adds -mfma,
+  # or no build there could fuse and the arm would be blind.
   can_fuse=no; mflag=""
   case $(uname -m) in
     arm64|aarch64) can_fuse=yes ;;
@@ -289,6 +275,30 @@ arm_determinism() {
         can_fuse=yes; mflag=-mfma
       fi ;;
   esac
+  if [ "$can_fuse" = no ]; then
+    say "note  this processor has no fused multiply-add: the builds below cannot see contraction"
+  fi
+  modes=$STD
+  if ! is_clang "$CC"; then modes="$STD -std=gnu99"; fi   # gcc contracts in GNU C by default
+  n=0
+  for std in $modes; do
+    for O in -O0 -O1 -O2 -O3 -Os; do
+      for fc in off on default; do
+        F="-ffp-contract=$fc"
+        if [ "$fc" = default ]; then F=""; fi
+        "$CC" $std $O $mflag $WARN $F -pthread -I. -o build/det_audit tests/audit.c -lm
+        "$CC" $std $O $mflag $WARN $F -I. -o build/det_recipes tests/starter_recipes.c -lm
+        ./build/det_audit golden > build/det_audit.out || { cat build/det_audit.out; fail "determinism: golden hash, $std $O ${mflag:+$mflag }contraction $fc"; }
+        ./build/det_recipes > build/det_recipes.out || { cat build/det_recipes.out; fail "determinism: starter recipes, $std $O ${mflag:+$mflag }contraction $fc"; }
+        say "PASS  $std $O ${mflag:+$mflag }contraction $fc: 0x6805FB0D, 0xB7FC47A0, 0x203834ED"
+        n=$((n + 1))
+      done
+    done
+  done
+  say "PASS  determinism: the golden hash and both starter hashes in all $n builds"
+  # The positive control: the same program against a copy of iris.h without
+  # its contraction pragmas must lose the golden hash, or the builds above
+  # could not have seen a contraction leak.
   if [ "$can_fuse" = no ]; then
     say "note  determinism control not run: this processor has no fused multiply-add"
     return 0
