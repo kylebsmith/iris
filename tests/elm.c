@@ -553,15 +553,17 @@ int main(int argc, char **argv) {
     int after = iris_worst_example_id(k, 0);
 
     /* and every stored value is exactly that demonstration's squared miss
-       under the solve, in normalised units; every slot past the last is 0,
-       even after a backprop run over more demonstrations than the solve saw
-       (iris_clear and iris_record leave the ledger alone, so a slot left
-       holding an old sum would be read again by the next take recorded) */
+       under the solve, in normalised units, and every slot past the last is
+       0: the solve rewrites the whole ledger rather than trusting the slots
+       it does not fill, because iris_record leaves the ledger alone and a
+       slot holding an old sum would be read again by the next take
+       recorded. The sums written past the last take below stand in for
+       such a leftover. */
     int exact = (k->res_epochs == 1);
-    iris_train(k);
     iris_clear(k);
     xs = 99u;
     ledger_session(k, 13, 0, 0, 0.0f);
+    for (int n = k->n_ex; n < k->cap; ++n) k->ex_res[n] = 1.0f;
     int ret2 = iris_train_elm(k, 1e-4f, scratch, sizeof scratch);
     if (ret2 < 0 || k->res_epochs != 1) exact = 0;
     for (int n = 0; n < k->cap; ++n) {

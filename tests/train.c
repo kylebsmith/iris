@@ -37,6 +37,8 @@
         draw times the rounded reciprocal of the root of the fan-in; every
         blocking call starts its shuffle from the identity order; the
         learning-rate and momentum clamps pass Weka's pair.
+    10. iris_clear empties the worst-demonstration ledger, so no take recorded
+        after it is named for a miss made on a cleared one.
 
    Not-a-number and infinity are built with __builtin_nanf and __builtin_inff,
    never by dividing by zero, so -fsanitize=float-divide-by-zero can run over
@@ -664,6 +666,53 @@ int main(void) {
              wrong, quotient_differs, restarts, weka, clamped);
     check("reciprocal starting weights, fresh shuffle, clamps", wrong == 0 && quotient_differs > 0
           && restarts && weka && clamped, d);
+  }
+
+  /* ---- 10. iris_clear empties the worst-demonstration ledger -------------
+     Twelve demonstrations, the sixth a bad take, fitted by iris_train and
+     by the closed-form solve, so the ledger holds a sum for every take and
+     names one (iris_train the bad take, the closed-form ledger its
+     neighbour: the endpoint ledger can miss, PART 8f). After iris_clear and
+     twelve clean takes recorded at the same positions, and before any
+     training, nothing may be named: every stress -1, iris_worst_example and
+     iris_worst_example_id -1 with a margin of 0, every slot of the ledger 0,
+     and iris_train_progress 0.0. Training the clean takes then fills the
+     ledger again, so the check tells an emptied ledger from a dead one. */
+  {
+    static unsigned char scr[IRIS_ELM_SCRATCH(12, 1)];
+    int right = 0; char first[200] = "";
+    for (int t = 0; t < 2; ++t) {
+      iris *k = iris_init(A, sizeof A, 2, 12, 1, 16, 11u);
+      for (int i = 0; i < 12; ++i) {
+        float in[2] = { (float)(i % 4), (float)(i / 4) }, out[1] = { in[0] + in[1] };
+        if (i == 5) out[0] = 40.0f;
+        iris_record(k, in, out);
+      }
+      if (t == 0) iris_train(k); else iris_train_elm(k, 1e-4f, scr, sizeof scr);
+      const int named = iris_worst_example(k, 0);
+      iris_clear(k);
+      for (int i = 0; i < 12; ++i) {
+        float in[2] = { (float)(i % 4), (float)(i / 4) }, out[1] = { 0.1f * in[0] };
+        iris_record(k, in, out);
+      }
+      float m = -1.0f;
+      const int worst = iris_worst_example(k, &m), worst_id = iris_worst_example_id(k, 0);
+      const float progress = iris_train_progress(k);
+      int stressed = 0, slots = 0;
+      for (int i = 0; i < 12; ++i) stressed += iris_example_stress(k, i) != -1.0f;
+      for (int i = 0; i < k->cap; ++i) slots += k->ex_res[i] != 0.0f;
+      const int trained = iris_train(k), again = iris_worst_example(k, 0);
+      const int ok = named >= 0 && worst == -1 && worst_id == -1 && m == 0.0f && progress == 0.0f
+                  && stressed == 0 && slots == 0 && trained && again >= 0;
+      right += ok;
+      if (!ok && !first[0])
+        snprintf(first, sizeof first, " -- %s: named %d before the clear; after it worst %d "
+                 "(margin %.2f), id %d, %d stresses and %d slots not empty, progress %g; "
+                 "trained again, worst %d", t ? "closed form" : "iris_train", named, worst,
+                 (double)m, worst_id, stressed, slots, (double)progress, again);
+    }
+    snprintf(d, sizeof d, "%d of 2 trainers' ledgers emptied by iris_clear%s", right, first);
+    check("iris_clear empties the worst-demonstration ledger", right == 2, d);
   }
 
   if (fails) printf("\n  %d FAILING\n", fails);

@@ -176,6 +176,10 @@ Behaviour changes on the playing path:
   its training-progress fields and any sliced run in place, reported
   `IRIS_DIVERGED_STUCK` for constant outputs and for takes all made at one
   gesture, and needed a float-aligned scratch buffer.
+- `iris_clear` left the worst-demonstration ledger in place, so until the next
+  training run the takes recorded after it read the cleared takes' sums and
+  `iris_worst_example` could name a clean take. It now empties the ledger, whose
+  readers then answer -1, and `iris_train_progress` reads 0.0 after it.
 - `iris_suggest_smoothing` restored the instrument through a save and a load,
   which lost the momentum velocities and silenced a stale instrument; it now
   restores every byte of the arena.
