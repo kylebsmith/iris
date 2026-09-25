@@ -28,12 +28,9 @@
    EVERY FIGURE IN THE "est. S3" COLUMNS IS A SCALING OF A HOST MEASUREMENT,
    NOT A READING FROM THE BOARD. Two of these have hardware readings behind
    them and two do not. backprop-600: 321 ms at 20 examples (BRINGUP-LOG).
-   iris_continue_to_plateau: 595 ms at 4 demonstrations and 2.7-3.0 s at 8 to 20,
-   from device_torture test 5, which times iris_train() -- and iris_train() is
-   a thin wrapper whose last statement is iris_continue_to_plateau(k,0,0,0), so
-   timing one times the other. This comment previously said converge was
-   unmeasured while README.md:158-159 quoted the numbers. iris_train_elm
-   really is UNMEASURED on device.                                          */
+   iris_train: 595 ms at 4 demonstrations and 2.7-3.0 s at 8 to 20, from
+   device_torture test 5, which times iris_train(). iris_train_elm really is
+   UNMEASURED on device.                                                    */
 #define IRIS_S3_SCALE 270.0
 #include <stdio.h>
 #include <string.h>
@@ -1135,7 +1132,8 @@ int main(void) {
 
     iris *ka = iris_init(arena_b, sizeof arena_b, NI, NH, NO, CAP, 4242u);
     load_examples(ka, 20);
-    float econv = iris_continue_to_plateau(ka, 0, 0, 0);
+    iris_train(ka);
+    float econv = iris_last_error(ka);
     float rconv = recall_rmse_of(ka);
     int epochs_used = ka->tr_done;
 
@@ -1180,7 +1178,7 @@ int main(void) {
         if (i == bad) out[i % NO] = iris_internal_clampf(out[i % NO] + 0.20f, 0.0f, 1.0f);
         iris_record(kd, in, out);
       }
-      iris_continue_to_plateau(kd, 0, 0, 0);
+      iris_train(kd);
       float m = 0.0f;
       if (iris_worst_example(kd, &m) == bad) hits++;
       if (m > worst_margin) worst_margin = m;
@@ -1188,7 +1186,7 @@ int main(void) {
       /* the same seed, the same twenty points, nothing corrupted */
       iris *kc = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 1000u + (uint32_t)t * 7919u);
       load_examples(kc, 20);
-      iris_continue_to_plateau(kc, 0, 0, 0);
+      iris_train(kc);
       float mc = 0.0f;
       (void)iris_worst_example(kc, &mc);
       if (mc > loudest_clean) loudest_clean = mc;
@@ -1197,7 +1195,7 @@ int main(void) {
     /* and below IRIS_STRESS_MIN_EX it must refuse to have an opinion at all */
     iris *ks = iris_init(arena_d, sizeof arena_d, NI, NH, NO, CAP, 5);
     load_examples(ks, 6);
-    iris_continue_to_plateau(ks, 0, 0, 0);
+    iris_train(ks);
     float ms = 0.0f;
     int small_silent = iris_worst_example(ks, &ms) == -1;
 
@@ -1216,7 +1214,8 @@ int main(void) {
   {
     iris *k3 = iris_init(arena_d, sizeof arena_d, NI, NH, NO, CAP, 4242u);
     load_examples(k3, 20);
-    float sc = iris_continue_to_plateau(k3, 0, 0, 0);
+    iris_train(k3);
+    float sc = iris_last_error(k3);
     ok("the converged trainer reaches a usable fit", sc > 0.0f && sc < 1e-3f,
        "20 examples trained to the plateau: mean squared error %.3e "
        "(want < 1e-3)", sc);
@@ -1242,7 +1241,7 @@ int main(void) {
       float in[NI] = { u, 1.0f - u }, out[NO] = { u, 0.5f, 1.0f - u };
       iris_record(d, in, out);
     }
-    iris_continue_to_plateau(d, 0, 0, 0);
+    iris_train(d);
     float pr[NI] = { 0.60f, 0.40f }, healthy[NO];
     iris_predict(d, pr, healthy);
 
@@ -1343,7 +1342,7 @@ int main(void) {
   printf("TRAINING COST  (this machine; S3 columns below are x270)\n\n");
   printf("  * S3 columns are the HOST time x270, not board readings.\n"
          "    Measured on hardware: backprop-600 (321 ms @20 ex,\n"
-         "    BRINGUP-LOG.md:198) and converge (595 ms @4 demos, 2.7-3.0 s\n"
+         "    BRINGUP-LOG.md:198) and iris_train (595 ms @4 demos, 2.7-3.0 s\n"
          "    @8-20, device_torture test 5). ELM is UNMEASURED on\n"
          "    device.\n\n");
   printf("  examples   backprop-600      S3 x270*  |  ELM nh-12       S3 x270*\n");
@@ -1369,18 +1368,19 @@ int main(void) {
            exs[e], dt, dt * IRIS_S3_SCALE, de, de * IRIS_S3_SCALE);
   }
 
-  /* THE CONVERGED TRAINER — the default since v0.3.0, and the one number a
+  /* THE PLATEAU TRAINER, iris_train — the default, and the one number a
      musician actually waits on. Reported separately because it is the only
      path here whose cost is not a fixed budget: it stops when the error
      plateaus, so the epochs it spends are part of the measurement. */
-  printf("\n  iris_continue_to_plateau (plateau test, ceiling %d) — the default\n", IRIS_CONV_CEILING);
+  printf("\n  iris_train (plateau test, ceiling %d) — the default\n", IRIS_CONV_CEILING);
   printf("  examples   epochs spent      host        S3 x270*    train MSE   (600-epoch MSE)\n");
   for (int e = 0; e < 5; ++e) {
     iris *kk = iris_init(arena_c, sizeof arena_c, NI, NH, NO, CAP, 4242u);
     load_examples(kk, exs[e]);
     double t0 = now_ms();
-    float ec = iris_continue_to_plateau(kk, 0, 0, 0);
+    iris_train(kk);
     double dt = now_ms() - t0;
+    float ec = iris_last_error(kk);
     int used = kk->tr_done;
     iris *k6 = iris_init(arena_d, sizeof arena_d, NI, NH, NO, CAP, 4242u);
     load_examples(k6, exs[e]);

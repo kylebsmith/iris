@@ -854,9 +854,10 @@ struct iris {
   iris_internal_rng rng;
   int32_t trained;         /* the fit reflects the CURRENT example set      */
   int32_t fitted;          /* this instrument has EVER produced a fit.
-                              iris_record/iris_delete clear `trained` (the fit is
-                              stale) but must NOT clear this (the instrument
-                              still plays). iris_predict guards on this one.   */
+                              iris_record and the delete functions clear
+                              `trained` (the fit is stale) but must NOT clear
+                              this (the instrument still plays). iris_predict
+                              guards on this one.                           */
   float   last_error;
   int32_t status;          /* iris_status of the last train/predict */
 
@@ -1736,9 +1737,10 @@ IRIS_API void iris_predict(iris *k, const float *in, float *out) { if (!k) retur
      IRIS_NOT_FITTED.
 
      IT GUARDS ON `fitted`, NOT ON `trained`, AND THE DIFFERENCE MATTERS.
-     iris_record and iris_delete clear `trained` -- the fit no longer reflects
-     the current example set -- but the instrument is still a real instrument
-     and must keep playing mid-performance (tests/playing.c holds that).
+     iris_record and the delete functions clear `trained` -- the fit no
+     longer reflects the current example set -- but the instrument is still a
+     real instrument and must keep playing mid-performance (tests/playing.c
+     holds that).
      `fitted` says "this has EVER produced a fit". It is cleared by
      iris_reseed and iris_clear, and by loading a file saved before any fit. */
   if (!k->fitted) {
@@ -2202,8 +2204,8 @@ IRIS_API float iris_internal_train_run(iris *k, int epochs, int conv, int resume
       }
 
       /* --- apply the nudges, with momentum -------------------------------- */
-      /* WEIGHT DECAY, when asked for. `wd` is zero unless iris_set_l2 was
-         called, and when it is zero this is bit-for-bit the update that shipped
+      /* WEIGHT DECAY, when asked for. `wd` is zero unless iris_set_smoothing
+         set it, and when it is zero this is bit-for-bit the update that shipped
          before decay existed — `w[h] -= 0.0f * w[h]` is exact in IEEE, so the
          golden training hash is unaffected and the default path costs one
          multiply that the optimiser can see is dead.

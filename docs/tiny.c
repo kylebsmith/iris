@@ -109,7 +109,7 @@ int main(void) {
   iris *k = iris_init(mem, sizeof mem, NI, NH, NO, 8, 1234);
   const float D[NEX][3] = { {0,0,0.05f}, {1,0,0.95f}, {0,1,0.95f}, {1,1,0.05f} };
   for (int e = 0; e < NEX; ++e) iris_record(k, D[e], &D[e][2]);
-  iris_continue_to_plateau(k, 0, 0, 0);
+  iris_train(k);
 
   const char *RAMP = " .:-=+*#%@";
   double acc = 0.0; int n = 0;

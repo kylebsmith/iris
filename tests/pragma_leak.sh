@@ -102,8 +102,8 @@ void w_ranges(void)     { iris_internal_fit_ranges(K); }
 void w_norm(void)       { F = iris_internal_norm_in(K, I, F); F = iris_internal_norm_out(K, I, F);
                           F = iris_internal_denorm_out(K, I, F); }
 void w_forward(void)    { iris_internal_forward_norm(K, IN); I = iris_internal_shape_fits(K); }
-void w_epochs(void)     { F = iris_continue(K, I); }
-void w_converge(void)   { F = iris_continue_to_plateau(K, I, 0, 0); }
+void w_continue(void)   { F = iris_continue(K, I); }
+void w_plateau(void)    { F = iris_continue_to_plateau(K, I, 0, 0); }
 void w_train(void)      { I = iris_train(K); }
 void w_check(void)      { I = iris_internal_check_weights(K); }
 void w_run(void)        { F = iris_internal_train_run(K, I, 1, 0, 0, 0); }

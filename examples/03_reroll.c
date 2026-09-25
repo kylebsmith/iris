@@ -12,11 +12,12 @@
    starting point, and moving the starting point moves everything you did not
    pin down.
 
-   BUT NOT EVERY TRAINER. Measured 2026-08-27 on this task, mean absolute
-   difference across the whole space between seed 7 and seed 99:
+   BUT NOT EVERY TRAINER. Measured on this task, the mean absolute
+   difference between seed 7 and seed 99 over a 101 x 101 grid of the
+   gesture square:
 
-       iris_continue_to_plateau (backprop to a plateau) : 0.0227
-       iris_train_elm      (frozen random layer)   : 0.1468   <- 6.5x more
+       iris_train      (backprop to a plateau) : 0.0242
+       iris_train_elm  (frozen random layer)   : 0.1546   <- 6.4x more
 
    Training to a plateau drives toward the same surface whatever the seed — the
    randomness gets washed out on the way. ELM freezes its hidden layer instead

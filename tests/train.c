@@ -147,10 +147,10 @@ static int refusals_change_nothing(iris *k, int32_t want, char *why, size_t whyl
       memcpy(A, SNAP, sizeof A); } while (0)
 #define REFUSES(expr, label) REFUSES_AS(expr, label, want)
   REFUSES(iris_train(k) == 0, "train");
-  REFUSES(iris_continue(k, 50) == -1.0f, "epochs");
+  REFUSES(iris_continue(k, 50) == -1.0f, "continue");
   cb_calls = 0;
-  REFUSES(iris_continue_to_plateau(k, 4000, count_cb, 0) == -1.0f && cb_calls == 0, "converge");
-  REFUSES(iris_continue_to_plateau(k, 0, 0, 0) == -1.0f, "converge-default");
+  REFUSES(iris_continue_to_plateau(k, 4000, count_cb, 0) == -1.0f && cb_calls == 0, "plateau");
+  REFUSES(iris_continue_to_plateau(k, 0, 0, 0) == -1.0f, "plateau-default");
   REFUSES(iris_train_begin(k, 0) == 0, "begin");
   /* no run is in flight, so a slice has nothing to continue and asks nothing */
   REFUSES_AS(iris_train_slice(k, 50) == 0, "slice", IRIS_RIDGE_ESCALATED);
@@ -274,7 +274,8 @@ int main(void) {
   }
   {
     /* With an explicit ceiling it is the run iris_train makes with that
-       ceiling: reseed from the instrument's own seed, then converge. */
+       ceiling: reseed from the instrument's own seed, then continue to the
+       plateau. */
     iris *k = lived_in(2, 12, 3, 32, 14, 99u);
     memcpy(SNAP, A, sizeof A);
     iris_reseed(k, iris_seed(k));

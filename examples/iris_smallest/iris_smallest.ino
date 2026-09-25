@@ -19,7 +19,7 @@ void setup() {
   float in, out;
   in = 0.0f; out = 0.0f; iris_record(k, &in, &out);   /* here, be silent */
   in = 1.0f; out = 1.0f; iris_record(k, &in, &out);   /* there, be loud  */
-  iris_continue_to_plateau(k, 0, 0, 0);
+  iris_train(k);
 
   for (int i = 0; i <= 10; ++i) {
     in = i / 10.0f;

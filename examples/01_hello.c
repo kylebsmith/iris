@@ -37,9 +37,9 @@ int main(void) {
       { printf("refused example %d\n", i); return 1; }
 
   /* TRAIN. No epoch count to guess: it stops when it stops improving. */
-  float err = iris_continue_to_plateau(k, 0, 0, 0);
+  if (!iris_train(k)) { printf("training refused\n"); return 1; }
   printf("trained: %d epochs, final error %.2e\n\n",
-         iris_train_epochs_done(k), err);
+         iris_train_epochs_done(k), iris_last_error(k));
 
   /* PLAY — including gestures never demonstrated. The interesting column is
      the middle one: nobody showed it (0.25, 0.25). */
