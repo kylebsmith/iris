@@ -53,8 +53,8 @@
 #                      (its double accumulator, and the comparison that skips
 #                      an output whose demonstrations never moved).
 #                      iris_suggest_smoothing's five-entry table of settings
-#                      is static const, so GCC for this processor no longer
-#                      copies it onto the stack with memcpy.
+#                      is static const, so GCC for this processor does not
+#                      copy it onto the stack with memcpy.
 # Section 5 requires exactly these lists, the ones the masthead of iris.h
 # states, so a symbol that appears or disappears fails here until the
 # masthead and EVERY below are brought up to date together.
