@@ -1,5 +1,6 @@
 iris 0.2.0 on an ES3C28P (ESP32-S3 revision 2, 240 MHz), 2026-09-25
-Library core-0.2.0 at d81000f; starter-0.2.0 sketches; Arduino-ESP32 3.3.3,
+Library at commit d81000f; sketches from iris-starter at c60456f, whose copies
+of iris.h are that commit's header byte for byte; Arduino-ESP32 3.3.3,
 ESP-IDF v5.5.1, xtensa gcc 14.2.0, -Os, USB-OTG (TinyUSB), uploaded with
 arduino-cli; serial output captured at 115200 baud. Each section is the first
 complete pass the sketch printed; the sketches repeat their result afterwards.
@@ -48,7 +49,7 @@ complete pass the sketch printed; the sketches repeat their result afterwards.
 ==================================================================
 
 === board_probe (record block) ===
-BEGIN BOARD PROBE RECORD -----
+----- BEGIN BOARD PROBE RECORD -----
 R,env,chip,ESP32-S3,text
 R,env,chip_revision,2,revision
 R,env,cpu_clock,240,MHz
@@ -133,4 +134,4 @@ R,train,iris_train_elm_50_demos,3.540,ms (mean of 20)
 R,train,iris_train_elm_50_demos_trained,1,1 = fitted
 R,env,stack_never_used,4828,bytes
 R,hash,summary,3 PASS 0 FAIL,text
------ END
+----- END BOARD PROBE RECORD -----
