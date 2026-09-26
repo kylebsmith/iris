@@ -1,0 +1,138 @@
+iris 0.2.0 as released (tag v0.2.0, commit 513dc48) on the same ES3C28P
+(ESP32-S3 revision 2, 240 MHz), 2026-09-25, later the same day as
+2026-09-25-es3c28p.txt. Sketches from iris-starter at 9759184, whose copies of
+iris.h are the tag's header byte for byte; Arduino-ESP32 3.3.3, ESP-IDF v5.5.1,
+xtensa gcc 14.2.0, -Os, USB-OTG (TinyUSB), uploaded with arduino-cli; serial
+output captured at 115200 baud. Each section is the first complete pass the
+sketch printed; the sketches repeat their result afterwards.
+
+=== determinism_check ===
+=== iris on-device determinism check ===
+  library version   0.2.0
+  recipe            seed 1234, 20 demonstrations, iris_reseed + iris_continue 800
+  training took     611 ms
+  saved file        872 bytes   laptop 872
+  PASS  prediction hash   0x203834ED   laptop 0x203834ED
+  PASS  saved-bytes hash  0xD8666A69   laptop 0xD8666A69
+  RESULT: PASS -- this chip builds the same instrument as the laptop, bit for bit.
+
+=== device_torture ===
+==================================================================
+  IRIS ON-DEVICE TORTURE TEST   library 0.2.0
+==================================================================
+
+  PASS  1 determinism on this chip        0xB7FC47A0 == host
+  ----  2 heap delta across init+train+predict  0 bytes (the operating system's, not ours --
+        the no-allocation proof is the symbol table,
+        checked by the library's tests/freestanding.sh)
+  PASS  3 survives real flash             872 bytes through flash, hash identical
+  PASS  4 every single-bit corruption     6976 refused, 0 accepted
+
+  5 iris_train time on this chip, on this sketch's recipe
+    (inputs that move together: not representative data --
+    board_probe times training on representative data):
+        4 demonstrations  623 ms   3823 epochs
+        8 demonstrations  2889 ms   9343 epochs
+        14 demonstrations  3178 ms   6000 epochs
+        20 demonstrations  3000 ms   4000 epochs
+
+  PASS  6 stack headroom remaining        6428 bytes never used
+  PASS  7 no drift over a long run        40,000 predictions, bit-identical
+  PASS  8 instruments stay independent    3 instruments, 6,000 interleaved, no cross-talk
+
+  9 mean per prediction, loop overhead included   15.125 us   (20000 calls in 302495 us)
+      one audio sample at 48 kHz lasts 20.8 us; this mean is 72.7% of it.
+
+
+==================================================================
+  6 passed, 0 failed, 0 skipped
+  Every test that ran passed on this chip. DONE.
+==================================================================
+
+=== board_probe (record block) ===
+----- BEGIN BOARD PROBE RECORD -----
+R,env,chip,ESP32-S3,text
+R,env,chip_revision,2,revision
+R,env,cpu_clock,240,MHz
+R,env,core,1,core number
+R,env,flash_speed,80000000,Hz
+R,env,esp_idf,v5.5.1-418-gf1a1df9b2e,text
+R,env,arduino_esp32,3.3.3,text
+R,env,compiler,14.2.0,text
+R,env,optimisation,-Os,text
+R,env,usb_mode,USB-OTG (TinyUSB),text
+R,env,iris,0.2.0,text
+R,env,built,Sep 25 2026 21:40:25,text
+R,env,board_id_mac,8088CFF61B44,text
+R,env,subnormal_product_bits,7136,bits as a number (0 = flushed to zero)
+R,env,subnormal_operand_bits,71362,bits as a number (0 = flushed to zero)
+R,hash,golden_recipe_tests_audit_c,0x6805FB0D,PASS == laptop 0x6805FB0D
+R,hash,device_torture_test_1,0xB7FC47A0,PASS == laptop 0xB7FC47A0
+R,hash,determinism_check_predictions,0x203834ED,PASS == laptop 0x203834ED
+R,predict_2_12_3,trained,1,1 = fitted (0 would time a shortcut)
+R,predict_2_12_3,status,0,code (0 = healthy)
+R,predict_2_12_3,batch_min_per_call,3588.1,cycles
+R,predict_2_12_3,batch_median_per_call,3588.8,cycles
+R,predict_2_12_3,batch_max_per_call,3590.7,cycles
+R,predict_2_12_3,empty_loop_per_call_subtracted,12.0,cycles
+R,predict_2_12_3,batch_median_per_call_us,14.9533,us
+R,predict_2_12_3,interrupts_off_per_call,3601.2,cycles
+R,predict_2_12_3,call_min,3553,cycles
+R,predict_2_12_3,call_p50,3573,cycles
+R,predict_2_12_3,call_p99,4682,cycles
+R,predict_2_12_3,call_p99_9,4756,cycles
+R,predict_2_12_3,call_max,11188,cycles
+R,predict_2_12_3,call_p99_9_us,19.817,us
+R,predict_2_12_3,call_max_us,46.617,us
+R,predict_6_16_8,trained,1,1 = fitted (0 would time a shortcut)
+R,predict_6_16_8,status,0,code (0 = healthy)
+R,predict_6_16_8,batch_min_per_call,8558.7,cycles
+R,predict_6_16_8,batch_median_per_call,8560.7,cycles
+R,predict_6_16_8,batch_max_per_call,8566.9,cycles
+R,predict_6_16_8,empty_loop_per_call_subtracted,12.0,cycles
+R,predict_6_16_8,batch_median_per_call_us,35.6697,us
+R,predict_6_16_8,interrupts_off_per_call,8558.9,cycles
+R,predict_6_16_8,call_min,8504,cycles
+R,predict_6_16_8,call_p50,8516,cycles
+R,predict_6_16_8,call_p99,9664,cycles
+R,predict_6_16_8,call_p99_9,9701,cycles
+R,predict_6_16_8,call_max,17644,cycles
+R,predict_6_16_8,call_p99_9_us,40.421,us
+R,predict_6_16_8,call_max_us,73.517,us
+R,predict_12_32_8,trained,1,1 = fitted (0 would time a shortcut)
+R,predict_12_32_8,status,0,code (0 = healthy)
+R,predict_12_32_8,batch_min_per_call,17792.8,cycles
+R,predict_12_32_8,batch_median_per_call,17798.7,cycles
+R,predict_12_32_8,batch_max_per_call,17799.7,cycles
+R,predict_12_32_8,empty_loop_per_call_subtracted,12.0,cycles
+R,predict_12_32_8,batch_median_per_call_us,74.1613,us
+R,predict_12_32_8,interrupts_off_per_call,17754.6,cycles
+R,predict_12_32_8,call_min,17698,cycles
+R,predict_12_32_8,call_p50,17706,cycles
+R,predict_12_32_8,call_p99,18851,cycles
+R,predict_12_32_8,call_p99_9,18886,cycles
+R,predict_12_32_8,call_max,25785,cycles
+R,predict_12_32_8,call_p99_9_us,78.692,us
+R,predict_12_32_8,call_max_us,107.438,us
+R,train,iris_train_10_demos,10616.3,ms
+R,train,iris_train_10_demos_epochs,27825,epochs
+R,train,iris_train_10_demos_trained,1,1 = fitted
+R,train,iris_train_20_demos,13449.4,ms
+R,train,iris_train_20_demos_epochs,18000,epochs
+R,train,iris_train_20_demos_trained,1,1 = fitted
+R,train,iris_train_50_demos,22128.5,ms
+R,train,iris_train_50_demos_epochs,12000,epochs
+R,train,iris_train_50_demos_trained,1,1 = fitted
+R,train,slice_64_epochs_20_demos_median,48141,us
+R,train,slice_64_epochs_20_demos_max,48215,us
+R,train,slices_timed,282,slices
+R,train,iris_continue_600_10_demos,228.9,ms
+R,train,iris_continue_600_20_demos,448.8,ms
+R,train,iris_continue_600_50_demos,1107.8,ms
+R,train,iris_train_elm_20_demos,1.525,ms (mean of 20)
+R,train,iris_train_elm_20_demos_trained,1,1 = fitted
+R,train,iris_train_elm_50_demos,3.539,ms (mean of 20)
+R,train,iris_train_elm_50_demos_trained,1,1 = fitted
+R,env,stack_never_used,5084,bytes
+R,hash,summary,3 PASS 0 FAIL,text
+----- END BOARD PROBE RECORD -----

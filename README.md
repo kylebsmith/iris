@@ -355,7 +355,10 @@ every byte back.
   reproduced every host hash bit for bit: `determinism_check` (`0x203834ED`, and
   the saved file's `0xD8666A69`), `device_torture` test 1 (`0xB7FC47A0`) and the
   golden recipe of `tests/audit.c` (`0x6805FB0D`) in `board_probe`
-  ([board log](docs/board/2026-09-25-es3c28p.txt)). A second board has not been run.
+  ([board log](docs/board/2026-09-25-es3c28p.txt)), and did so again with the
+  header as tagged `v0.2.0`
+  ([release board log](docs/board/2026-09-25-es3c28p-v0.2.0.txt)). A second
+  board has not been run.
 - **The ESP32-S3 does not flush subnormal numbers to zero** (measured by
   `board_probe`). iris flushes its own decaying tails below `IRIS_TINY`, so
   host and board agree either way.
