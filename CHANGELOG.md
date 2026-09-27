@@ -23,6 +23,23 @@ unmoved.
 
 ### Additions
 
+- `iris_nearest(k, in, ids, dists, n)` hands out the ranking the neighbour
+  functions keep to themselves: the identifiers of the n takes nearest a
+  reading, nearest first, and how near each is. The distance is the
+  straight-line distance with every input counted in fractions of its range,
+  the unit every neighbour function ranks by, so a threshold means the same on
+  any instrument whose inputs have the same ranges. Its first identifier is
+  the one `iris_classify_1nn` returns and its first k, for k up to
+  `IRIS_KNN_MAXK`, are the takes `iris_knn_predict` blends, ties included; it
+  refuses as `iris_classify_1nn` does and writes inside the instrument only
+  what that function writes. A take whose squared distance overflows a float
+  is left out while any take is at a finite distance, as `iris_knn_predict`
+  leaves it out; when none is, the takes are ranked by the far distance and
+  every distance reported is infinity. Either buffer may be null, and the
+  stack does not grow with n. Hysteresis on a snapped category, feedback on
+  how near a take the player is, and a threshold for gestures nobody taught
+  all need this number.
+
 ### Documentation
 
 ## 0.2.0 — 2026-09-25

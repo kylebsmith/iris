@@ -164,6 +164,7 @@ int iris_probe(void) {
   iris_knn_predict(k, in, out, 3);
   SINKF += out[1];
   SINKI += iris_classify_1nn(k, in, out);
+  { int ids[2]; float dists[2]; SINKI += iris_nearest(k, in, ids, dists, 2); }
   iris_internal_span(k, 0, &lo, &hi);
   iris_internal_neighbour_scale(k, inv);
   SINKF += lo + hi + iris_internal_centre(k, 0)
@@ -208,6 +209,7 @@ void play(void) {
   SINK += iris_novelty(K, IN);
   iris_knn_predict(K, IN, OUT, 3); SINK += OUT[0];
   SINK += (float)iris_classify_1nn(K, IN, OUT);
+  { int ids[2]; float dists[2]; SINK += (float)iris_nearest(K, IN, ids, dists, 2); }
   iris_delete_nearest(K, IN); iris_delete_last(K); iris_clear(K);
   SINK += (float)iris_get_status(K);
 }

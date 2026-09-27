@@ -91,6 +91,7 @@ static void s_neighbours(void) {
     in[0] = (float)(i % 101) / 100.0f; in[1] = 0.3f;
     iris_knn_predict(K, in, out, 3); SINK += out[1];
     SINK += (float)iris_classify_1nn(K, in, out);
+    { int ids[3]; float dists[3]; SINK += (float)iris_nearest(K, in, ids, dists, 3); }
   }
 }
 static void s_queries(void) {

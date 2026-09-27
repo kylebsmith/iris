@@ -13,10 +13,12 @@
    those blocks, and any undefined arithmetic, is reported by the sanitizer,
    a tool with no opinion about what the right answer is.
 
-   It asserts two things of its own, both documented promises: whatever
+   It asserts three things of its own, each a documented promise: whatever
    goes in, iris_predict, iris_knn_predict and iris_classify_1nn write a
    finite number into every output (a not-a-number is replaced by the
-   range centre and reported, iris.h PART 6 and PART 10); and a file
+   range centre and reported, iris.h PART 6 and PART 10); iris_nearest
+   returns at most the n it was asked for, with distances that are never
+   negative, never not-a-number and never fall (PART 10); and a file
    iris_save wrote loads back into an instrument of the same shape, which
    then saves the very same bytes (PART 9).
 
@@ -93,7 +95,7 @@ int main(int argc, char **argv) {
     for (int step = 0; step < 40; ++step, ++calls) {
       for (int i = 0; i < n_in; i++)  in[i]  = rndf();
       for (int i = 0; i < n_out; i++) out[i] = rndf();
-      switch (rnd(22)) {
+      switch (rnd(23)) {
         case 0: case 1: case 2: iris_record(k, in, out); break;
         case 3: iris_predict(k, in, out); must_be_finite("iris_predict", out, n_out, it); break;
         case 4: iris_continue_to_plateau(k, (int)rnd(50), 0, 0); break;
@@ -148,6 +150,33 @@ int main(int argc, char **argv) {
             if (r) (void)iris_load(r, file, w);
           }
           free(file); break; }
+        case 22: { /* the nearest takes, into buffers of exactly the n asked
+                      for, sometimes null. A take of rndf values is rarely
+                      finite throughout, so the store is usually empty: this
+                      case first records a take of ordinary numbers, reads
+                      half the time from a stored take, and asks for up to
+                      two more takes than are stored, so that often every
+                      slot fills */
+          for (int i = 0; i < n_in; i++)  in[i]  = (float)((int)rnd(2000) - 1000) / 100.0f;
+          for (int i = 0; i < n_out; i++) out[i] = (float)((int)rnd(2000) - 1000) / 100.0f;
+          iris_record(k, in, out);
+          if (iris_count(k) > 0 && rnd(2)) iris_get(k, (int)rnd((unsigned)iris_count(k)), in, out);
+          const int n = (int)rnd((unsigned)iris_count(k) + 4) - 1;
+          int *ids = (int *)malloc(sizeof(int) * (size_t)(n > 0 ? n : 1));
+          float *dists = (float *)malloc(sizeof(float) * (size_t)(n > 0 ? n : 1));
+          const int with_d = rnd(4) != 0;
+          const int got = iris_nearest(k, in, rnd(4) ? ids : 0, with_d ? dists : 0, n);
+          if (got < 0 || got > (n > 0 ? n : 0) || got > iris_count(k)) {
+            printf("FAIL  iris_nearest returned %d for n %d (iteration %d)\n", got, n, it);
+            exit(1);
+          }
+          for (int j = 0; with_d && j < got; ++j)
+            if (!(dists[j] >= 0.0f) || (j > 0 && dists[j] < dists[j - 1])) {
+              printf("FAIL  iris_nearest's distance %d is %g (iteration %d)\n", j,
+                     (double)dists[j], it);
+              exit(1);
+            }
+          free(ids); free(dists); break; }
         default: { float m = 0.0f;
           (void)iris_example_stress(k, (int)rnd((unsigned)cap + 2) - 1);
           (void)iris_worst_example(k, &m); (void)iris_worst_example_id(k, &m); } break;

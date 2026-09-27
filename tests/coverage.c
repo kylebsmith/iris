@@ -78,7 +78,9 @@ int main(void) {
     if (iris_loo_error(0, 100) != -1.0f) bad++;
     if (iris_train_elm(0, 1e-4f, SCR, sizeof SCR) != -1) bad++;
     if (iris_classify_1nn(0, in, out) != -1) bad++;
-    snprintf(d, sizeof d, "%d of 19 calls answered wrongly", bad);
+    { int ids[1]; float dists[1];
+      if (iris_nearest(0, in, ids, dists, 1) != 0) bad++; }
+    snprintf(d, sizeof d, "%d of 20 calls answered wrongly", bad);
     check("a null instrument refuses across the whole surface", bad == 0, d); }
 
   /* ---- iris_predict on a null instrument writes nothing -----------------

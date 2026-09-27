@@ -264,6 +264,10 @@
                                           demonstrations
      int   iris_classify_1nn(k, in, out)  the nearest demonstration's outputs
                                           exactly; its identifier, or -1
+     int   iris_nearest(k, in, ids, dists, n)
+                                          the n nearest demonstrations'
+                                          identifiers and distances, nearest
+                                          first; how many it wrote
      float iris_novelty(k, in)            0 on a demonstration, rising to 1
                                           away from them; -1 if refused
 
@@ -899,7 +903,8 @@ IRIS_API float iris_internal_sigmoid(float x) {
    microseconds a closed-form fit of 20 demonstrations with 12 hidden units
    takes. It adds nothing to the neighbour searches (iris_knn_predict,
    iris_classify_1nn, iris_delete_nearest), which compare squared distances
-   and never take a root. */
+   and never take a root; iris_nearest takes one for each distance it
+   reports. */
 IRIS_API float iris_internal_sqrt(float x) {
   union { float f; uint32_t u; } v;
   v.f = x;
@@ -1083,8 +1088,8 @@ struct iris {
    the main loop, even if both only play it. iris_predict, iris_knn_predict
    and iris_classify_1nn write inside the instrument (the network's working
    values, the status, and on an instrument never fitted the neighbour
-   ranges), and iris_novelty fits those ranges too, which is why all four
-   take a non-const iris *. An interrupt landing mid-call leaves both
+   ranges), and iris_novelty and iris_nearest fit those ranges too, which
+   is why all five take a non-const iris *. An interrupt landing mid-call leaves both
    answers wrong: give the interrupt its own instrument. Functions that take
    a const iris * write nothing, but reading an instrument while another
    thread writes it is still a race.
@@ -1156,7 +1161,8 @@ struct iris {
    iris_record returns the new demonstration's identifier, never 0 because
    identifiers start at 1, so it obeys the rule and hands you the number you
    need later to delete that take; iris_get returns the identifier of the
-   row it copied.
+   row it copied; iris_nearest returns how many demonstrations it wrote out,
+   so its 0 too means it wrote nothing.
 
    Rule 2, for a call that returns a measurement you asked for: the
    measurement on success, -1 on refusal. That covers iris_continue,
@@ -1179,7 +1185,8 @@ struct iris {
        IRIS_NAN_TRAPPED.
      - With no demonstrations stored, iris_predict writes 0 and reports
        IRIS_NOT_FITTED, while iris_knn_predict and iris_classify_1nn write 0
-       (iris_classify_1nn also returns -1) and leave the status alone.
+       (iris_classify_1nn also returns -1), iris_nearest writes nothing and
+       returns 0, and all three leave the status alone.
 
    The readers cannot fail and so answer every question: iris_count,
    iris_capacity, iris_seed, iris_save_size, iris_is_trained,
@@ -4289,6 +4296,9 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
    the Weka-IBk reference" compares it with a double-precision reference
    written to the same rules.
 
+   iris_nearest, the last function in this part, hands out what the other
+   two keep to themselves: which takes are nearest, and how near.
+
    Every saved instrument can play this way with nothing added to its file:
    the demonstrations and ranges are already in it, and which algorithm
    plays it is a choice made at run time.
@@ -4630,6 +4640,120 @@ IRIS_API int iris_classify_1nn(iris *k, const float *in, float *out) { if (!k) r
 #endif
   }
   return (int)k->ex_id[best];
+}
+
+/* The nearest demonstrations themselves, and how near each one is: the n
+   takes nearest to the reading, nearest first, the earliest-recorded first
+   on a tie. ids receives their identifiers and dists their distances, and
+   either may be null. Returns how many it wrote into each: n, unless fewer
+   takes are stored or fewer lie at a finite distance (below), and 0 when it
+   refuses.
+
+   It ranks exactly as the neighbour functions above do, with the same
+   distance, the same scan and the same tie rule, so ids[0] is the
+   identifier iris_classify_1nn returns and, for any kk up to IRIS_KNN_MAXK,
+   the first kk are the takes iris_knn_predict blends. For n above that the
+   ranking carries on in the same order. What those functions keep to
+   themselves it hands out: how near the reading is. Holding a snapped
+   category until another take is clearly nearer (hysteresis), telling a
+   player how near a take they are, and refusing a gesture nobody taught all
+   need that number; examples/04_categories.c does the first.
+
+   The unit. A distance is the straight-line distance from the reading to
+   the take with every input counted in fractions of its range, the square
+   root of what the neighbour functions compare. 0.1 is a reading a tenth of
+   one input's range from the take and exactly on it in every other input;
+   a reading off by a tenth in each of n_in inputs is 0.1 * sqrt(n_in) away.
+   An input that never moved counts not at all. The number depends on the
+   reading, the take and the ranges alone, not on how many takes are stored,
+   and it is not clamped (novelty is, PART 7), so a threshold means the same
+   on every instrument whose inputs have the same ranges.
+
+   The ranges are the instrument's own, as for every neighbour function: the
+   ones it was last fitted to, or on an instrument never fitted the current
+   demonstrations', fitted here. A fitted instrument keeps its ranges when
+   you record or delete, so after new takes the distances are measured in
+   the ranges of the last fit until you train again.
+
+   Takes at no finite distance. A take recorded far outside the fitted
+   ranges can lie so many ranges from the reading that its squared distance
+   overflows a float. While any take is at a finite distance such a take is
+   left out, as iris_knn_predict leaves it out, so fewer than n can come
+   back. When no take is at a finite distance the takes are ranked by the
+   far distance (see iris_internal_distance2_far), as the other neighbour
+   functions rank them, and every distance reported is infinity: the far
+   distance caps each input at 10^15 ranges, so its values mean nothing in
+   the unit above, and infinity is past any threshold a caller sets.
+
+   It refuses as iris_classify_1nn does, returning 0 and writing nothing into
+   ids or dists: a null instrument, an empty store, a shape too big for this
+   translation unit (IRIS_NOT_FITTED), a reading that is not finite
+   (IRIS_NAN_TRAPPED), and a store with no take at any distance, which only
+   a not-a-number written into the arena makes (IRIS_NAN_TRAPPED). n below 1
+   asks for nothing and returns 0 before any of those. Inside the instrument
+   it writes what iris_classify_1nn writes when its `out` is null: the status
+   in those cases, and the ranges of an instrument never fitted.
+
+   The cost is iris_knn_predict's scan, once for the first IRIS_KNN_MAXK
+   takes and once more for each further IRIS_KNN_MAXK. The stack holds one
+   scan's slots whatever n is: asking for every take of a large store is
+   slow, never deep. */
+/* Lengths: unchecked, as everywhere (see the interface block). Reads
+   exactly n_in floats from `in` and writes at most n entries into each of
+   ids and dists. */
+IRIS_API int iris_nearest(iris *k, const float *in, int *ids, float *dists, int n) {
+  if (!k || n < 1) return 0;
+  if (!iris_internal_shape_fits(k)) { k->status = IRIS_NOT_FITTED; return 0; }
+  if (k->n_ex == 0) return 0;
+#ifndef IRIS_NO_GUARDS
+  for (int i = 0; i < k->n_in; ++i)
+    if (iris_internal_isbad(in[i])) { k->status = IRIS_NAN_TRAPPED; return 0; }
+#endif
+  if (!k->fitted) iris_internal_fit_ranges(k);
+  float inv[IRIS_MAX_IN];
+  iris_internal_neighbour_scale(k, inv);
+  union { float f; uint32_t u; } inf;
+  inf.u = 0x7F800000u;                       /* positive infinity, from its bits */
+  if (n > k->n_ex) n = k->n_ex;
+
+  /* Each pass is iris_knn_predict's scan for the next kk takes in the
+     ranking, which orders them by distance and then by position in the store:
+     a take already written ranks at or before the last one written, (last_d,
+     last_r), and is passed over. The first pass passes over nothing, so for n
+     up to IRIS_KNN_MAXK it is iris_knn_predict's scan exactly. A first pass
+     that finds nothing switches every pass to the far distance, as the other
+     functions rescan. */
+  const int stride = k->n_in + k->n_out;
+  int got = 0, far = 0, last_r = -1;
+  float last_d = -1.0f;
+  while (got < n) {
+    int   bi[IRIS_KNN_MAXK];
+    float bd[IRIS_KNN_MAXK];
+    const int kk = n - got < IRIS_KNN_MAXK ? n - got : IRIS_KNN_MAXK;
+    for (int j = 0; j < IRIS_KNN_MAXK; ++j) { bi[j] = -1; bd[j] = IRIS_FLT_MAX; }
+    for (int r = 0; r < k->n_ex; ++r) {
+      const float *row = k->ex + (size_t)r * stride;
+      const float d = far ? iris_internal_distance2_far(k, inv, row, in)
+                          : iris_internal_distance2(k, inv, row, in);
+      if (d > last_d || (d == last_d && r > last_r))
+        iris_internal_knn_insert(bd, bi, kk, r, d);
+    }
+    if (bi[0] < 0 && got == 0 && !far) { far = 1; continue; }
+    int found = 0;
+    while (found < kk && bi[found] >= 0) {
+      if (ids)   ids[got]   = (int)k->ex_id[bi[found]];
+      if (dists) dists[got] = far ? inf.f : iris_internal_sqrt(bd[found]);
+      last_d = bd[found]; last_r = bi[found];
+      ++found; ++got;
+    }
+    if (found < kk) break;                   /* the ranking has run out */
+  }
+#ifndef IRIS_NO_GUARDS
+  /* Neither distance found a take: every one holds a not-a-number (the
+     reading was finite). Report it, as iris_classify_1nn does. */
+  if (got == 0) k->status = IRIS_NAN_TRAPPED;
+#endif
+  return got;
 }
 
 /* The end of the floating-point scope opened by defence 3 of the determinism

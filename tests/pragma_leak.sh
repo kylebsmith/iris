@@ -83,8 +83,8 @@ static unsigned char file[IRIS_ARENA(NI, NH, NO, CAP)];
 static unsigned char scratch[IRIS_ELM_SCRATCH(NH, NO) + IRIS_ARENA(NI, NH, NO, CAP)];
 static iris_internal_rng R;
 static iris *K;
-static float IN[NI], OUT[NO], F;
-static int I;
+static float IN[NI], OUT[NO], F, DISTS[3];
+static int I, IDS[3];
 static unsigned long U;
 static size_t N;
 #ifdef __cplusplus
@@ -130,6 +130,7 @@ void w_elm(void)        { I = iris_train_elm(K, F, scratch, sizeof scratch); }
 void w_elm_ex(void)     { I = iris_internal_train_elm_ex(K, F, IN[0], IN[1], scratch, sizeof scratch); }
 void w_knn(void)        { iris_knn_predict(K, IN, OUT, I); }
 void w_1nn(void)        { I = iris_classify_1nn(K, IN, OUT); }
+void w_nearest(void)    { I = iris_nearest(K, IN, IDS, DISTS, 3); }
 void w_save(void)       { N = iris_save_size(K); N = iris_save(K, file, sizeof file);
                           U = iris_internal_crc32(file, N); }
 void w_load(void)       { I = iris_load(K, file, N); }

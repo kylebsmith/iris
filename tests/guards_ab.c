@@ -11,16 +11,16 @@
  * Fowler-Noll-Vo hash) of what that region computed on healthy data:
  * backpropagation for a fixed number of epochs, iris_train to the plateau,
  * the same run in slices, playing, the closed-form trainer, the neighbour
- * samplers, novelty, a save and a load, and the two diagnostics. Every one
- * of these lines must be identical in the two builds.
+ * samplers, novelty, the nearest takes, a save and a load, and the two
+ * diagnostics. Every one of these lines must be identical in the two builds.
  *
  * Then it prints lines beginning "control". Identical output from the two
  * builds is also exactly what you would get if -DIRIS_NO_GUARDS reached
  * nothing at all -- rename the macro in the header and the equality still
  * holds -- so each control line is a value a guard MUST change: a
  * not-a-number refused at iris_record's door, an instrument that was never
- * fitted asked to play, and a not-a-number reading played. Every control
- * line must DIFFER between the two builds.
+ * fitted asked to play, and a not-a-number reading played and asked for
+ * its nearest takes. Every control line must DIFFER between the two builds.
  *
  * Build:  cc -std=c99 -O2 -o build/guards_ab tests/guards_ab.c
  *         cc -std=c99 -O2 -DIRIS_NO_GUARDS -o build/guards_ab_ng tests/guards_ab.c
@@ -85,17 +85,20 @@ static uint32_t played(iris *k, int how) {
   uint32_t h = FNV0;
   for (int a = -2; a <= 22; ++a) for (int b = -2; b <= 22; ++b) {
     float in[NI] = { (float)a / 20.0f, (float)b / 20.0f }, out[NO] = { 0 };
-    int id = 0;
-    float nov = 0.0f;
+    int id = 0, ids[3] = { 0, 0, 0 };
+    float nov = 0.0f, dists[3] = { 0.0f, 0.0f, 0.0f };
     switch (how) {
       case 0: iris_predict(k, in, out); break;
       case 1: iris_knn_predict(k, in, out, 3); break;
       case 2: id = iris_classify_1nn(k, in, out); break;
+      case 4: id = iris_nearest(k, in, ids, dists, 3); break;
       default: nov = iris_novelty(k, in); break;
     }
     h = fnv1a(h, out, sizeof out);
     h = fnv1a(h, &id, sizeof id);
     h = fnv1a(h, &nov, sizeof nov);
+    h = fnv1a(h, ids, sizeof ids);
+    h = fnv1a(h, dists, sizeof dists);
   }
   return h;
 }
@@ -122,6 +125,7 @@ int main(void) {
   printf("knn played           0x%08X\n", played(k, 1));
   printf("1nn played           0x%08X\n", played(k, 2));
   printf("novelty              0x%08X\n", played(k, 3));
+  printf("nearest played       0x%08X\n", played(k, 4));
 
   /* a save and a load, then play what was loaded */
   { size_t n = iris_save(k, file, sizeof file);
@@ -157,6 +161,10 @@ int main(void) {
     float in[NI] = { NAN, 0.5f }, out[NO];
     iris_predict(t, in, out);
     printf("control not-a-number reading: finite %d %d %d status %d\n",
-           out[0] == out[0], out[1] == out[1], out[2] == out[2], (int)iris_get_status(t)); }
+           out[0] == out[0], out[1] == out[1], out[2] == out[2], (int)iris_get_status(t));
+    int ids[3]; float dists[3];
+    t->status = IRIS_STATUS_OK;
+    const int got = iris_nearest(t, in, ids, dists, 3);
+    printf("control not-a-number reading, nearest: %d status %d\n", got, (int)iris_get_status(t)); }
   return 0;
 }

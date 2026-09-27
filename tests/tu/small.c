@@ -53,6 +53,10 @@ int main(void) {
         iris_classify_1nn(k, in, out) == -1 && out[0] == c0 && out[1] == c1);
   check("iris_novelty refuses with -1", iris_novelty(k, in) == -1.0f);
   check("iris_delete_nearest refuses", iris_delete_nearest(k, in) == 0);
+  { int ids[3] = { -7, -7, -7 }; float dists[3] = { -7.0f, -7.0f, -7.0f };
+    check("iris_nearest refuses and writes nothing into ids or dists",
+          iris_nearest(k, in, ids, dists, 3) == 0 && iris_get_status(k) == IRIS_NOT_FITTED
+          && ids[0] == -7 && dists[0] == -7.0f); }
   check("iris_train refuses", iris_train(k) == 0);
   check("iris_train_begin refuses", iris_train_begin(k, 0) == 0);
   check("iris_train_slice refuses", iris_train_slice(k, 10) == 0);

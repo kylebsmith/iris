@@ -31,13 +31,14 @@ static float lcg01(void) {
 
 /* The playing functions write into the instrument -- the status, the
    network's activations, the ranges of a never-fitted instrument -- so they
-   take a non-const one, and so does iris_novelty, which fits those ranges
-   too. These four lines stop compiling if a signature takes
+   take a non-const one, and so do iris_novelty and iris_nearest, which fit
+   those ranges too. These five lines stop compiling if a signature takes
    const iris *. */
 static void  (*const play_net)(iris *, const float *, float *) = iris_predict;
 static void  (*const play_knn)(iris *, const float *, float *, int) = iris_knn_predict;
 static int   (*const play_1nn)(iris *, const float *, float *) = iris_classify_1nn;
 static float (*const play_nov)(iris *, const float *) = iris_novelty;
+static int   (*const play_near)(iris *, const float *, int *, float *, int) = iris_nearest;
 
 static unsigned char A[IRIS_ARENA(2, 12, 2, 64)];
 static unsigned char B[IRIS_ARENA(2, 12, 2, 64)];
@@ -132,6 +133,110 @@ static int scaling_breaks(int path, int which) {
     }
   }
   return broken;
+}
+
+/* ---- random stores for iris_nearest -----------------------------------------
+   Built to meet what the ranking must get right. Values sit on a coarse grid
+   (one to four steps across 0..1), so exact ties between takes, and readings
+   exactly on a take, are common. Sometimes one input never moves. Half the
+   stores are fitted partway (the closed-form trainer, which fits the ranges)
+   and then given more takes, some outside the fitted ranges and some at 1e20,
+   so far outside that their squared distance overflows. Sometimes a take is
+   deleted, so positions and identifiers part. With one_hot, output o of the
+   take recorded o-th is 1 and every other output 0, so iris_knn_predict's
+   answer shows which takes it blended: output o is non-zero exactly when the
+   take with identifier o + 1 is among its neighbours. */
+static unsigned char NB[IRIS_ARENA(4, 8, 16, 64)];
+static unsigned char NB_SNAP[sizeof NB], NB_AFTER[sizeof NB];
+static unsigned char NSCR[IRIS_ELM_SCRATCH(8, 16)];
+static int nb_steps;
+static float nb_grid(void) { return (float)(int)(lcg01() * (float)(nb_steps + 1)) / (float)nb_steps; }
+static iris *nb_store(int n_in, int n_out, int n_ex, int one_hot) {
+  iris *k = iris_init(NB, sizeof NB, n_in, 8, n_out, 64, 1u);
+  nb_steps = 1 + (int)(lcg01() * 4.0f);
+  const int still = lcg01() < 0.3f ? (int)(lcg01() * (float)n_in) : -1;
+  const int fit_at = lcg01() < 0.5f ? 1 + (int)(lcg01() * (float)n_ex) : -1;
+  for (int r = 0; r < n_ex; ++r) {
+    if (r == fit_at) iris_train_elm(k, 1e-3f, NSCR, sizeof NSCR);
+    float in[4], out[16];
+    for (int i = 0; i < n_in; ++i) {
+      in[i] = i == still ? 0.5f : nb_grid();
+      if (fit_at >= 0 && r >= fit_at && lcg01() < 0.3f) in[i] = 3.0f * in[i] - 1.0f;
+    }
+    if (fit_at >= 0 && r >= fit_at && lcg01() < 0.15f) in[0] = 1e20f;
+    for (int o = 0; o < n_out; ++o) out[o] = one_hot ? (o == r ? 1.0f : 0.0f) : nb_grid();
+    iris_record(k, in, out);
+  }
+  if (n_ex > 1 && lcg01() < 0.3f) iris_delete_index(k, (int)(lcg01() * (float)(n_ex - 1)));
+  return k;
+}
+/* A reading: on the grid, halfway between grid points, outside 0..1, or
+   exactly on a stored take. */
+static void nb_reading(iris *k, float *in) {
+  const float pick = lcg01();
+  if (pick < 0.25f && iris_count(k) > 0) {
+    float out[16];
+    iris_get(k, (int)(lcg01() * (float)iris_count(k)), in, out);
+    return;
+  }
+  for (int i = 0; i < k->n_in; ++i)
+    in[i] = pick < 0.6f ? nb_grid() : pick < 0.85f ? nb_grid() + 0.5f / (float)nb_steps
+                                                   : 3.0f * nb_grid() - 1.0f;
+}
+/* The distance iris_nearest documents, in double precision: the straight-line
+   distance with every input counted in fractions of the width of the range the
+   instrument measures in, an input of zero width counted not at all. Returns
+   the square. */
+static double nb_distance2(const iris *k, const float *row, const float *in) {
+  double s = 0.0;
+  for (int i = 0; i < k->n_in; ++i) {
+    const float w = k->in_hi[i] - k->in_lo[i];
+    if (w <= 0.0f) continue;
+    const double t = ((double)row[i] - (double)in[i]) / (double)w;
+    s += t * t;
+  }
+  return s;
+}
+
+/* One list from iris_nearest, every take asked for, held to what its comment
+   promises. Each distance must equal the distance in the documented unit,
+   computed in double precision from the ranges the instrument measures in
+   (nb_distance2), to within 1e-5 of it; the distances must never fall; every
+   identifier must come once; the count must be the takes at a finite
+   distance, or every take when none is, and then every distance must be
+   infinity. And the answer for every smaller n must be the start of this one,
+   bit for bit: each pass of IRIS_KNN_MAXK takes carries on where the last
+   stopped. c counts lists, values off, out of order, wrong counts, wrong
+   prefixes and lists at no finite distance. */
+static double nb_worst = 0.0;
+static void nb_list_check(iris *k, const float *in, long *c) {
+  int ids[64], ids2[64]; float dists[64], dists2[64];
+  const int stride = k->n_in + k->n_out;
+  const int got = iris_nearest(k, in, ids, dists, 64);
+  int finite = 0;
+  c[0]++;
+  for (int r = 0; r < k->n_ex; ++r)
+    if (nb_distance2(k, k->ex + (size_t)r * stride, in) < 3.4e38) finite++;
+  if (got != (finite > 0 ? finite : k->n_ex)) c[3]++;
+  if (finite == 0) c[5]++;
+  for (int j = 0; j < got; ++j) {
+    const int at = iris_index_of(k, ids[j]);
+    const double ref2 = at < 0 ? -1.0 : nb_distance2(k, k->ex + (size_t)at * stride, in);
+    if (finite == 0) {
+      if (!(dists[j] > 3.4e38f) || ref2 < 3.4e38) c[1]++;
+    } else {
+      const double ref = ref2 >= 0.0 ? __builtin_sqrt(ref2) : -1.0;
+      const double err = __builtin_fabs((double)dists[j] - ref);
+      if (err > nb_worst) nb_worst = err;
+      if (ref < 0.0 || err > 1e-5 * ref + 1e-12) c[1]++;
+    }
+    if (j > 0 && dists[j] < dists[j - 1]) c[2]++;
+    for (int m = 0; m < j; ++m) if (ids[m] == ids[j]) c[2]++;
+  }
+  for (int m = 1; m <= got; ++m)
+    if (iris_nearest(k, in, ids2, dists2, m) != m
+        || memcmp(ids, ids2, sizeof(int) * (size_t)m)
+        || memcmp(dists, dists2, sizeof(float) * (size_t)m)) c[4]++;
 }
 
 int main(void) {
@@ -843,6 +948,199 @@ int main(void) {
              "not save%s", wrong, first);
     check("an output at the largest float plays finite numbers and saves", wrong == 0, d); }
 
+  /* ---- iris_nearest: the classifier's take, and nothing else written ------
+     Over random stores (see nb_store), some empty, some with a not-a-number
+     written into one take or into every take, and random readings, some not
+     finite: iris_nearest must find a take exactly when iris_classify_1nn
+     does, its first must be the one the classifier names, and the arena
+     after it must equal, byte for byte, the arena after iris_classify_1nn
+     with a null `out`: the same ranges fitted, the same status, nothing
+     else. */
+  { long trials = 0, wrong_id = 0, wrong_mem = 0, refused = 0;
+    lcg_state = 4242u;
+    for (int s = 0; s < 400; ++s) {
+      iris *k = nb_store(1 + (int)(lcg01() * 4.0f), 2, (int)(lcg01() * 40.0f), 0);
+      if (s % 10 == 3 && k->n_ex > 0) k->ex[0] = __builtin_nanf("");
+      if (s % 10 == 7)
+        for (int r = 0; r < k->n_ex; ++r) k->ex[(size_t)r * (k->n_in + k->n_out)] = __builtin_nanf("");
+      for (int q = 0; q < 20; ++q) {
+        float in[4];
+        nb_reading(k, in);
+        if (q == 7) in[(int)(lcg01() * (float)k->n_in)] = q & 1 ? __builtin_inff() : __builtin_nanf("");
+        int ids[24]; float dists[24];
+        const int n = 1 + (int)(lcg01() * 20.0f);
+        k->status = IRIS_STATUS_OK;
+        memcpy(NB_SNAP, NB, sizeof NB);
+        const int named = iris_classify_1nn(k, in, 0);
+        memcpy(NB_AFTER, NB, sizeof NB);
+        memcpy(NB, NB_SNAP, sizeof NB);
+        const int got = iris_nearest(k, in, ids, dists, n);
+        trials++;
+        if (got == 0) refused++;
+        if ((named < 0) != (got == 0) || (got > 0 && ids[0] != named)) wrong_id++;
+        if (memcmp(NB, NB_AFTER, sizeof NB) != 0) wrong_mem++;
+      }
+    }
+    snprintf(d, sizeof d, "%ld queries (%ld found nothing): %ld named another take, "
+             "%ld left another arena", trials, refused, wrong_id, wrong_mem);
+    check("iris_nearest names the classifier's take and writes what it writes",
+          wrong_id == 0 && wrong_mem == 0 && refused > 0 && refused < trials, d); }
+
+  /* ---- iris_nearest: the first kk are the takes k-NN blends -----------------
+     One-hot stores (see nb_store), so iris_knn_predict's answer names the
+     takes it blended. For every kk from 1 to IRIS_KNN_MAXK, the first kk
+     identifiers iris_nearest returns must be exactly those takes, ties at the
+     edge of the neighbourhood included, and when k-NN blends fewer than kk
+     (takes whose distance overflows are left out) iris_nearest must return
+     that many. */
+  { long trials = 0, wrong = 0, short_lists = 0;
+    lcg_state = 777u;
+    for (int s = 0; s < 300; ++s) {
+      iris *k = nb_store(1 + (int)(lcg01() * 4.0f), 16, 1 + (int)(lcg01() * 16.0f), 1);
+      for (int q = 0; q < 12; ++q) {
+        float in[4];
+        nb_reading(k, in);
+        for (int kk = 1; kk <= IRIS_KNN_MAXK; ++kk) {
+          float o[16]; int ids[IRIS_KNN_MAXK];
+          unsigned want = 0u, have = 0u; int blended = 0;
+          iris_knn_predict(k, in, o, kk);
+          for (int j = 0; j < 16; ++j) if (o[j] != 0.0f) { want |= 1u << j; blended++; }
+          const int got = iris_nearest(k, in, ids, 0, kk);
+          for (int j = 0; j < got; ++j) have |= 1u << (ids[j] - 1);
+          trials++;
+          if (got < kk && got < k->n_ex) short_lists++;
+          if (want != have || got != blended) wrong++;
+        }
+      }
+    }
+    snprintf(d, sizeof d, "%ld of %ld neighbourhoods differ (%ld shorter than asked "
+             "for, as k-NN's)", wrong, trials, short_lists);
+    check("iris_nearest's first kk are the takes iris_knn_predict blends",
+          wrong == 0 && short_lists > 0, d); }
+
+  /* ---- iris_nearest: ascending, in fractions of each range -----------------
+     Every take of random stores of up to 60, asked for in one call (see
+     nb_list_check for what each list must satisfy), and then a store every
+     take of which is at no finite distance: fitted on takes across 0..1,
+     given 20 takes past 1e20 and its first takes deleted. */
+  { long c[6] = { 0, 0, 0, 0, 0, 0 };
+    lcg_state = 99u;
+    for (int s = 0; s < 200; ++s) {
+      iris *k = nb_store(1 + (int)(lcg01() * 4.0f), 2, 1 + (int)(lcg01() * 60.0f), 0);
+      for (int q = 0; q < 10; ++q) {
+        float in[4];
+        nb_reading(k, in);
+        nb_list_check(k, in, c);
+      }
+    }
+    iris *k = iris_init(NB, sizeof NB, 2, 8, 1, 64, 1u);
+    for (int r = 0; r < 4; ++r) { float in[2] = { (float)(r & 1), (float)(r >> 1) }, y = 0.0f; iris_record(k, in, &y); }
+    iris_train_elm(k, 1e-3f, NSCR, sizeof NSCR);
+    for (int r = 0; r < 20; ++r) {
+      float in[2] = { 1e20f * (float)(1 + r % 3), (float)(r % 5) }, y = (float)r;
+      iris_record(k, in, &y);
+    }
+    for (int r = 0; r < 4; ++r) iris_delete_index(k, 0);
+    for (int q = 0; q < 10; ++q) { float in[2] = { lcg01(), lcg01() }; nb_list_check(k, in, c); }
+    snprintf(d, sizeof d, "%ld lists (%ld at no finite distance): %ld values off (worst "
+             "%.2g), %ld out of order, %ld counts, %ld prefixes wrong", c[0], c[5], c[1],
+             nb_worst, c[2], c[3], c[4]);
+    check("iris_nearest's distances ascend, in fractions of each range",
+          c[1] == 0 && c[2] == 0 && c[3] == 0 && c[4] == 0 && c[5] == 10, d); }
+
+  /* ---- iris_nearest: a tie comes back in the order it was recorded ----------
+     Thirty takes at three points, recorded in turn (A B C A B C ...), so each
+     point holds ten takes at exactly one distance from any reading: more than
+     one pass of IRIS_KNN_MAXK. A reading nearest A, then B, then C must get
+     A's ten in the order they were recorded, then B's, then C's. */
+  { static unsigned char M[IRIS_ARENA(2, 8, 1, 32)];
+    iris *k = iris_init(M, sizeof M, 2, 8, 1, 32, 1u);
+    const float pts[3][2] = { { 0.1f, 0.1f }, { 0.5f, 0.6f }, { 0.9f, 1.0f } };
+    for (int r = 0; r < 30; ++r) { float y = (float)r; iris_record(k, pts[r % 3], &y); }
+    const float q[2] = { 0.0f, 0.0f };
+    int ids[30]; float dists[30];
+    const int got = iris_nearest(k, q, ids, dists, 30);
+    int wrong = 0;
+    for (int j = 0; j < 30; ++j) {
+      const int want = (j / 10) + 3 * (j % 10) + 1;
+      if (ids[j] != want) wrong++;
+    }
+    snprintf(d, sizeof d, "%d takes back, %d out of recording order; first %d %d %d, "
+             "eleventh %d", got, wrong, ids[0], ids[1], ids[2], ids[10]);
+    check("iris_nearest returns tied takes in recording order", got == 30 && wrong == 0, d); }
+
+  /* ---- iris_nearest: takes at no finite distance ---------------------------
+     The two far takes of "neighbours answer takes far outside the fitted
+     ranges" above: every ordinary distance overflows, so both are ranked by
+     the far distance, identifier 4 before 3 as the classifier names 4, and
+     both distances are infinity, with a healthy status. Then a take inside
+     the ranges added: it is the only take at a finite distance, so asking
+     for two gets one, the take k-NN plays alone. */
+  { static unsigned char M[IRIS_ARENA(3, 8, 1, 8)];
+    iris *k = iris_init(M, sizeof M, 3, 8, 1, 8, 1u);
+    float a[3] = { 0.0f, 0.0f, 7.0f }, ya = 0.0f, b[3] = { 1.0f, 1.0f, 7.0f }, yb = 1.0f;
+    float fb[3] = { 1e20f, 1e20f, 3e38f }, y_b = 0.75f;
+    float fa[3] = { 1e21f, 0.5f, 3e38f }, y_a = 0.25f;
+    iris_record(k, a, &ya); iris_record(k, b, &yb);
+    iris_train(k);
+    iris_record(k, fb, &y_b); iris_record(k, fa, &y_a);   /* identifiers 3 and 4 */
+    iris_delete_index(k, 0); iris_delete_index(k, 0);
+    const float q[3] = { 0.5f, 0.5f, -3e38f };
+    int ids[2] = { 0, 0 }; float dists[2] = { 0.0f, 0.0f };
+    const int got = iris_nearest(k, q, ids, dists, 2);
+    const int far_ok = got == 2 && ids[0] == 4 && ids[1] == 3 && dists[0] > 3.4e38f
+                    && dists[1] > 3.4e38f && iris_get_status(k) == IRIS_STATUS_OK;
+    float c[3] = { 0.5f, 0.5f, 7.0f }, yc = 0.5f;
+    const int id_c = iris_record(k, c, &yc);
+    int ids2[2] = { 0, 0 }; float dists2[2] = { -1.0f, -1.0f }, o = -1.0f;
+    const int got2 = iris_nearest(k, q, ids2, dists2, 2);
+    iris_knn_predict(k, q, &o, 2);
+    const int mixed_ok = got2 == 1 && ids2[0] == id_c && dists2[0] == 0.0f
+                      && dists2[1] == -1.0f && o == 0.5f;
+    snprintf(d, sizeof d, "far: %d back, ids %d %d, distances %g %g; one near: %d back, "
+             "id %d at %g, k-NN %g", got, ids[0], ids[1], (double)dists[0], (double)dists[1],
+             got2, ids2[0], (double)dists2[0], (double)o);
+    check("iris_nearest: takes at no finite distance", far_ok && mixed_ok, d); }
+
+  /* ---- iris_nearest: either buffer may be null ----------------------------
+     With ids, dists or both null the count is the same and the buffer given
+     holds the same values, and nothing past the count is written: canaries
+     after it survive. n below 1 asks for nothing: 0, and not a byte of the
+     arena written, even on an instrument never fitted with a reading that is
+     not finite. */
+  { long wrong = 0, trials = 0;
+    lcg_state = 5150u;
+    for (int s = 0; s < 100; ++s) {
+      iris *k = nb_store(1 + (int)(lcg01() * 4.0f), 2, 1 + (int)(lcg01() * 30.0f), 0);
+      for (int q = 0; q < 10; ++q) {
+        float in[4];
+        nb_reading(k, in);
+        const int n = 1 + (int)(lcg01() * 20.0f);
+        int i0[24], i1[24]; float d0[24], d2[24];
+        for (int j = 0; j < 24; ++j) { i0[j] = i1[j] = -7; d0[j] = d2[j] = -7.0f; }
+        const int g0 = iris_nearest(k, in, i0, d0, n);
+        const int g1 = iris_nearest(k, in, i1, 0, n);
+        const int g2 = iris_nearest(k, in, 0, d2, n);
+        const int g3 = iris_nearest(k, in, 0, 0, n);
+        trials++;
+        if (g1 != g0 || g2 != g0 || g3 != g0 || memcmp(i0, i1, sizeof i0)
+            || memcmp(d0, d2, sizeof d0)) wrong++;
+        for (int j = g0; j < 24; ++j) if (i0[j] != -7 || d0[j] != -7.0f) { wrong++; break; }
+      }
+    }
+    iris *k = iris_init(NB, sizeof NB, 2, 8, 1, 64, 1u);
+    for (int r = 0; r < 4; ++r) { float in[2] = { (float)r, 10.0f * (float)r }, y = 1.0f; iris_record(k, in, &y); }
+    const float nan_in[2] = { __builtin_nanf(""), 0.0f };
+    int ids[1] = { -7 }; float dists[1] = { -7.0f };
+    memcpy(NB_SNAP, NB, sizeof NB);
+    const int z0 = iris_nearest(k, nan_in, ids, dists, 0);
+    const int z1 = iris_nearest(k, nan_in, ids, dists, -3);
+    const int untouched = memcmp(NB, NB_SNAP, sizeof NB) == 0 && ids[0] == -7 && dists[0] == -7.0f;
+    snprintf(d, sizeof d, "%ld of %ld calls with a null buffer differ; n 0 and -3 return %d %d, "
+             "arena untouched %d", wrong, trials, z0, z1, untouched);
+    check("iris_nearest: either buffer may be null, n below 1 asks nothing",
+          wrong == 0 && z0 == 0 && z1 == 0 && untouched, d); }
+
   /* ---- the playing functions take a non-const instrument -----------------
      The pointers above only compile against the non-const signatures; this
      plays once through each so the check is also exercised at run time. */
@@ -853,10 +1151,12 @@ int main(void) {
     play_knn(k, in, o, 3);
     const int id = play_1nn(k, in, o);
     const float nov = play_nov(k, in);
-    snprintf(d, sizeof d, "compiled against iris *; 1-NN answered id %d, novelty %.3f",
-             id, (double)nov);
-    check("the playing functions and iris_novelty take iris *",
-          id > 0 && nov >= 0.0f && nov <= 1.0f, d); }
+    int near_id = 0; float near_d = -1.0f;
+    const int got = play_near(k, in, &near_id, &near_d, 1);
+    snprintf(d, sizeof d, "compiled against iris *; 1-NN answered id %d, novelty %.3f, "
+             "nearest id %d at %.3f", id, (double)nov, near_id, (double)near_d);
+    check("the playing functions, iris_novelty and iris_nearest take iris *",
+          id > 0 && nov >= 0.0f && nov <= 1.0f && got == 1 && near_id == id && near_d >= 0.0f, d); }
 
   printf("\n  %s (%d failed)\n\n", fails ? "SOME CHECKS FAILED" : "ALL CHECKS PASSED", fails);
   return fails ? 1 : 0;
