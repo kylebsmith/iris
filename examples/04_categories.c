@@ -96,7 +96,7 @@ int main(void) {
     int c = (int)(out[1] + 0.5f);
     c = c < 0 ? 0 : c > 6 ? 6 : c;
     playing = snap(k, tilt, playing, &id, &dist);
-    printf("  %4.0f    %.3f     %5.2f  %-4s %s    #%d at %.3f     %-4s %s\n",
+    printf("  %4.0f    %.4f    %5.2f  %-4s %s    #%d at %.3f     %-4s %s\n",
            (double)tilt, (double)out[0], (double)out[1], CHORD[c],
            c == 0 || c == 5 ? " " : "*", id, (double)dist, CHORD[playing], CHORD[down[s]]);
   }

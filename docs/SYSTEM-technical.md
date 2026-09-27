@@ -153,7 +153,11 @@ scaled by `1/n_ex`.
 - **`iris_knn_predict`** and **`iris_classify_1nn`**: inverse-squared-distance
   regression (k clamped to 8, exact when the neighbours agree) and a
   bit-verbatim nearest-demonstration snap, both training-free, with distances
-  in fractions of each input's range.
+  in fractions of each input's range. **`iris_nearest`** returns that ranking,
+  the n nearest demonstrations and their straight-line distances in the same
+  unit (`tests/playing.c`). The ranges are those of the last fit: after new
+  takes on a trained instrument the three measure in the old ranges until the
+  next fit.
 - **`iris_loo_error`**: leave-one-out over 600-epoch fits from the
   instrument's seed. It puts every demonstration and identifier back in its
   place, but it does not restore the weights: it leaves the instrument

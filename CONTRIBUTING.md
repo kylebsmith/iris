@@ -71,7 +71,7 @@ sh build.sh elm            # the closed-form trainer
 sh build.sh playing        # the playing and neighbour paths
 sh build.sh portability    # the square root and the other C-library stand-ins
 sh build.sh recipes        # the starter kit's two recipes
-sh build.sh tu             # two translation units with different maxima
+sh build.sh tu             # three translation units: the default, shrunk and raised maxima
 sh build.sh fuzz [N]       # N random call sequences (400) under AddressSanitizer
 sh build.sh examples       # every example, with -Werror, run
 sh build.sh tiny           # docs/tiny.c, iris_train written again, against the library to the bit

@@ -299,7 +299,8 @@
    Macros: IRIS_ARENA(n_in, n_hid, n_out, cap), the arena size at compile
    time; IRIS_ELM_SCRATCH(n_hid, n_out), the closed-form trainer's scratch;
    IRIS_ARENA_ELM, the two added together; IRIS_MAX_IN, IRIS_MAX_OUT and
-   IRIS_MAX_HID, which you may lower before the #include, and IRIS_MAX_EX;
+   IRIS_MAX_HID, which you may lower or raise before the #include, and
+   IRIS_MAX_EX;
    IRIS_VERSION_MAJOR, _MINOR, _PATCH and _STRING; IRIS_STRESS_MIN_EX and
    IRIS_STRESS_FLAG (PART 8f); IRIS_KNN_MAXK (PART 10); IRIS_ID_LIMIT, the
    bound on identifiers on this machine (PART 4); IRIS_W_LIMIT, the
@@ -500,8 +501,33 @@
    iris_predict from 158 to 46. These are single frames as the compiler
    reports them, not a measured run-time stack depth. The maxima must be at
    least the n_in, n_out and n_hid you pass to iris_init, which iris_init
-   checks. On a 32-bit board (ESP32, RP2040, STM32) leave them alone; the
-   defaults cost nothing you have. */
+   checks. On a 32-bit board (ESP32, RP2040, STM32) there is no need to
+   shrink them; the defaults cost nothing you have.
+
+   They may be raised the same way, for a synthesiser with more than sixteen
+   parameters, say. Nothing in this file depends on the default values:
+   tests/tu/raised.c records, trains by both trainers, saves, loads, copies
+   and plays an instrument of 31 outputs with IRIS_MAX_IN 64, IRIS_MAX_HID 96
+   and IRIS_MAX_OUT 32. The cost is stack, because every working array grows
+   with its maximum. The frames in bytes, from xtensa-esp32s3-elf-gcc 14.2.0
+   -Os -fstack-usage with every function compiled on its own as above (gcc-15
+   -Os on the 64-bit ARM laptop gives each within 48 bytes of these):
+
+                                  defaults   IRIS_MAX_OUT 32   64, 128, 32
+       iris_internal_train_elm_ex    624           688            1,072
+       iris_internal_loo             384           496              640
+       iris_internal_train_run       288           352              480
+       iris_knn_predict              304           304              432
+       iris_predict                  176           176              304
+
+   The last column raises all three: IRIS_MAX_IN 64, IRIS_MAX_HID 128 and
+   IRIS_MAX_OUT 32. The ESP32 Arduino core gives the loop task 8,192 bytes
+   of stack (CONFIG_ARDUINO_LOOP_STACK_SIZE in its sdkconfig for the
+   ESP32-S3, core 3.3.3). What bounds the maxima is arithmetic: IRIS_ARENA
+   at the maxima with IRIS_MAX_EX takes must stay below 2^32 bytes, which
+   unsigned long is guaranteed to hold (see IRIS_ARENA). At the default
+   IRIS_MAX_HID that allows IRIS_MAX_IN and IRIS_MAX_OUT together up to about
+   250,000, far past the memory of any board. */
 #ifndef IRIS_MAX_IN
 #define IRIS_MAX_IN   32   /* sensor features in  */
 #endif
@@ -1932,6 +1958,20 @@ IRIS_API float iris_internal_denorm_out(const iris *k, int i, float y) {
      out_o = iris_internal_denorm_out(k, o, output_o)     scale the sound out
      out_o = iris_internal_clampf(out_o, out_lo[o], out_hi[o])
                                                           and hold it in range
+
+   Between and beyond the takes. The fit passes through each take, to within
+   its training error, but it is not flat there: the slope it has between
+   the takes carries on through them, so a reading a little off a take plays
+   a little off its sound, and how wide a place is to land on depends on
+   where the takes sit. The clamp adds plateaus. Wherever the fitted curve
+   would pass the end of an output's demonstrated range the output holds
+   that end exactly, which beyond the outermost takes, and sometimes just
+   inside them, is a stretch where moving changes nothing.
+   examples/04_categories.c prints one input swept across four takes: the
+   brightness passes 0.3502 at the take at 30 degrees (taught 0.35), with
+   0.2988 and 0.4058 five degrees either side, and holds at exactly 0.2000
+   from 0 to 10 degrees, the first take included, and at exactly 0.9000 from
+   85 degrees on, past the last take at 80 (0.8997).
 
    For 2 inputs, 12 hidden and 3 outputs that is 60 multiply-adds and 20
    float divisions (one in each input's scaling, one in each of the 15

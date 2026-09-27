@@ -59,6 +59,27 @@ unmoved.
 
 ### Documentation
 
+- `iris.h` says the maxima may be raised as well as lowered, for a
+  synthesiser with more than sixteen parameters, with the stack frames it
+  costs on the ESP32-S3 at three settings and the bound the size arithmetic
+  sets (`IRIS_ARENA` at the maxima with `IRIS_MAX_EX` takes below 2^32 bytes).
+  `tests/tu/raised.c`, a third translation unit in `sh build.sh tu`, trains,
+  saves, loads, copies and plays a 31-output instrument with
+  `IRIS_MAX_OUT 32`, and the unit with the default maxima refuses it.
+- PART 6 describes what the network does between and beyond the takes: it
+  passes through each take without being flat there, and the clamp to the
+  demonstrated range holds an output at its end beyond the outermost takes,
+  with the sweep `examples/04_categories.c` prints as the evidence.
+- The README names the two ways to give a sketch the library (installed, or
+  `iris.h` beside the sketch as the starter kit does), says that the neighbour
+  functions measure in the ranges of the last training until the instrument
+  is trained again (as does `docs/SYSTEM-technical.md`), points to
+  `iris_nearest` and `iris_copy`, and cites the release board log,
+  `docs/board/2026-09-25-es3c28p-v0.2.0.txt`, for its table of board
+  figures, all of which that log reproduces.
+- `examples/iris_smallest` waits for the serial port, so README "Start here"
+  step 1 prints on boards with native USB.
+
 ## 0.2.0 — 2026-09-25
 
 The first release whose saved files are promised to keep playing: format 7 is

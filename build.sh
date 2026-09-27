@@ -37,8 +37,9 @@
 #   playing      tests/playing.c, prediction and the neighbour samplers
 #   portability  tests/portability.c, the in-header square root and the rest
 #   recipes      tests/starter_recipes.c, the starter kit's pinned hashes
-#   tu           tests/tu/, two translation units with different maxima,
-#                under AddressSanitizer where the compiler has it
+#   tu           tests/tu/, three translation units with the default, shrunk
+#                and raised maxima, under AddressSanitizer where the compiler
+#                has it
 #   fuzz [N]     tests/fuzz.c, N random call sequences (400) under
 #                AddressSanitizer and UndefinedBehaviorSanitizer
 #   examples     every examples/*.c, built with -Werror and run; each must
@@ -190,7 +191,8 @@ arm_tu() {
   fi
   "$CC" $STD $WARN $X -I. -c tests/tu/big.c -o build/tu_big.o
   "$CC" $STD $WARN $X -I. -c tests/tu/small.c -o build/tu_small.o
-  "$CC" $X build/tu_small.o build/tu_big.o -o build/tu -lm
+  "$CC" $STD $WARN $X -I. -c tests/tu/raised.c -o build/tu_raised.o
+  "$CC" $X build/tu_small.o build/tu_big.o build/tu_raised.o -o build/tu -lm
   ./build/tu
 }
 arm_fuzz() {
@@ -262,7 +264,7 @@ arm_sanitize() {
   sanitized playing -- tests/playing.c
   sanitized portability -- tests/portability.c
   sanitized recipes -- tests/starter_recipes.c
-  sanitized tu -- tests/tu/big.c tests/tu/small.c
+  sanitized tu -- tests/tu/big.c tests/tu/small.c tests/tu/raised.c
   sanitized fuzz 2000 -- tests/fuzz.c
   sanitized threads separate -- tests/threads.c
   sanitized tiny -- docs/tiny.c
@@ -416,8 +418,8 @@ arm_fuzz_load() {
 # from run to run.
 # The thresholds sit under what the suite measures. Lines: 1,325 of 1,325
 # with Apple clang 17 and Homebrew clang 22 alike. Branch outcomes depend on
-# the LLVM version, which decides how many there are: 1,098 of 1,168
-# (94.01%) with Apple clang 17, 1,123 of 1,218 (92.20%) with clang 22, the
+# the LLVM version, which decides how many there are: 1,099 of 1,168
+# (94.09%) with Apple clang 17, 1,124 of 1,218 (92.28%) with clang 22, the
 # same in every run. The clang of the Linux runners is not measured here. So:
 # lines at least 98.0%, branch outcomes at least 88.5%. COV_MIN_LINES and
 # COV_MIN_BRANCHES override them.
@@ -463,7 +465,7 @@ arm_cov() {
   covbuild playing tests/playing.c
   covbuild portability tests/portability.c
   covbuild recipes tests/starter_recipes.c
-  covbuild tu tests/tu/big.c tests/tu/small.c
+  covbuild tu tests/tu/big.c tests/tu/small.c tests/tu/raised.c
   covbuild fuzz tests/fuzz.c
   covbuild threads tests/threads.c
   covbuild tiny docs/tiny.c

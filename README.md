@@ -55,7 +55,10 @@ starting at the top of the file.
 1. **Read one sketch.** [`examples/iris_smallest/iris_smallest.ino`](examples/iris_smallest/iris_smallest.ino)
    records two demonstrations, trains, and asks about the points between them.
    Install the library, open it from File > Examples > iris, upload, and open
-   the Serial Monitor at 115200 baud.
+   the Serial Monitor at 115200 baud. A sketch of your own can have iris two
+   ways: installed as a library, as here, with `#include <iris.h>`; or with a
+   copy of `iris.h` in the sketch's folder and `#include "iris.h"`, which needs
+   nothing installed and is how the starter kit's sketches carry it.
 2. **Learn three calls.** `iris_record(k, input, output)` stores one
    demonstration: this gesture should make this sound. `iris_train(k)` fits a
    smooth curve through every demonstration you have recorded.
@@ -167,7 +170,11 @@ the header.
 Two more algorithms share the same demonstrations: `iris_knn_predict`, a
 distance-weighted blend of the nearest demonstrations, and `iris_classify_1nn`,
 which returns the nearest one exactly, the default classifier of desktop
-Wekinator. A closed-form trainer, `iris_train_elm`, fits the same network in
+Wekinator. `iris_nearest` says which demonstrations are nearest and how near,
+which is what holding a category steady and refusing a gesture nobody taught
+need (`examples/04_categories.c`). All three measure each input in the range of
+the last training, so after new takes on a trained instrument they measure in
+the old ranges until you train again. A closed-form trainer, `iris_train_elm`, fits the same network in
 microseconds by freezing its hidden layer and solving the output layer
 directly. And the library points at the demonstration that fights the others
 (`iris_worst_example_id`), so you know which take to listen to again.
@@ -217,7 +224,7 @@ the main loop.
 | `iris_train`, 50 demonstrations | laptop | 12,000 epochs, 52 ms | same |
 | `iris_train_elm`, 50 demonstrations | laptop | 8.5 µs | same |
 | `iris_knn_predict`, 256 demonstrations | laptop | 1.2 µs | same |
-| One prediction, 2-12-3 | ESP32-S3, 240 MHz | 14.95 µs (median of batches, empty loop subtracted); 99.9% of calls within 19.8 µs, worst 47 µs | `board_probe`, [board log](docs/board/2026-09-25-es3c28p.txt) |
+| One prediction, 2-12-3 | ESP32-S3, 240 MHz | 14.95 µs (median of batches, empty loop subtracted); 99.9% of calls within 19.8 µs, worst 47 µs | `board_probe`, [release board log](docs/board/2026-09-25-es3c28p-v0.2.0.txt) |
 | One prediction, 6-16-8 / 12-32-8 | ESP32-S3 | 35.7 µs / 74.2 µs (medians) | same |
 | `iris_train`, 20 demonstrations of the reference task | ESP32-S3 | 18,000 epochs, 13.4 s | same |
 | `iris_train`, 10 / 50 demonstrations | ESP32-S3 | 10.6 s / 22.1 s | same |
@@ -225,10 +232,10 @@ the main loop.
 | `iris_train_elm`, 20 / 50 demonstrations | ESP32-S3 | 1.5 ms / 3.5 ms | same |
 
 "Laptop" is the development machine, an Apple M4 Max, with Apple clang `-O2`.
-The board figures are iris 0.2.0 on an ES3C28P (ESP32-S3 revision 2, 240 MHz,
-Arduino-ESP32 3.3.3, gcc 14.2, `-Os`), measured on 2026-09-25 by the starter kit's
-`board_probe` sketch; the [board log](docs/board/2026-09-25-es3c28p.txt) names the
-build. Training on the board is slow: a sketch that must keep drawing trains in
+The board figures are iris 0.2.0 as released (tag `v0.2.0`) on an ES3C28P
+(ESP32-S3 revision 2, 240 MHz, Arduino-ESP32 3.3.3, gcc 14.2, `-Os`), measured on
+2026-09-25 by the starter kit's `board_probe` sketch; the
+[release board log](docs/board/2026-09-25-es3c28p-v0.2.0.txt) names the build. Training on the board is slow: a sketch that must keep drawing trains in
 slices (48 ms per 64 epochs), or uses the closed-form trainer.
 
 For audio, 14.95 µs against the 20.8 µs of one sample at 48 kHz is 1.4 times of
@@ -237,7 +244,10 @@ not enough to do anything expensive in the same callback. At a control rate of
 1,000 predictions a second it is 1.5% of a core. Training does not fit inside an
 audio callback: train in slices from the main loop with `iris_train_begin` and
 `iris_train_slice`, which is bit-identical to `iris_train`, and never from an
-interrupt.
+interrupt. A run starts from the seed, so the instrument it trains plays a
+half-trained network until it ends: to keep the old fit playing, train a second
+instrument and hand the new fit over with `iris_copy` when the run has finished
+(`examples/05_keep_playing.c`).
 
 ## Run the tests
 

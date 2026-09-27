@@ -17,6 +17,7 @@
 extern iris *tu_make8(void);
 extern size_t tu_arena8(unsigned char **mem);
 extern size_t tu_file8(const unsigned char **file);
+extern int tu_raised(void);
 static unsigned char before[IRIS_ARENA(8, 12, 2, 32)];
 static unsigned char scratch[65536];
 static int fails = 0;
@@ -71,5 +72,6 @@ int main(void) {
   k->status = st;
   check("every refusal left every byte but the status unmoved", memcmp(before, mem, bytes) == 0);
   printf(fails ? "  %d FAILING\n" : "  a shape too big for this unit's arrays is refused everywhere\n", fails);
+  fails += tu_raised();
   return fails ? 1 : 0;
 }
