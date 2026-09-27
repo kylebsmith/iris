@@ -16,6 +16,7 @@ authors:
     family-names: Smith
     email: kyle@jefflisa.com
 version: 0.3.0
+date-released: "2026-09-27"
 license: BSD-3-Clause
 repository-code: "https://github.com/kylebsmith/iris"
 keywords:

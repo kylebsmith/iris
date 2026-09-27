@@ -13,7 +13,7 @@ promised about saved instruments, is in
 | 0.2.0 | 7 | 7 |
 | 0.1.0 | 5 (6 for an instrument never fitted) | 1 to 6 |
 
-## 0.3.0 — unreleased
+## 0.3.0 — 2026-09-27
 
 Additions only: nothing an existing function returns for a valid input
 changes, format 7 and what a saved file plays are unchanged, and so are the
