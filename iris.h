@@ -465,9 +465,9 @@
    (PART 9). It changes only when the bytes of a file or their meaning
    change, never merely because the library's version does. */
 #define IRIS_VERSION_MAJOR 0
-#define IRIS_VERSION_MINOR 2
+#define IRIS_VERSION_MINOR 3
 #define IRIS_VERSION_PATCH 0
-#define IRIS_VERSION_STRING "0.2.0"
+#define IRIS_VERSION_STRING "0.3.0"
 
 /* The maxima size every working array, so on a small board they are the
    stack budget.

@@ -9,8 +9,21 @@ promised about saved instruments, is in
 
 | Library | Writes format | Reads formats |
 |---|---|---|
+| 0.3.0 | 7 | 7 |
 | 0.2.0 | 7 | 7 |
 | 0.1.0 | 5 (6 for an instrument never fitted) | 1 to 6 |
+
+## 0.3.0 — unreleased
+
+Additions only: nothing an existing function returns for a valid input
+changes, format 7 and what a saved file plays are unchanged, and so are the
+training defaults. The golden training hash `0x6805FB0D`, the playback file in
+`tests/golden/` and the starter kit's recipes (`0xB7FC47A0`, `0x203834ED`) are
+unmoved.
+
+### Additions
+
+### Documentation
 
 ## 0.2.0 — 2026-09-25
 
