@@ -64,7 +64,10 @@ asserts something nobody disputes.
 `NNNN-short-hyphenated-title.md`, numbered in the order written, never renumbered.
 Sections: Status, Context, Decision, Rejected alternatives, Consequences, and a
 last line naming the study in iris-studies that the measurements belong to,
-and saying whether its program is published.
+and saying whether its program is published. A record whose status is
+proposed sets out a decision not yet made: its Options take the place of the
+rejected alternatives, its Decision says it is not made, and it ends with the
+measurement that would decide it.
 
 ## Index
 
@@ -78,3 +81,7 @@ and saying whether its program is published.
 | [0017](0017-train-to-the-plateau-not-to-a-constant.md) | Train to the plateau, not to a constant | accepted; the default under noise is contested (iris-studies S08) |
 | [0018](0018-the-input-scaling-travels-with-the-file.md) | Inputs are scaled to [-1, +1], and the scaling travels with the file | accepted in part: the scaling holds; the file no longer carries it |
 | [0019](0019-the-residual-ledger-integrates-it-does-not-sample.md) | The bad-example detector integrates the residual; it does not sample the endpoint | accepted |
+| [0022](0022-per-output-behaviour.md) | Per-output behaviour: snap or interpolate, listening, partial takes | proposed |
+| [0023](0023-input-scales-for-the-neighbour-functions.md) | Input scales or groups for the neighbour functions | proposed |
+| [0024](0024-names-in-saved-files.md) | Names for inputs and outputs in saved files | proposed |
+| [0025](0025-takes-that-carry-time.md) | Takes that carry time | proposed |
