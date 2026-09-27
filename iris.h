@@ -3876,7 +3876,17 @@ IRIS_API int iris_internal_train_elm_ex(iris *k, float lam0, float gain_w, float
 
 /* The closed-form trainer, with the gains of the sweep above: 2/sqrt(n_in)
    for weights and biases. lam0 is the ridge in proportion to the data: 1e-4
-   is the recommended value at nh=12 and 1e-3 at nh=48. The scratch is at
+   is the recommended value at nh=12 and 1e-3 at nh=48. Between the two,
+   take the straight line through them on a log scale, lam0 = 1e-4 *
+   (nh/12)^1.66: 1.6e-4 at 16, 3.2e-4 at 24, 5.1e-4 at 32. More ridge fits
+   the gestures between the takes better, up to a point, and always plays
+   the takes themselves less exactly. On clean takes the line lands within
+   3% of each width's best held-out error, with the takes 6% to 12% closer
+   than at that best; with noise of 0.05 on the takes the best moves to
+   1e-3 at 12, 3e-3 at 16 to 32 and 1e-2 at 48, and the line's held-out
+   error is 6% to 11% above it (the ridge table of `./build/elm measure`,
+   from tests/elm.c: 2 inputs, 4 target shapes and 16 seeds at 20 and 50
+   takes, outputs spanning about 0..1). The scratch is at
    least IRIS_ELM_SCRATCH(n_hid, n_out) bytes, at any alignment, not
    overlapping the instrument. Smoothing applies (see "Smoothing" above).
 

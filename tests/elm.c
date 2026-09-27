@@ -17,10 +17,12 @@
 
    Exit status 0 means every check passed; anything else is a failure.
 
-   `./build/elm measure` prints the two measurements quoted in PART 8d (what
-   smoothing does to recall and to held-out error, and how well the refreshed
-   ledger points at a bad take, beside the backprop ledger on the same
-   sessions). It asserts nothing and takes a minute or two.
+   `./build/elm measure` prints the three measurements quoted in PART 8d (the
+   held-out error over the ridge lam0 at each width, what smoothing does to
+   recall and to held-out error, and how well the refreshed ledger points at
+   a bad take, beside the backprop ledger on the same sessions). It asserts
+   nothing and takes a minute or two; `./build/elm ridge` prints the first
+   alone.
 
    What is checked:
      1. every refusal leaves every byte of the arena as it was; the status
@@ -180,6 +182,97 @@ static int smooth_trial(int nex, float sigma, float smooth, int shape, uint32_t 
   return ret;
 }
 
+/* ---- the ridge across widths ----------------------------------------------
+   One session as smooth_trial's, at smoothing 0, with the width and the ridge
+   given: returns the solve's result, and the root-mean-square errors at the
+   demonstrations and on 300 fresh points against the clean target. */
+static int ridge_trial(int nh, float lam0, int nex, float sigma, int shape, uint32_t seed,
+                       double *recall, double *held) {
+  iris *k = iris_init(arena, sizeof arena, 2, nh, 2, 128, seed);
+  rs = seed;
+  for (int i = 0; i < nex; ++i) {
+    float in[2], o[2];
+    in[0] = rnd(); in[1] = rnd();
+    shape_target(in, o, shape);
+    for (int j = 0; j < 2; ++j) o[j] += sigma * gauss();
+    iris_record(k, in, o);
+  }
+  const int ret = iris_train_elm(k, lam0, scratch, sizeof scratch);
+  double se = 0.0;
+  for (int i = 0; i < nex; ++i) {
+    float in[2], want[2], got[2];
+    iris_get(k, i, in, want); iris_predict(k, in, got);
+    for (int o = 0; o < 2; ++o) { double d = (double)got[o] - (double)want[o]; se += d * d; }
+  }
+  *recall = se / (2.0 * nex);
+  se = 0.0;
+  for (int t = 0; t < 300; ++t) {
+    float in[2], want[2], got[2];
+    in[0] = rnd(); in[1] = rnd();
+    shape_target(in, want, shape); iris_predict(k, in, got);
+    for (int o = 0; o < 2; ++o) { double d = (double)got[o] - (double)want[o]; se += d * d; }
+  }
+  *held = se / 600.0;
+  return ret;
+}
+
+/* The closed-form trainer over lam0 at each width: 4 target shapes x 16
+   seeds x 20 and 50 demonstrations, clean and with noise 0.05, as the
+   smoothing table's sessions. For each width and lam0, the root-mean-square
+   error held out on 300 fresh points against the clean target, then the
+   error at the demonstrations against what was recorded; each row's best
+   held-out lam0 is marked, "esc" counts the solves that needed ridge
+   doublings and "ref" those that ran out of them and refused. The last
+   column is the rule PART 8d states between the two recommendations,
+   lam0 = 1e-4 * (nh / 12)^(log 10 / log 4), a straight line on a log scale
+   through 1e-4 at 12 and 1e-3 at 48. It asserts nothing. */
+static float ridge_rule(int nh) {
+  return (float)(1e-4 * __builtin_exp(__builtin_log(nh / 12.0) * __builtin_log(10.0) / __builtin_log(4.0)));
+}
+static void ridge_table(void) {
+  static const int nhs[6] = { 8, 12, 16, 24, 32, 48 };
+  static const float lams[9] = { 1e-6f, 3e-6f, 1e-5f, 3e-5f, 1e-4f, 3e-4f, 1e-3f, 3e-3f, 1e-2f };
+  static const float sig[2] = { 0.0f, 0.05f };
+  printf("RIDGE across widths under iris_train_elm: 2 inputs, 2 outputs, 4 shapes x\n"
+         "16 seeds x 20 and 50 demonstrations. Root-mean-square error held out on\n"
+         "300 fresh points against the clean target, and at the demonstrations\n"
+         "against what was recorded; * marks each row's best held-out lam0.\n");
+  for (int g = 0; g < 2; ++g) {
+    double ho[6][10], rc[6][10];
+    int esc[6] = { 0 }, ref[6] = { 0 }, best[6] = { 0 };
+    for (int w = 0; w < 6; ++w)
+      for (int l = 0; l < 10; ++l) {
+        const float lam = l < 9 ? lams[l] : ridge_rule(nhs[w]);
+        double sh = 0.0, sr = 0.0; int n = 0;
+        for (int e = 0; e < 2; ++e)
+          for (int shape = 0; shape < 4; ++shape)
+            for (uint32_t sd = 1; sd <= 16; ++sd) {
+              double r, h;
+              const int ret = ridge_trial(nhs[w], lam, e ? 50 : 20, sig[g], shape, sd * 7919u, &r, &h);
+              if (ret < 0) { ref[w]++; continue; }
+              if (ret > 0) esc[w]++;
+              sh += h; sr += r; n++;
+            }
+        ho[w][l] = n ? __builtin_sqrt(sh / n) : 1.0;
+        rc[w][l] = n ? __builtin_sqrt(sr / n) : 1.0;
+        if (l < 9 && ho[w][l] < ho[w][best[w]]) best[w] = l;
+      }
+    for (int t = 0; t < 2; ++t) {
+      printf("\n  noise %.2f, %s\n     nh", (double)sig[g], t ? "at the demonstrations" : "held out");
+      for (int l = 0; l < 9; ++l) printf("    %7.0e", (double)lams[l]);
+      printf(t ? "       rule\n" : "       rule    best     esc  ref\n");
+      for (int w = 0; w < 6; ++w) {
+        printf("  %5d", nhs[w]);
+        for (int l = 0; l < 9; ++l) printf("   %7.4f%c", t ? rc[w][l] : ho[w][l], l == best[w] ? '*' : ' ');
+        printf("   %7.4f (%.1e)", t ? rc[w][9] : ho[w][9], (double)ridge_rule(nhs[w]));
+        if (!t) printf("   %7.0e  %4d %4d", (double)lams[best[w]], esc[w], ref[w]);
+        printf("\n");
+      }
+    }
+    fflush(stdout);
+  }
+}
+
 /* ---- 4 and the measurement: a session with one bad take -------------------
    Eight outputs over two inputs, the protocol of
    docs/adr/0019-the-residual-ledger-integrates-it-does-not-sample.md. */
@@ -214,6 +307,8 @@ static float median(float *v, int n) {
 }
 
 static int measure(void) {
+  ridge_table();
+  printf("\n");
   const float sm[5] = { 0.0f, 0.1f, 0.3f, 0.5f, 1.0f };
   const float sig[3] = { 0.0f, 0.05f, 0.10f };
   const int exs[3] = { 8, 20, 50 };
@@ -301,6 +396,7 @@ static void snap(iris *k, int status) {
 int main(int argc, char **argv) {
   char d[200];
   if (argc > 1 && strcmp(argv[1], "measure") == 0) return measure();
+  if (argc > 1 && strcmp(argv[1], "ridge") == 0) { ridge_table(); return 0; }
 
   const float nan_f = __builtin_nanf(""), inf_f = __builtin_inff();
   printf("\n  THE CLOSED-FORM TRAINER (iris.h PART 8d)\n\n");
