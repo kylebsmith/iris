@@ -12,7 +12,10 @@ static unsigned char arena[IRIS_ARENA(1, 12, 1, 8)];
 
 void setup() {
   Serial.begin(115200);
-  delay(400);
+  /* On a board with native USB, the starter kit's among them, the port
+     exists only once the computer opens it, and anything printed before
+     that is lost. Wait for it, for twenty seconds at most. */
+  while (!Serial && millis() < 20000) delay(10);
   iris *k = iris_init(arena, sizeof arena, 1, 12, 1, 8, /*seed=*/1234);
   if (!k) { Serial.println(F("iris_init refused the shape")); return; }
 
