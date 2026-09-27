@@ -287,7 +287,7 @@ before a pull request.
 | Path | What |
 |---|---|
 | [`iris.h`](iris.h) | The whole library. Start at the top. |
-| [`examples/`](examples/) | `00_minimal.c` draws the learned space; `01_hello.c` three gestures; `02_fix_a_mistake.c` the repair loop; `03_reroll.c` same demonstrations, different instrument; `iris_smallest/` the Arduino one |
+| [`examples/`](examples/) | `00_minimal.c` draws the learned space; `01_hello.c` three gestures; `02_fix_a_mistake.c` the repair loop; `03_reroll.c` same demonstrations, different instrument; `04_categories.c` one instrument read two ways, continuous and snapped; `05_keep_playing.c` playing one instrument while another trains; `iris_smallest/` the Arduino one |
 | [`tests/`](tests/) | The test programs and the committed saved instrument in `tests/golden/` |
 | [`tools/`](tools/) | Programs the tests use, such as the exhaustive square-root comparison |
 | [`docs/`](docs/) | The two explanations of the system, decision records, the negative-results index and the board logs; [`docs/README.md`](docs/README.md) is the index |

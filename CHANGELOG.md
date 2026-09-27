@@ -48,6 +48,14 @@ unmoved.
   plays a half-trained network until its run ends. `iris_copy(k, k)` is a save
   and a load of `k` into itself. `iris_load` now puts the instrument at rest
   through the same internal function, with no change to what it does.
+- `examples/04_categories.c` reads one instrument two ways: `iris_predict` for
+  a continuous output, and for a category the nearest take's own value
+  (`iris_nearest`, then `iris_get`), held with hysteresis from the distances.
+  Its sweep between two taught chords shows the interpolated chord playing
+  chords nobody taught and the snapped one playing only the two that were.
+- `examples/05_keep_playing.c` trains a second instrument in slices while the
+  first keeps playing its old fit, then hands the new fit over with
+  `iris_copy`.
 
 ### Documentation
 
