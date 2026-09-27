@@ -80,7 +80,8 @@ int main(void) {
     if (iris_classify_1nn(0, in, out) != -1) bad++;
     { int ids[1]; float dists[1];
       if (iris_nearest(0, in, ids, dists, 1) != 0) bad++; }
-    snprintf(d, sizeof d, "%d of 20 calls answered wrongly", bad);
+    if (iris_copy(0, 0)        != 0)    bad++;
+    snprintf(d, sizeof d, "%d of 21 calls answered wrongly", bad);
     check("a null instrument refuses across the whole surface", bad == 0, d); }
 
   /* ---- iris_predict on a null instrument writes nothing -----------------

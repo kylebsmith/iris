@@ -42,10 +42,15 @@
        status other than OK; a last_error that is not a finite number;
      - iris_save refusing the loaded instrument; a re-save that differs from
        the file anywhere except the smoothing field and the checksum; save,
-       load, save not byte-identical;
+       load, save not byte-identical; iris_copy refusing the loaded
+       instrument, or leaving a copy that saves other bytes or is not at
+       rest;
      - iris_predict, iris_knn_predict or iris_classify_1nn writing a value
        that is not finite while the status says OK; iris_novelty outside
-       [0,1];
+       [0,1]; iris_nearest answering with takes when iris_classify_1nn
+       names none, with none when it names one, or with another take first,
+       or a distance that is negative, not a number or smaller than the one
+       before;
      - iris_record handing out anything but the loaded next_id, or, with
        every identifier spent, not refusing with IRIS_STORE_FULL.
    ========================================================================= */
@@ -236,7 +241,18 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     iris *k2 = iris_init(a2, ab, s.ni, s.nh, s.no, s.cap, 9u);
     if (!iris_load(k2, s1, need)) fail("could not reload its own save");
     if (iris_save(k2, s2, need) != need || memcmp(s1, s2, need) != 0) fail("save, load, save not byte-identical");
-    free(a2); free(s1); free(s2); }
+    /* iris_copy is iris_save then iris_load: into a receiver with a
+       history it must take the loaded instrument, and the copy must save
+       the loaded instrument's bytes */
+    unsigned char *a3 = (unsigned char *)malloc(ab);
+    memset(a3, 0x5A, ab);
+    iris *k3 = iris_init(a3, ab, s.ni, s.nh, s.no, s.cap, 11u);
+    record_some(k3, s, 1, 3);
+    iris_continue(k3, 2);
+    if (!iris_copy(k3, k)) fail("iris_copy refused a loaded instrument");
+    if (iris_save(k3, s2, need) != need || memcmp(s1, s2, need) != 0) fail("a copy saves other bytes than its source");
+    if (!at_rest(k3) || iris_get_status(k3) != IRIS_STATUS_OK) fail("a copy is not at rest");
+    free(a2); free(a3); free(s1); free(s2); }
 
   /* play it every way there is */
   { static const float P[5][4] = { { 0, 0, 0, 0 }, { 0.5f, 0.5f, 0.5f, 0.5f }, { 1, -1, 1, -1 },
@@ -249,6 +265,15 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       if (iris_classify_1nn(k, P[p], out) >= 0) finite_or_reported(k, out, "1nn: not finite, status OK");
       const float nv = iris_novelty(k, P[p]);
       if (!(nv >= 0.0f && nv <= 1.0f)) fail("novelty outside [0,1]");
+      int ids[3]; float dists[3];
+      k->status = IRIS_STATUS_OK;
+      const int named = iris_classify_1nn(k, P[p], 0);
+      const int got = iris_nearest(k, P[p], ids, dists, 3);
+      if ((got == 0) != (named < 0) || (got > 0 && ids[0] != named))
+        fail("iris_nearest's first take is not the one iris_classify_1nn names");
+      for (int j = 0; j < got; ++j)
+        if (!(dists[j] >= 0.0f) || (j > 0 && dists[j] < dists[j - 1]))
+          fail("iris_nearest: a distance negative, not a number, or smaller than the one before");
     } }
 
   /* the identifiers the file handed over are the ones the store goes on with */

@@ -134,6 +134,7 @@ void w_nearest(void)    { I = iris_nearest(K, IN, IDS, DISTS, 3); }
 void w_save(void)       { N = iris_save_size(K); N = iris_save(K, file, sizeof file);
                           U = iris_internal_crc32(file, N); }
 void w_load(void)       { I = iris_load(K, file, N); }
+void w_copy(void)       { I = iris_copy(K, K); }
 void w_delete(void)     { I = iris_delete_nearest(K, IN); I = iris_delete_index(K, I);
                           I = iris_delete_id(K, I); I = iris_delete_last(K); iris_clear(K); }
 

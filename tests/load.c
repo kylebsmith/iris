@@ -823,6 +823,326 @@ static void fixture(const char *dir) {
   free(f); free(f2); drop(&b);
 }
 
+/* ------------------------------------------------------------ iris_copy
+   iris_copy is defined as iris_save followed by iris_load with no buffer
+   between, and is held to exactly that. Two receivers are built the same
+   way; one is handed the source's file through iris_save and iris_load, the
+   other the source itself through iris_copy. Both must give the same answer,
+   and afterwards hold the same instrument (same_instrument): every field of
+   the structure but the addresses of its arrays, and every byte of the
+   arrays, the working ones included. A refusal must leave the receiver's
+   arena as it was, every byte. */
+static int same_instrument(const iris *a, const iris *b) {
+#define SAME(f) (memcmp(&a->f, &b->f, sizeof a->f) == 0)
+  if (!(SAME(n_in) && SAME(n_hid) && SAME(n_out) && SAME(cap) && SAME(n_ex) && SAME(next_id)
+        && SAME(res_epochs) && SAME(lr) && SAME(momentum) && SAME(l2) && SAME(seed)
+        && SAME(rng) && SAME(trained) && SAME(fitted) && SAME(last_error) && SAME(status)
+        && SAME(tr_done) && SAME(tr_ceiling) && SAME(tr_running) && SAME(tr_n_ex)
+        && SAME(tr_ref) && SAME(tr_err))) return 0;
+#undef SAME
+  /* iris_init carves the arrays in one run, from w1 to the shuffle buffer */
+  const size_t len = (size_t)((const unsigned char *)(a->order + a->cap)
+                            - (const unsigned char *)a->w1);
+  return memcmp(a->w1, b->w1, len) == 0;
+}
+
+/* A receiver with a history, as recv_make's, and more: a sliced run in
+   progress, a learning rate and momentum that are not the defaults. Made
+   twice from the same calls, the two are the same instrument. */
+static box copy_receiver(shape s) {
+  box r = make(s, 77u);
+  demos(r.k, s, s.cap < 3 ? s.cap : 3, 5);
+  iris_continue(r.k, 5);
+  iris_train_begin(r.k, 4000);
+  iris_train_slice(r.k, 30);
+  iris_internal_set_learning(r.k, 0.3f, 0.2f);
+  r.k->status = IRIS_STORE_FULL;
+  return r;
+}
+
+/* The source in one of nine states. */
+#define COPY_STATES 9
+static const char *const copy_state_name[COPY_STATES] = {
+  "empty", "takes, never fitted", "trained", "trained then one more take",
+  "closed-form solve", "in the middle of a sliced run",
+  "a take recorded in the middle of a sliced run", "smoothing, gaps in the identifiers",
+  "every take deleted after training" };
+static void copy_source(iris *k, shape s, int state) {
+  const int n = s.cap < 5 ? s.cap : 5;
+  const int big = s.ni * s.nh > 256;               /* the maxima: keep it quick */
+  if (state == 0) return;
+  demos(k, s, state == 3 ? n - 1 : n, 1);
+  switch (state) {
+    case 2: case 3: case 8:
+      if (big) iris_continue(k, 60); else iris_train(k);
+      if (state == 3) demos(k, s, 1, 4);
+      if (state == 8) while (iris_delete_last(k)) {}
+      break;
+    case 4: { const size_t sn = IRIS_ELM_SCRATCH(s.nh, s.no);
+      unsigned char *scr = (unsigned char *)xmalloc(sn);
+      iris_train_elm(k, 1e-3f, scr, sn);
+      free(scr); break; }
+    case 5: case 6:
+      iris_train_begin(k, 4000);
+      iris_train_slice(k, 40);
+      if (state == 6 && iris_count(k) < s.cap) demos(k, s, 1, 7);
+      iris_train_slice(k, 40);
+      break;
+    case 7:
+      iris_set_smoothing(k, 0.37f);
+      iris_continue(k, 40);
+      iris_delete_id(k, 2);
+      iris_delete_last(k);
+      break;
+    default: break;
+  }
+}
+
+/* One source against two identical receivers: 1 when iris_copy answered as
+   iris_save and iris_load did and left the same receiver, or refused and
+   left its receiver's every byte. *copied gets iris_copy's answer.
+   save_ok 0 says iris_save cannot write this source at all (a count of
+   takes it would read past the store for), so the pair's answer is 0. */
+static int copy_agrees(iris *src, shape sd, int save_ok, int *copied) {
+  box d1 = copy_receiver(sd), d2 = copy_receiver(sd);
+  unsigned char *snap = (unsigned char *)xmalloc(d2.bytes);
+  int r1 = 0;
+  if (save_ok) {
+    const size_t need = iris_save_size(src);
+    unsigned char *f = (unsigned char *)xmalloc(need);
+    const size_t w = iris_save(src, f, need);
+    if (w) r1 = iris_load(d1.k, f, w);
+    free(f);
+  }
+  memcpy(snap, d2.mem, d2.bytes);
+  const int r2 = iris_copy(d2.k, src);
+  int ok = r1 == r2 && (r2 ? same_instrument(d1.k, d2.k) : memcmp(snap, d2.mem, d2.bytes) == 0);
+  if (ok && r2) {                       /* the two play and save the same */
+    const shape s = { d1.k->n_in, d1.k->n_hid, d1.k->n_out, d1.k->cap };
+    float p1[NPROBE][IRIS_MAX_OUT], p2[NPROBE][IRIS_MAX_OUT];
+    play(d1.k, s, p1); play(d2.k, s, p2);
+    const size_t n1 = iris_save_size(d1.k), n2 = iris_save_size(d2.k);
+    unsigned char *f1 = (unsigned char *)xmalloc(n1), *f2 = (unsigned char *)xmalloc(n2);
+    ok = memcmp(p1, p2, sizeof p1) == 0 && n1 == n2 && iris_save(d1.k, f1, n1) == n1
+      && iris_save(d2.k, f2, n2) == n2 && memcmp(f1, f2, n1) == 0;
+    free(f1); free(f2);
+  }
+  *copied = r2;
+  free(snap); drop(&d1); drop(&d2);
+  return ok;
+}
+
+static void copies(void) {
+  char d[320];
+  /* ---- every state, several shapes: the same instrument either way ---- */
+  { static const shape from[4] = { { 2, 12, 3, 32 }, { 1, 8, 1, 4 }, { 3, 9, 2, 10 },
+                                   { IRIS_MAX_IN, IRIS_MAX_HID, IRIS_MAX_OUT, 6 } };
+    static const shape to[4]   = { { 2, 12, 3, 32 }, { 1, 8, 1, 16 }, { 3, 9, 2, 10 },
+                                   { IRIS_MAX_IN, IRIS_MAX_HID, IRIS_MAX_OUT, 6 } };
+    int pairs = 0, wrong = 0, refused = 0;
+    char which[160] = "";
+    for (int sh = 0; sh < 4; ++sh)
+      for (int st = 0; st < COPY_STATES; ++st) {
+        box a = make(from[sh], 1234u);
+        copy_source(a.k, from[sh], st);
+        int copied = 0;
+        pairs++;
+        if (!copy_agrees(a.k, to[sh], 1, &copied)) {
+          wrong++;
+          snprintf(which, sizeof which, "; e.g. %d-%d-%d, %s", from[sh].ni, from[sh].nh,
+                   from[sh].no, copy_state_name[st]);
+        }
+        if (!copied) refused++;
+        drop(&a);
+      }
+    snprintf(d, sizeof d, "%d sources (4 shapes, %d states): %d differ from save and load, "
+             "%d refused%s", pairs, COPY_STATES, wrong, refused, which);
+    check("iris_copy leaves what iris_save and iris_load leave", wrong == 0 && refused == 0, d); }
+
+  /* ---- every rule of the format, broken in the source ----------------
+     A trained 2-12-3 source with eight takes (identifiers 1 to 8), one
+     field changed. accept says what save and load answer, so that neither
+     outcome can pass by the other; a shape change is made in the
+     receiver instead. The last case is a weight decay iris_set_smoothing
+     cannot produce: stored as the setting, weight decay / 0.3, and set
+     again, it comes back one step of float resolution lower, and the copy
+     must come back the same. */
+  { typedef struct { const char *what; int accept; } rule;
+    static const rule R[] = {
+      { "unchanged", 1 }, { "a not-a-number weight", 0 }, { "an infinite hidden bias", 0 },
+      { "a weight of minus infinity", 0 }, { "a not-a-number output bias", 0 },
+      { "a weight past IRIS_W_LIMIT", 1 }, { "a not-a-number input in a take", 0 },
+      { "an infinite output in a take", 0 }, { "an input range with lo above hi", 0 },
+      { "an input range of zero width", 1 }, { "an infinite input range end", 0 },
+      { "an output range of zero width", 0 }, { "a not-a-number output range end", 0 },
+      { "an input range whose width overflows", 0 }, { "seed 0", 0 }, { "random state 0", 0 },
+      { "next identifier 0", 0 }, { "next identifier -1", 0 },
+      { "an identifier at the next identifier", 0 }, { "next identifier at IRIS_ID_LIMIT", 1 },
+      { "an identifier repeated", 0 }, { "an identifier 0", 0 }, { "an identifier -3", 0 },
+      { "identifiers out of order, all different", 1 }, { "more takes than the capacity", 0 },
+      { "a count of takes of -1", 0 }, { "trained but never fitted", 0 },
+      { "fitted 7 and trained -2 (true, as 1)", 1 }, { "never fitted, never trained", 1 },
+      { "smoothing not a number", 0 }, { "smoothing above 1", 0 }, { "smoothing exactly 1", 1 },
+      { "smoothing -0", 1 }, { "smoothing below 0", 0 },
+      { "a receiver with another n_in", 0 }, { "a receiver with another n_hid", 0 },
+      { "a receiver with another n_out", 0 }, { "a receiver holding 7 takes", 0 },
+      { "a receiver holding exactly 8", 1 },
+      { "more takes than the source holds, into a larger receiver", 0 },
+      { "a weight decay the setting does not give back exactly", 1 } };
+    const int nr = (int)(sizeof R / sizeof R[0]);
+    int wrong = 0;
+    char which[200] = "";
+    for (int c = 0; c < nr; ++c) {
+      box a = make(S2, 1234u);
+      demos(a.k, S2, S2_DEMOS, 0);
+      iris_train(a.k);
+      iris *k = a.k;
+      shape sd = S2;
+      int save_ok = 1;
+      switch (c) {
+        case 1: k->w1[0] = bitsf(0x7FC00000u); break;
+        case 2: k->b1[S2.nh - 1] = bitsf(0x7F800000u); break;
+        case 3: k->w2[5] = bitsf(0xFF800000u); break;
+        case 4: k->b2[0] = bitsf(0x7FC00000u); break;
+        case 5: k->w2[0] = 20.0f; break;
+        case 6: k->ex[0] = bitsf(0x7FC00000u); break;
+        case 7: k->ex[S2_DEMOS * (S2.ni + S2.no) - 1] = bitsf(0x7F800000u); break;
+        case 8: k->in_lo[0] = k->in_hi[0] + 1.0f; break;
+        case 9: k->in_lo[1] = k->in_hi[1]; break;
+        case 10: k->in_hi[0] = bitsf(0x7F800000u); break;
+        case 11: k->out_lo[0] = k->out_hi[0]; break;
+        case 12: k->out_hi[2] = bitsf(0x7FC00000u); break;
+        case 13: k->in_lo[0] = -3e38f; k->in_hi[0] = 3e38f; break;
+        case 14: k->seed = 0u; break;
+        case 15: k->rng.s = 0u; break;
+        case 16: k->next_id = 0; break;
+        case 17: k->next_id = -1; break;
+        case 18: k->next_id = 8; break;
+        case 19: k->next_id = (int32_t)IRIS_ID_LIMIT; break;
+        case 20: k->ex_id[3] = k->ex_id[1]; break;
+        case 21: k->ex_id[0] = 0; break;
+        case 22: k->ex_id[0] = -3; break;
+        case 23: k->ex_id[0] = 2; k->ex_id[1] = 1; break;
+        case 24: k->n_ex = S2.cap + 1; break;
+        case 25: k->n_ex = -1; save_ok = 0; break;
+        case 26: k->fitted = 0; k->trained = 1; break;
+        case 27: k->fitted = 7; k->trained = -2; break;
+        case 28: k->fitted = 0; k->trained = 0; break;
+        case 29: k->l2 = bitsf(0x7FC00000u); break;
+        case 30: k->l2 = 0.31f; break;
+        case 31: k->l2 = 0.3f; break;
+        case 32: k->l2 = -0.0f; break;
+        case 33: k->l2 = -1e-9f; break;
+        case 34: sd.ni = 3; break;
+        case 35: sd.nh = 13; break;
+        case 36: sd.no = 2; break;
+        case 37: sd.cap = 7; break;
+        case 38: sd.cap = 8; break;
+        case 39:   /* only the source's capacity refuses: the row and the
+                      identifier read past its store are valid ones */
+          demos(k, S2, S2.cap - S2_DEMOS, 3);
+          for (int i = 0; i < S2.cap; ++i) k->ex_id[i] = 100 + i;
+          k->next_id = 200; k->order[0] = 7; k->n_ex = S2.cap + 1; sd.cap = 64;
+          break;
+        case 40: iris_internal_set_l2(k, bitsf(0x3A9A33E7u)); break;   /* 0.00117647357 */
+        default: break;
+      }
+      int copied = -1;
+      const int agree = copy_agrees(k, sd, save_ok, &copied);
+      if (!agree || copied != R[c].accept) {
+        wrong++;
+        snprintf(which, sizeof which, "; e.g. %s: copy %d, agrees %d", R[c].what, copied, agree);
+      }
+      drop(&a);
+    }
+    snprintf(d, sizeof d, "%d cases: %d answered unlike save and load, or unlike the rule%s",
+             nr, wrong, which);
+    check("iris_copy refuses what save and load refuse, dst untouched", wrong == 0, d); }
+
+  /* ---- random breakage ------------------------------------------------
+     3,000 sources with one to three fields set to values near the edges of
+     the rules, drawn at random: the answer and the receiver must match
+     save and load's every time. */
+  { unsigned st = 99u;
+    int trials = 0, wrong = 0, accepted_n = 0;
+    static const float V[] = { 0.0f, -0.0f, 1.0f, -1.0f, 20.0f, 1e-40f, 3e38f, -3e38f, 0.3f, 0.31f };
+    for (int t = 0; t < 3000; ++t) {
+      box a = make(S2, 1234u);
+      demos(a.k, S2, S2_DEMOS, 0);
+      if (t % 3) iris_train(a.k);
+      iris *k = a.k;
+      const int edits = 1 + (int)(t % 3);
+      for (int e = 0; e < edits; ++e) {
+        st = st * 1664525u + 1013904223u;
+        const unsigned f = (st >> 8) % 12u, w = (st >> 16) % 13u, at = (st >> 20) % 8u;
+        const float v = w < 10 ? V[w] : w == 10 ? bitsf(0x7FC00000u)
+                      : w == 11 ? bitsf(0x7F800000u) : bitsf(0xFF800000u);
+        const int iv = (int)(st >> 24) % 11 - 2;
+        switch (f) {
+          case 0: k->w1[at] = v; break;
+          case 1: k->w2[at % (unsigned)(S2.no * S2.nh)] = v; break;
+          case 2: k->in_lo[at % 2u] = v; break;
+          case 3: k->in_hi[at % 2u] = v; break;
+          case 4: k->out_lo[at % 3u] = v; break;
+          case 5: k->out_hi[at % 3u] = v; break;
+          case 6: k->ex[at * 5u + at % 5u] = v; break;
+          case 7: k->l2 = v; break;
+          case 8: k->ex_id[at] = iv; break;
+          case 9: k->next_id = iv + 7; break;
+          case 10: k->fitted = iv; break;
+          default: k->trained = iv; break;
+        }
+      }
+      int copied = 0;
+      trials++;
+      if (!copy_agrees(k, S2, 1, &copied)) wrong++;
+      accepted_n += copied;
+      drop(&a);
+    }
+    snprintf(d, sizeof d, "%d random sources (%d copied, %d refused): %d unlike save and load",
+             trials, accepted_n, trials - accepted_n, wrong);
+    check("iris_copy agrees with save and load on random breakage",
+          wrong == 0 && accepted_n > 0 && accepted_n < trials, d); }
+
+  /* ---- dst == src ----------------------------------------------------
+     iris_copy(k, k) is iris_save and iris_load of k into itself: two
+     instruments with one history, in the middle of a sliced run, one saved
+     and loaded into itself, the other copied onto itself, must end as the
+     same instrument, at rest. With a not-a-number weight, both refuse and
+     the copy leaves every byte. */
+  { box a = copy_receiver(S2), b = copy_receiver(S2);
+    const int busy = iris_train_busy(a.k);
+    const size_t n = iris_save_size(b.k);
+    unsigned char *f = (unsigned char *)xmalloc(n);
+    const int r1 = iris_save(b.k, f, n) == n && iris_load(b.k, f, n);
+    const int r2 = iris_copy(a.k, a.k);
+    const int same = same_instrument(a.k, b.k);
+    const int rest = !iris_train_busy(a.k) && iris_get_status(a.k) == IRIS_STATUS_OK
+                  && a.k->lr == 0.10f && a.k->v_w1[0] == 0.0f;
+    a.k->w1[3] = bitsf(0x7FC00000u);
+    unsigned char *snap = (unsigned char *)xmalloc(a.bytes);
+    memcpy(snap, a.mem, a.bytes);
+    const int r3 = iris_copy(a.k, a.k);
+    const int kept = memcmp(snap, a.mem, a.bytes) == 0;
+    const int s3 = iris_save(a.k, f, n) != 0;
+    snprintf(d, sizeof d, "busy before %d; save+load %d, copy %d, same %d, at rest %d; "
+             "poisoned: copy %d, arena kept %d, save %d", busy, r1, r2, same, rest, r3, kept, s3);
+    check("iris_copy(k, k) is a save and a load of k into itself",
+          busy && r1 && r2 && same && rest && r3 == 0 && kept && s3 == 0, d);
+    free(f); free(snap); drop(&a); drop(&b); }
+
+  /* ---- null arguments ------------------------------------------------ */
+  { box a = copy_receiver(S2);
+    unsigned char *snap = (unsigned char *)xmalloc(a.bytes);
+    memcpy(snap, a.mem, a.bytes);
+    const int r1 = iris_copy(0, a.k), r2 = iris_copy(a.k, 0), r3 = iris_copy(0, 0);
+    const int same = memcmp(snap, a.mem, a.bytes) == 0;
+    snprintf(d, sizeof d, "copy(NULL, src) %d, copy(dst, NULL) %d, copy(NULL, NULL) %d, "
+             "arena same %d", r1, r2, r3, same);
+    check("iris_copy refuses a null instrument", !r1 && !r2 && !r3 && same, d);
+    free(snap); drop(&a); }
+}
+
 int main(int argc, char **argv) {
   const char *golden = argc > 1 ? argv[1] : "tests/golden";
   printf("\n  THE SAVE FORMAT, AS A PARSER (iris.h PART 9)\n\n");
@@ -837,6 +1157,7 @@ int main(int argc, char **argv) {
   save_after_record();
   unfitted_and_emptied();
   after_load_at_rest();
+  copies();
   identifiers_run_out();
   save_side();
   alignment();

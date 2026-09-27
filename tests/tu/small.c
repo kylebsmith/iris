@@ -66,6 +66,7 @@ int main(void) {
   check("iris_suggest_smoothing refuses", iris_suggest_smoothing(k, scratch, sizeof scratch) == -1.0f);
   check("iris_train_elm refuses", iris_train_elm(k, 1e-4f, scratch, sizeof scratch) == -1);
   check("iris_load refuses", iris_load(k, file, fn) == 0);
+  check("iris_copy refuses", iris_copy(k, k) == 0);
 
   k->status = st;
   check("every refusal left every byte but the status unmoved", memcmp(before, mem, bytes) == 0);

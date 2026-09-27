@@ -39,6 +39,15 @@ unmoved.
   stack does not grow with n. Hysteresis on a snapped category, feedback on
   how near a take the player is, and a threshold for gestures nobody taught
   all need this number.
+- `iris_copy(dst, src)` copies one instrument into another of the same shape,
+  defined as `iris_save(src)` followed by `iris_load(dst)` with no buffer in
+  between: the same refusals, with `dst` untouched, and the same result, `dst`
+  at rest with `src`'s weights, ranges, takes, identifiers, seed and smoothing.
+  It is how an instrument keeps playing its old fit while a second one trains:
+  `iris_train` starts over from the seed, so an instrument being retrained
+  plays a half-trained network until its run ends. `iris_copy(k, k)` is a save
+  and a load of `k` into itself. `iris_load` now puts the instrument at rest
+  through the same internal function, with no change to what it does.
 
 ### Documentation
 

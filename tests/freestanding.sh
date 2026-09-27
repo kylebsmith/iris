@@ -188,6 +188,8 @@ int iris_probe(void) {
   SINKU += (unsigned long)(iris_internal_put_f32s(word + 8, xn, NI) - word);
   k2 = iris_init(mem2, sizeof mem2, NI, NH, NO, CAP, 1u);
   SINKI += iris_load(k2, file, n);
+  SINKI += iris_copy(k2, k) + iris_internal_copy_ok(k2, k);
+  iris_internal_at_rest(k2);
   SINKI += iris_delete_nearest(k, in);
   SINKI += iris_delete_index(k, 0) + iris_delete_id(k, 5) + iris_delete_last(k);
   iris_clear(k);

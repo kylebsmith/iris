@@ -48,6 +48,7 @@ iris_suggest_smoothing	KEYWORD2
 iris_save_size	KEYWORD2
 iris_save	KEYWORD2
 iris_load	KEYWORD2
+iris_copy	KEYWORD2
 
 IRIS_ARENA	LITERAL1
 IRIS_STATUS_OK	LITERAL1

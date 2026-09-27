@@ -105,6 +105,7 @@ static void s_save(void)     { SINK = (float)iris_save_size(K); SAVED = iris_sav
 static void s_load(void) {
   K2 = iris_init(A2, sizeof A2, NI, NH, NO, CAP, 5u);
   SINK = (float)iris_load(K2, FILEBUF, SAVED);
+  SINK += (float)iris_copy(K2, K);
 }
 static void s_delete(void) {
   float in[NI] = { 0.5f, 0.5f };
@@ -146,7 +147,7 @@ static const scenario S[] = {
   { "iris_loo_error",                     s_loo,        0 },
   { "iris_suggest_smoothing",             s_suggest,    0 },
   { "save_size and save",                 s_save,       0 },
-  { "init and load",                      s_load,       0 },
+  { "init, load and copy",                s_load,       0 },
   { "the four deletes",                   s_delete,     0 },
   { "iris_clear",                         s_clear,      0 },
 };

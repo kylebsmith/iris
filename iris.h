@@ -290,6 +290,8 @@
      size_t iris_save_size(k)             exactly the bytes iris_save writes
      size_t iris_save(k, buf, cap)        bytes written, or 0
      int    iris_load(k, buf, bytes)      1, or 0 with k untouched
+     int    iris_copy(dst, src)           iris_save then iris_load, with no
+                                          buffer; 1, or 0 with dst untouched
 
    Types: iris (the instrument), iris_status (what iris_get_status returns),
    iris_progress_fn (the callback iris_continue_to_plateau calls).
@@ -1157,7 +1159,8 @@ struct iris {
    Rule 1, for a call that either works or does not: 0 means the call did
    nothing, non-zero means it worked. That covers iris_init (a null
    pointer), iris_size, iris_shape, iris_record, iris_get, iris_train,
-   iris_train_begin, the delete functions, iris_save and iris_load.
+   iris_train_begin, the delete functions, iris_save, iris_load and
+   iris_copy.
    iris_record returns the new demonstration's identifier, never 0 because
    identifiers start at 1, so it obeys the rule and hands you the number you
    need later to delete that take; iris_get returns the identifier of the
@@ -4179,6 +4182,27 @@ IRIS_API size_t iris_save(const iris *k, void *buf, size_t cap) {
   return need;
 }
 
+/* At rest: nothing carried over from whatever the arena held before. What
+   iris_load and iris_copy do once the instrument's own values are in place
+   (see "After a load" above).
+
+   The training error is not in the file, but the fit and the demonstrations
+   are, so it is measured exactly as every trainer measures it when it
+   finishes (iris_internal_recall_error). A loaded instrument whose fit
+   matches its demonstrations reports the bits the saved one did; a stale
+   one reports the error over the demonstrations it holds now. */
+IRIS_API void iris_internal_at_rest(iris *k) {
+  iris_internal_default_learning(k);
+  iris_internal_zero_velocity(k);
+  for (int i = 0; i < k->cap; ++i) k->ex_res[i] = 0.0f;
+  k->res_epochs = 0;
+  k->tr_done = 0; k->tr_ceiling = 0; k->tr_running = 0; k->tr_n_ex = 0;
+  k->tr_ref = 0.0f; k->tr_err = 0.0f;
+  k->status = IRIS_STATUS_OK;
+  { float x[IRIS_MAX_IN];
+    k->last_error = iris_internal_recall_error(k, x); }
+}
+
 /* Reads a file written by iris_save into k, an instrument of the same shape.
    Returns 1, or 0 with k untouched. */
 IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
@@ -4209,24 +4233,104 @@ IRIS_API int iris_load(iris *k, const void *buf, size_t bytes) {
     k->fitted  = (flags & 1u) ? 1 : 0;
     k->trained = (flags & 2u) ? 1 : 0;
   }
+  iris_internal_at_rest(k);
+  return 1;
+}
 
-  /* At rest: nothing carried over from whatever this arena held before. */
-  iris_internal_default_learning(k);
-  iris_internal_zero_velocity(k);
-  for (int i = 0; i < k->cap; ++i) k->ex_res[i] = 0.0f;
-  k->res_epochs = 0;
-  k->tr_done = 0; k->tr_ceiling = 0; k->tr_running = 0; k->tr_n_ex = 0;
-  k->tr_ref = 0.0f; k->tr_err = 0.0f;
-  k->status = IRIS_STATUS_OK;
+/* Would iris_save(src) followed by iris_load(dst) succeed? Every rule of the
+   table above, asked of src itself instead of the bytes iris_save would
+   write for it: each test is one of iris_internal_file_ok's, in its order,
+   applied to the value that would sit at that place in the file. iris_save
+   puts the rules to src and iris_load puts them to dst, and the two differ
+   only in whose shape and capacity the file is compared with, so both are
+   here. Four of that function's tests always pass for a file iris_save has
+   just written and are not repeated: the magic, the format number, the
+   header size, and the length and checksum of the bytes. tests/load.c
+   breaks each rule in an instrument and holds iris_copy's answer to that
+   of iris_save and iris_load. */
+IRIS_API int iris_internal_copy_ok(const iris *dst, const iris *src) {
+  const size_t ni = (size_t)src->n_in, nh = (size_t)src->n_hid, no = (size_t)src->n_out;
+  const uint32_t flags = (src->fitted ? 1u : 0u) | (src->trained ? 2u : 0u);
+  const uint32_t n_ex = (uint32_t)src->n_ex, next_id = (uint32_t)src->next_id;
+  uint32_t top = 0u;
+  size_t i, j;
+  if (flags == 2u) return 0;                   /* trained, but never fitted */
+  if (dst->n_in != src->n_in || dst->n_hid != src->n_hid || dst->n_out != src->n_out) return 0;
+  if (n_ex > (uint32_t)src->cap || n_ex > (uint32_t)dst->cap) return 0;
+  if (src->seed == 0u) return 0;
+  if (next_id < 1u || next_id > (uint32_t)IRIS_ID_LIMIT) return 0;
+  if (src->rng.s == 0u) return 0;
+  { const float s = iris_get_smoothing(src);
+    if (iris_internal_isbad(s) || s < 0.0f || s > 1.0f) return 0; }
+  for (i = 0; i < nh * ni; ++i) if (iris_internal_isbad(src->w1[i])) return 0;
+  for (i = 0; i < nh; ++i)      if (iris_internal_isbad(src->b1[i])) return 0;
+  for (i = 0; i < no * nh; ++i) if (iris_internal_isbad(src->w2[i])) return 0;
+  for (i = 0; i < no; ++i)      if (iris_internal_isbad(src->b2[i])) return 0;
+  for (i = 0; i < ni; ++i)
+    if (!iris_internal_range_ok(src->in_lo[i], src->in_hi[i], 1)) return 0;
+  for (i = 0; i < no; ++i)
+    if (!iris_internal_range_ok(src->out_lo[i], src->out_hi[i], 0)) return 0;
+  for (i = 0; i < (size_t)n_ex * (ni + no); ++i) if (iris_internal_isbad(src->ex[i])) return 0;
+  for (i = 0; i < (size_t)n_ex; ++i) {
+    const uint32_t id = (uint32_t)src->ex_id[i];
+    if (id < 1u || id >= next_id) return 0;
+    if (id <= top)
+      for (j = 0; j < i; ++j) if ((uint32_t)src->ex_id[j] == id) return 0;
+    if (id > top) top = id;
+  }
+  return 1;
+}
 
-  /* The training error is not in the file, but the fit and the
-     demonstrations are, so it is measured exactly as every trainer measures
-     it when it finishes (iris_internal_recall_error). A loaded instrument
-     whose fit matches its demonstrations reports the bits the saved one
-     did; a stale one reports the error over the demonstrations it holds now
-     (see "After a load" above). */
-  { float x[IRIS_MAX_IN];
-    k->last_error = iris_internal_recall_error(k, x); }
+/* One instrument into another of the same shape, exactly as iris_save
+   followed by iris_load would carry it across, with no buffer in between.
+   The same refusals, with dst untouched, and the same result: dst holds
+   src's weights, ranges, demonstrations, identifiers, seed, random state and
+   smoothing, and is at rest (see "After a load" above). Returns 1, or 0 with
+   dst untouched. src is only read.
+
+   What it is for. iris_train and iris_train_begin start over from the seed,
+   and a sliced run moves the weights between slices, so an instrument being
+   retrained plays a half-trained network until the run ends. To keep
+   playing the old fit, play one instrument and train another of the same
+   shape: record each new take into both (or copy the player into the
+   learner, then record into the learner), train the learner in slices
+   between predictions of the player, and when the run has finished, copy the
+   learner into the player. examples/05_keep_playing.c does this. The copy
+   costs what a load costs: one pass over the weights and demonstrations,
+   and the forward pass per demonstration that measures iris_last_error.
+
+   dst and src may be the same instrument. iris_copy(k, k) is iris_save and
+   iris_load of k into itself: it puts k at rest, ending a sliced run and
+   clearing the velocities, the ledger and the status, and leaves what k
+   plays as it was. */
+IRIS_API int iris_copy(iris *dst, const iris *src) {
+  if (!dst || !src) return 0;
+  if (!iris_internal_shape_fits(dst)) return 0;
+  if (!iris_internal_copy_ok(dst, src)) return 0;
+
+  /* Every rule has passed; in iris_load's order from here on. Read before
+     written, so that dst == src copies each value onto itself. */
+  { const size_t ni = (size_t)src->n_in, nh = (size_t)src->n_hid, no = (size_t)src->n_out;
+    const size_t nex = (size_t)src->n_ex;
+    const float smoothing = iris_get_smoothing(src);
+    size_t i;
+    dst->n_ex    = src->n_ex;
+    dst->seed    = src->seed;
+    dst->next_id = src->next_id;
+    dst->rng.s   = src->rng.s;
+    iris_set_smoothing(dst, smoothing);
+    for (i = 0; i < nh * ni; ++i) dst->w1[i] = src->w1[i];
+    for (i = 0; i < nh; ++i)      dst->b1[i] = src->b1[i];
+    for (i = 0; i < no * nh; ++i) dst->w2[i] = src->w2[i];
+    for (i = 0; i < no; ++i)      dst->b2[i] = src->b2[i];
+    for (i = 0; i < ni; ++i) { dst->in_lo[i]  = src->in_lo[i];  dst->in_hi[i]  = src->in_hi[i]; }
+    for (i = 0; i < no; ++i) { dst->out_lo[i] = src->out_lo[i]; dst->out_hi[i] = src->out_hi[i]; }
+    for (i = 0; i < nex * (ni + no); ++i) dst->ex[i] = src->ex[i];
+    for (i = 0; i < nex; ++i) dst->ex_id[i] = src->ex_id[i];
+    dst->fitted  = src->fitted  ? 1 : 0;
+    dst->trained = src->trained ? 1 : 0;
+  }
+  iris_internal_at_rest(dst);
   return 1;
 }
 

@@ -13,14 +13,15 @@
    those blocks, and any undefined arithmetic, is reported by the sanitizer,
    a tool with no opinion about what the right answer is.
 
-   It asserts three things of its own, each a documented promise: whatever
+   It asserts four things of its own, each a documented promise: whatever
    goes in, iris_predict, iris_knn_predict and iris_classify_1nn write a
    finite number into every output (a not-a-number is replaced by the
    range centre and reported, iris.h PART 6 and PART 10); iris_nearest
    returns at most the n it was asked for, with distances that are never
-   negative, never not-a-number and never fall (PART 10); and a file
-   iris_save wrote loads back into an instrument of the same shape, which
-   then saves the very same bytes (PART 9).
+   negative, never not-a-number and never fall (PART 10); a file iris_save
+   wrote loads back into an instrument of the same shape, which then saves
+   the very same bytes; and iris_copy answers as iris_save and iris_load
+   do, and leaves an instrument that saves the same bytes (PART 9).
 
    To see that it can fail, shorten any of the exact-size buffers by one
    element: AddressSanitizer reports a heap-buffer-overflow at once.
@@ -81,8 +82,9 @@ int main(int argc, char **argv) {
     if (!need) { refused++; continue; }                 /* shape declined; fine */
     unsigned char *arena  = (unsigned char *)malloc(need);   /* EXACT size */
     unsigned char *arena2 = (unsigned char *)malloc(need);
+    unsigned char *arena3 = (unsigned char *)malloc(need);
     iris *k = iris_init(arena, need, n_in, n_hid, n_out, cap, rnd(100000));
-    if (!k) { refused++; free(arena); free(arena2); continue; }
+    if (!k) { refused++; free(arena); free(arena2); free(arena3); continue; }
     built++;
 
     float *in  = (float *)malloc(sizeof(float) * (size_t)n_in);    /* exact */
@@ -95,7 +97,7 @@ int main(int argc, char **argv) {
     for (int step = 0; step < 40; ++step, ++calls) {
       for (int i = 0; i < n_in; i++)  in[i]  = rndf();
       for (int i = 0; i < n_out; i++) out[i] = rndf();
-      switch (rnd(23)) {
+      switch (rnd(24)) {
         case 0: case 1: case 2: iris_record(k, in, out); break;
         case 3: iris_predict(k, in, out); must_be_finite("iris_predict", out, n_out, it); break;
         case 4: iris_continue_to_plateau(k, (int)rnd(50), 0, 0); break;
@@ -177,12 +179,36 @@ int main(int argc, char **argv) {
               exit(1);
             }
           free(ids); free(dists); break; }
+        case 23: { /* iris_copy against iris_save and iris_load, into two
+                      receivers made alike: the same answer, and then the
+                      same bytes saved and the same training error */
+          iris *r1 = iris_init(arena2, need, n_in, n_hid, n_out, cap, 7u);
+          iris *r2 = iris_init(arena3, need, n_in, n_hid, n_out, cap, 7u);
+          const size_t n = iris_save_size(k);
+          unsigned char *file = (unsigned char *)malloc(n ? n : 1);
+          unsigned char *f1 = (unsigned char *)malloc(n ? n : 1), *f2 = (unsigned char *)malloc(n ? n : 1);
+          const size_t w = iris_save(k, file, n);
+          const int a = w && r1 ? iris_load(r1, file, w) : 0;
+          const int b = r2 ? iris_copy(r2, k) : 0;
+          if (a != b) {
+            printf("FAIL  iris_copy answered %d where save and load answered %d (iteration %d)\n", b, a, it);
+            exit(1);
+          }
+          if (b) {
+            const float e1 = iris_last_error(r1), e2 = iris_last_error(r2);
+            if (iris_save(r1, f1, n) != n || iris_save(r2, f2, n) != n || memcmp(f1, f2, n) != 0
+                || memcmp(&e1, &e2, sizeof e1) != 0) {
+              printf("FAIL  iris_copy left another instrument than save and load (iteration %d)\n", it);
+              exit(1);
+            }
+          }
+          free(file); free(f1); free(f2); break; }
         default: { float m = 0.0f;
           (void)iris_example_stress(k, (int)rnd((unsigned)cap + 2) - 1);
           (void)iris_worst_example(k, &m); (void)iris_worst_example_id(k, &m); } break;
       }
     }
-    free(in); free(out); free(scratch); free(advice); free(arena); free(arena2);
+    free(in); free(out); free(scratch); free(advice); free(arena); free(arena2); free(arena3);
   }
   printf("iterations %d | shapes built %d | shapes refused %d | calls %ld\n",
          iters, built, refused, calls);
