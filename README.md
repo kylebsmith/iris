@@ -263,7 +263,7 @@ It stops at the first failure and says which check failed. One check at a time:
 | `sh build.sh audit` | the correctness checks, including the golden hash `0x6805FB0D` |
 | `sh build.sh regressions` | one test per defect the library must not repeat |
 | `sh build.sh coverage` | the refusal paths: each case asks a function to refuse and checks that it does, and says so |
-| `sh build.sh load` | the save format: round trips, every rule, a committed saved instrument played back bit for bit |
+| `sh build.sh load` | the save format: round trips, every rule, a committed saved instrument played back bit for bit; and `tools/iris_dump.c`, which reads an instrument a sketch printed |
 | `sh build.sh train` | refusals change nothing, sliced training equals `iris_train`, the stuck-divergence refusal, the smoothing suggestion |
 | `sh build.sh elm` | the closed-form trainer |
 | `sh build.sh playing` | the playing and neighbour paths |
@@ -272,7 +272,7 @@ It stops at the first failure and says which check failed. One check at a time:
 | `sh build.sh tu` | two translation units with different maxima sharing one instrument |
 | `sh build.sh fuzz` | random shapes and call sequences under AddressSanitizer |
 | `sh build.sh examples` | every example, built with `-Werror` and run |
-| `sh build.sh sanitize` | every test program and example under AddressSanitizer and UndefinedBehaviorSanitizer |
+| `sh build.sh sanitize` | every test program and example, and the dump tool's self-check, under AddressSanitizer and UndefinedBehaviorSanitizer |
 | `sh build.sh threads` | ThreadSanitizer, with a positive control |
 | `sh build.sh noheap` | zero allocator calls, with a positive control |
 | `sh build.sh freestanding` | the zero-dependency claim, flag by flag, and the ESP32-S3 symbol list |
@@ -299,7 +299,7 @@ before a pull request.
 | [`iris.h`](iris.h) | The whole library. Start at the top. |
 | [`examples/`](examples/) | `00_minimal.c` draws the learned space; `01_hello.c` three gestures; `02_fix_a_mistake.c` the repair loop; `03_reroll.c` same demonstrations, different instrument; `04_categories.c` one instrument read two ways, continuous and snapped; `05_keep_playing.c` playing one instrument while another trains; `iris_smallest/` the Arduino one |
 | [`tests/`](tests/) | The test programs and the committed saved instrument in `tests/golden/` |
-| [`tools/`](tools/) | Programs the tests use, such as the exhaustive square-root comparison |
+| [`tools/`](tools/) | Programs the tests use, such as the exhaustive square-root comparison, and `iris_dump.c`, which takes an instrument off a board and writes its takes and a prediction grid as CSV |
 | [`docs/`](docs/) | The two explanations of the system, decision records, the negative-results index and the board logs; [`docs/README.md`](docs/README.md) is the index |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to change iris without breaking it |

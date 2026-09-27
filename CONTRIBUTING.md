@@ -65,7 +65,7 @@ groups them:
 sh build.sh audit          # the correctness checks and the golden hash 0x6805FB0D, the status values in order, the guards with and without
 sh build.sh regressions    # one test per defect the library must not repeat
 sh build.sh coverage       # the refusal paths
-sh build.sh load           # the save format, and the playback golden file
+sh build.sh load           # the save format, the playback golden file, and tools/iris_dump.c
 sh build.sh train          # the trainers' state logic, byte by byte
 sh build.sh elm            # the closed-form trainer
 sh build.sh playing        # the playing and neighbour paths
@@ -78,7 +78,7 @@ sh build.sh tiny           # docs/tiny.c, iris_train written again, against the 
 sh build.sh docs           # keywords.txt, docs/tiny.c, the README program, this list and the version check, against the code
 
 # the whole suite under a tool
-sh build.sh sanitize       # every test program and example under AddressSanitizer and UndefinedBehaviorSanitizer
+sh build.sh sanitize       # every test program, example and the dump tool under AddressSanitizer and UndefinedBehaviorSanitizer
 sh build.sh threads        # ThreadSanitizer, with a positive control
 sh build.sh noheap         # zero allocator calls, with a positive control
 sh build.sh freestanding   # zero undefined symbols, and the ESP32-S3 list
@@ -150,7 +150,7 @@ positive control that must be detected, decides without asking you.
 | [`iris.h`](iris.h) | The whole library. Start at the top. |
 | [`examples/`](examples/) | `00_minimal.c` is the smallest one; `iris_smallest/` is the Arduino one. |
 | [`tests/`](tests/) | The test programs and the playback golden file. |
-| [`tools/`](tools/) | Programs the tests use. |
+| [`tools/`](tools/) | Programs the tests use, and `iris_dump.c`, which takes an instrument off a board. |
 | [`docs/`](docs/README.md) | The two explanations of the system, the decision records, the negative-results index and the board logs. |
 
 - **`iris.h` is the core.** It has no dependencies and no allocation, and both

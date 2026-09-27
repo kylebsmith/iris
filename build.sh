@@ -31,7 +31,9 @@
 #                every healthy line must match and every control line differ
 #   regressions  tests/regressions.c, one test per known defect
 #   coverage     tests/coverage.c, the refusal paths (cov measures coverage)
-#   load         tests/load.c, the save format attacked as a parser
+#   load         tests/load.c, the save format attacked as a parser; then
+#                tools/iris_dump.c's self-check: a saved file printed as a
+#                sketch prints it comes back, loads and reads out exactly
 #   train        tests/train.c, the trainers and their refusals
 #   elm          tests/elm.c, the closed-form trainer
 #   playing      tests/playing.c, prediction and the neighbour samplers
@@ -58,7 +60,8 @@
 #                date)
 #
 # The whole suite under a tool
-#   sanitize     every test program and example above under
+#   sanitize     every test program and example above, and
+#                tools/iris_dump.c's self-check, under
 #                AddressSanitizer and UndefinedBehaviorSanitizer, with
 #                float-divide-by-zero and float-cast-overflow, stopping at
 #                the first report
@@ -178,6 +181,8 @@ arm_load() {
   "$CC" $CFLAGS -c tests/load.c -o build/load_main.o
   "$CC" build/load_main.o build/load_small.o -o build/load -lm
   ./build/load
+  "$CC" $CFLAGS -o build/iris_dump tools/iris_dump.c
+  ./build/iris_dump --check
 }
 arm_train()       { "$CC" $CFLAGS -o build/train tests/train.c -lm; ./build/train; }
 arm_elm()         { "$CC" $CFLAGS -o build/elm tests/elm.c -lm; ./build/elm; }
@@ -259,6 +264,7 @@ arm_sanitize() {
   sanitized coverage -- tests/coverage.c
   "$CC" $X -DLOAD_SMALL_UNIT -c tests/load.c -o build/sanitize/load_small.o
   sanitized load -- tests/load.c build/sanitize/load_small.o
+  sanitized iris_dump --check -- tools/iris_dump.c
   sanitized train -- tests/train.c
   sanitized elm -- tests/elm.c
   sanitized playing -- tests/playing.c
