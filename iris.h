@@ -4790,8 +4790,8 @@ IRIS_API int iris_classify_1nn(iris *k, const float *in, float *out) { if (!k) r
    takes nearest to the reading, nearest first, the earliest-recorded first
    on a tie. ids receives their identifiers and dists their distances, and
    either may be null. Returns how many it wrote into each: n, unless fewer
-   takes are stored or fewer lie at a finite distance (below), and 0 when it
-   refuses.
+   takes are stored or fewer have a distance the float arithmetic can give
+   (below), and 0 when it refuses.
 
    It ranks exactly as the neighbour functions above do, with the same
    distance, the same scan and the same tie rule, so ids[0] is the
@@ -4819,32 +4819,46 @@ IRIS_API int iris_classify_1nn(iris *k, const float *in, float *out) { if (!k) r
    you record or delete, so after new takes the distances are measured in
    the ranges of the last fit until you train again.
 
-   Takes at no finite distance. A take recorded far outside the fitted
-   ranges can lie so many ranges from the reading that its squared distance
-   overflows a float. While any take is at a finite distance such a take is
-   left out, as iris_knn_predict leaves it out, so fewer than n can come
-   back. When no take is at a finite distance the takes are ranked by the
-   far distance (see iris_internal_distance2_far), as the other neighbour
-   functions rank them, and every distance reported is infinity: the far
-   distance caps each input at 10^15 ranges, so its values mean nothing in
-   the unit above, and infinity is past any threshold a caller sets.
+   Where the arithmetic runs out. The distance is computed in single
+   precision exactly as the neighbour functions compute it, and has their
+   limits. An input whose range is wider than the largest float, which only
+   takes beyond about 1.7e38 make, counts as never having moved. A take
+   whose squared distance comes out at the largest float or above, one about
+   1.8e19 ranges (the square root of the largest float) or more from the
+   reading, as a take recorded far outside the ranges of the last fit can
+   be, or not a number, a difference from the reading beyond the largest
+   float on an input that counts not at all, is left out while any other
+   take's squared distance is a number below it, as iris_knn_predict leaves
+   it out, so fewer than n can come back. When no take's is, the takes are
+   ranked by the far distance (see iris_internal_distance2_far), as the
+   other neighbour functions rank them. The far distance skips every input
+   that counts not at all and caps each other input at 10^15 ranges, so
+   below 10^15 ranges, where the cap cannot have acted, it is the distance
+   in the unit above and is reported as it is; a take 10^15 ranges or more
+   away is reported at infinity, past any threshold a caller sets.
 
    It refuses as iris_classify_1nn does, returning 0 and writing nothing into
    ids or dists: a null instrument, an empty store, a shape too big for this
    translation unit (IRIS_NOT_FITTED), a reading that is not finite
-   (IRIS_NAN_TRAPPED), and a store with no take at any distance, which only
-   a not-a-number written into the arena makes (IRIS_NAN_TRAPPED). n below 1
-   asks for nothing and returns 0 before any of those. Inside the instrument
-   it writes what iris_classify_1nn writes when its `out` is null: the status
-   in those cases, and the ranges of an instrument never fitted.
+   (IRIS_NAN_TRAPPED), and a store in which no take's distance, ordinary or
+   far, is a number (IRIS_NAN_TRAPPED): a not-a-number written into the
+   arena, or a range narrower than the reciprocal of the largest float with
+   a reading exactly on its takes, a range iris_internal_fit_ranges never
+   makes. n below 1 asks for nothing and returns 0 before any of those.
+   Inside the instrument it writes what iris_classify_1nn writes when its
+   `out` is null: the status in those cases, and the ranges of an instrument
+   never fitted. Built with IRIS_NO_GUARDS, which is for measuring the
+   guards, it reports nothing for a reading that is not finite, where
+   iris_classify_1nn names the first take.
 
    The cost is iris_knn_predict's scan, once for the first IRIS_KNN_MAXK
    takes and once more for each further IRIS_KNN_MAXK. The stack holds one
    scan's slots whatever n is: asking for every take of a large store is
    slow, never deep. */
 /* Lengths: unchecked, as everywhere (see the interface block). Reads
-   exactly n_in floats from `in` and writes at most n entries into each of
-   ids and dists. */
+   exactly n_in floats from `in`, once, before it writes anything, so ids or
+   dists may share memory with it; writes at most n entries into each of ids
+   and dists. */
 IRIS_API int iris_nearest(iris *k, const float *in, int *ids, float *dists, int n) {
   if (!k || n < 1) return 0;
   if (!iris_internal_shape_fits(k)) { k->status = IRIS_NOT_FITTED; return 0; }
@@ -4854,8 +4868,9 @@ IRIS_API int iris_nearest(iris *k, const float *in, int *ids, float *dists, int 
     if (iris_internal_isbad(in[i])) { k->status = IRIS_NAN_TRAPPED; return 0; }
 #endif
   if (!k->fitted) iris_internal_fit_ranges(k);
-  float inv[IRIS_MAX_IN];
+  float inv[IRIS_MAX_IN], q[IRIS_MAX_IN];
   iris_internal_neighbour_scale(k, inv);
+  for (int i = 0; i < k->n_in; ++i) q[i] = in[i];   /* every pass reads this copy */
   union { float f; uint32_t u; } inf;
   inf.u = 0x7F800000u;                       /* positive infinity, from its bits */
   if (n > k->n_ex) n = k->n_ex;
@@ -4866,7 +4881,8 @@ IRIS_API int iris_nearest(iris *k, const float *in, int *ids, float *dists, int 
      last_r), and is passed over. The first pass passes over nothing, so for n
      up to IRIS_KNN_MAXK it is iris_knn_predict's scan exactly. A first pass
      that finds nothing switches every pass to the far distance, as the other
-     functions rescan. */
+     functions rescan; a far distance the cap cannot have touched is reported
+     as it is (see "Where the arithmetic runs out"). */
   const int stride = k->n_in + k->n_out;
   int got = 0, far = 0, last_r = -1;
   float last_d = -1.0f;
@@ -4877,8 +4893,8 @@ IRIS_API int iris_nearest(iris *k, const float *in, int *ids, float *dists, int 
     for (int j = 0; j < IRIS_KNN_MAXK; ++j) { bi[j] = -1; bd[j] = IRIS_FLT_MAX; }
     for (int r = 0; r < k->n_ex; ++r) {
       const float *row = k->ex + (size_t)r * stride;
-      const float d = far ? iris_internal_distance2_far(k, inv, row, in)
-                          : iris_internal_distance2(k, inv, row, in);
+      const float d = far ? iris_internal_distance2_far(k, inv, row, q)
+                          : iris_internal_distance2(k, inv, row, q);
       if (d > last_d || (d == last_d && r > last_r))
         iris_internal_knn_insert(bd, bi, kk, r, d);
     }
@@ -4886,15 +4902,16 @@ IRIS_API int iris_nearest(iris *k, const float *in, int *ids, float *dists, int 
     int found = 0;
     while (found < kk && bi[found] >= 0) {
       if (ids)   ids[got]   = (int)k->ex_id[bi[found]];
-      if (dists) dists[got] = far ? inf.f : iris_internal_sqrt(bd[found]);
+      if (dists) dists[got] = far && !(bd[found] < IRIS_KNN_FAR * IRIS_KNN_FAR)
+                            ? inf.f : iris_internal_sqrt(bd[found]);
       last_d = bd[found]; last_r = bi[found];
       ++found; ++got;
     }
     if (found < kk) break;                   /* the ranking has run out */
   }
 #ifndef IRIS_NO_GUARDS
-  /* Neither distance found a take: every one holds a not-a-number (the
-     reading was finite). Report it, as iris_classify_1nn does. */
+  /* Neither distance is a number for any take, the reading being finite
+     (the refusals above say when). Report it, as iris_classify_1nn does. */
   if (got == 0) k->status = IRIS_NAN_TRAPPED;
 #endif
   return got;

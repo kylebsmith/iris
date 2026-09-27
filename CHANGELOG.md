@@ -33,10 +33,11 @@ unmoved.
   `IRIS_KNN_MAXK`, are the takes `iris_knn_predict` blends, ties included; it
   refuses as `iris_classify_1nn` does and writes inside the instrument only
   what that function writes. A take whose squared distance overflows a float
-  is left out while any take is at a finite distance, as `iris_knn_predict`
-  leaves it out; when none is, the takes are ranked by the far distance and
-  every distance reported is infinity. Either buffer may be null, and the
-  stack does not grow with n. Hysteresis on a snapped category, feedback on
+  is left out while any take's does not, as `iris_knn_predict` leaves it out;
+  when every take's does, the takes are ranked by the far distance, which is
+  reported as it is below 10^15 ranges and as infinity from there. Either
+  buffer may be null, either may share memory with the reading, and the stack
+  does not grow with n. Hysteresis on a snapped category, feedback on
   how near a take the player is, and a threshold for gestures nobody taught
   all need this number.
 - `iris_copy(dst, src)` copies one instrument into another of the same shape,

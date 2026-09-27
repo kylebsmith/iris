@@ -203,8 +203,9 @@ static double nb_distance2(const iris *k, const float *row, const float *in) {
    computed in double precision from the ranges the instrument measures in
    (nb_distance2), to within 1e-5 of it; the distances must never fall; every
    identifier must come once; the count must be the takes at a finite
-   distance, or every take when none is, and then every distance must be
-   infinity. And the answer for every smaller n must be the start of this one,
+   distance, or every take when none is; and a distance may be infinity only
+   in that case, for a take 10^15 ranges or more away. And the answer for
+   every smaller n must be the start of this one,
    bit for bit: each pass of IRIS_KNN_MAXK takes carries on where the last
    stopped. c counts lists, values off, out of order, wrong counts, wrong
    prefixes and lists at no finite distance. */
@@ -222,8 +223,8 @@ static void nb_list_check(iris *k, const float *in, long *c) {
   for (int j = 0; j < got; ++j) {
     const int at = iris_index_of(k, ids[j]);
     const double ref2 = at < 0 ? -1.0 : nb_distance2(k, k->ex + (size_t)at * stride, in);
-    if (finite == 0) {
-      if (!(dists[j] > 3.4e38f) || ref2 < 3.4e38) c[1]++;
+    if (dists[j] > 3.4e38f) {
+      if (finite > 0 || ref2 < 0.99e30) c[1]++;
     } else {
       const double ref = ref2 >= 0.0 ? __builtin_sqrt(ref2) : -1.0;
       const double err = __builtin_fabs((double)dists[j] - ref);
@@ -1101,6 +1102,65 @@ int main(void) {
              "id %d at %g, k-NN %g", got, ids[0], ids[1], (double)dists[0], (double)dists[1],
              got2, ids2[0], (double)dists2[0], (double)o);
     check("iris_nearest: takes at no finite distance", far_ok && mixed_ok, d); }
+
+  /* ---- iris_nearest at the ends of the float range -------------------------
+     Two takes whose first input never moved, at 3e38, and a reading of
+     -3e38 there: the difference overflows, times the still input's zero
+     scale that is not a number, so no ordinary distance is a number and
+     the far distance ranks the takes. It skips the still input and no cap
+     acts, so the distances reported are the unit's own, 0.25 and 0.75, and
+     the first take is the classifier's. Then a range narrower than the
+     reciprocal of the largest float, 1e-39, which the fit never makes,
+     with a reading exactly on its takes: every distance is 0 times infinity,
+     and iris_nearest must refuse exactly as iris_classify_1nn does, the
+     arena after each the same. */
+  { static unsigned char M[IRIS_ARENA(2, 8, 1, 8)];
+    iris *k = iris_init(M, sizeof M, 2, 8, 1, 8, 1u);
+    float t1[2] = { 3e38f, 0.0f }, t2[2] = { 3e38f, 1.0f }, y = 0.5f;
+    iris_record(k, t1, &y); iris_record(k, t2, &y);
+    const float q[2] = { -3e38f, 0.25f };
+    int ids[2] = { 0, 0 }; float dists[2] = { -1.0f, -1.0f };
+    const int named = iris_classify_1nn(k, q, 0);
+    const int got = iris_nearest(k, q, ids, dists, 2);
+    const int far_ok = got == 2 && ids[0] == 1 && ids[1] == 2 && named == 1
+                    && dists[0] == 0.25f && dists[1] == 0.75f;
+    k = iris_init(M, sizeof M, 2, 8, 1, 8, 1u);
+    for (int r = 0; r < 3; ++r) { float in[2] = { 0.0f, (float)r }, o = (float)r; iris_record(k, in, &o); }
+    iris_train_elm(k, 1e-3f, NSCR, sizeof NSCR);
+    k->in_hi[0] = 1e-39f;
+    const float on[2] = { 0.0f, 0.5f };
+    k->status = IRIS_STATUS_OK;
+    memcpy(NB_SNAP, M, sizeof M);
+    const int c1 = iris_classify_1nn(k, on, 0);
+    memcpy(NB_AFTER, M, sizeof M);
+    memcpy(M, NB_SNAP, sizeof M);
+    const int g1 = iris_nearest(k, on, ids, dists, 2);
+    const int narrow_ok = c1 == -1 && g1 == 0 && iris_get_status(k) == IRIS_NAN_TRAPPED
+                       && memcmp(M, NB_AFTER, sizeof M) == 0;
+    snprintf(d, sizeof d, "overflowed still input: %d back, ids %d %d at %g %g (classifier %d); "
+             "range 1e-39: nearest %d, classifier %d, status %d", got, ids[0], ids[1],
+             (double)dists[0], (double)dists[1], named, g1, c1, (int)iris_get_status(k));
+    check("iris_nearest at the ends of the float range", far_ok && narrow_ok, d); }
+
+  /* ---- iris_nearest: the reading may share memory with dists ----------------
+     Twelve takes on one input at 0 to 11 and a reading of 5.2 kept in the
+     first slot of the array dists is written into: every pass after the
+     first reads the reading again, so it must read a copy taken before
+     anything was written. The answer must equal the one with separate
+     arrays, identifiers and distances. */
+  { static unsigned char M[IRIS_ARENA(1, 8, 1, 16)];
+    iris *k = iris_init(M, sizeof M, 1, 8, 1, 16, 1u);
+    for (int r = 0; r < 12; ++r) { float in = (float)r, o = (float)r; iris_record(k, &in, &o); }
+    const float q = 5.2f;
+    int ids[12], ids2[12]; float dists[12], buf[12];
+    const int got = iris_nearest(k, &q, ids, dists, 12);
+    buf[0] = q;
+    const int got2 = iris_nearest(k, buf, ids2, buf, 12);
+    const int same = got == 12 && got2 == 12 && memcmp(ids, ids2, sizeof ids) == 0
+                  && memcmp(dists, buf, sizeof dists) == 0;
+    snprintf(d, sizeof d, "separate: %d back, ninth id %d; sharing: %d back, ninth id %d; same %d",
+             got, ids[8], got2, ids2[8], same);
+    check("iris_nearest: the reading may share memory with dists", same, d); }
 
   /* ---- iris_nearest: either buffer may be null ----------------------------
      With ids, dists or both null the count is the same and the buffer given
