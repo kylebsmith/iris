@@ -1,10 +1,10 @@
 # 0018 — Inputs are scaled to [-1,+1], and the scaling travels with the file
 
-**Status:** accepted in part, 2026-08-22. The scaling governs `iris.h` 0.2.0:
+**Status:** accepted in part, 2026-08-22. The scaling governs `iris.h` from 0.2.0:
 every input is scaled to [-1, +1] across its demonstrated range. The mechanism
-that carried a choice of scaling in the file is superseded: 0.2.0 has one
-scaling, reads and writes format 7 only, and the file has no field for the
-scaling because there is nothing to choose. The rule below about versioning
+that carried a choice of scaling in the file is superseded: from 0.2.0 there
+is one scaling, iris reads and writes format 7 only, and the file has no field
+for the scaling because there is nothing to choose. The rule below about versioning
 the meaning of bytes still governs the save format.
 **Affects:** `iris.h` PART 5 (`iris_internal_norm_in`) and PART 9
 (`IRIS_FILE_VERSION`, `iris_save`, `iris_load`), `tests/audit.c` ("golden
@@ -55,7 +55,7 @@ differed by 0.427 of full scale over 441 probes (the same study).
 Not a build flag, not a global, not the caller.
 
 When this record was accepted, two scalings coexisted and the version word
-selected between them. In 0.2.0 there is one scaling and one format:
+selected between them. From 0.2.0 there is one scaling and one format:
 `iris_load` refuses any file whose version is not 7, and a format 7 file is
 always on [-1, +1]. A future change to the scaling, or to anything else that
 changes what stored weights mean, is a new format version.

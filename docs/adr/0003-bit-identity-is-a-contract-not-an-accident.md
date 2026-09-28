@@ -1,6 +1,6 @@
 # 0003 — Bit-identity is a contract, not an accident
 
-**Status:** accepted, 2026-08-21. Governs `iris.h` 0.2.0.
+**Status:** accepted, 2026-08-21. Governs `iris.h` from 0.2.0.
 **Affects:** `iris.h` (the compiler tripwires, the contraction pragmas,
 `IRIS_FLUSH`), the golden hashes in `tests/audit.c`, `tests/load.c` and
 `tests/starter_recipes.c`, `sh build.sh determinism`.

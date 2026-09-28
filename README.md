@@ -2,7 +2,7 @@
 
 **Interactive machine learning for handmade instruments, in one C99 header.**
 
-BSD 3-Clause licensed. Version 0.2.0.
+BSD 3-Clause licensed. Version 0.3.0.
 
 You demonstrate a handful of gestures paired with sounds. It learns the mapping
 and fills in everything between. No laptop in the loop, no runtime, no build
@@ -224,7 +224,7 @@ the main loop.
 | `iris_train`, 50 demonstrations | laptop | 12,000 epochs, 52 ms | same |
 | `iris_train_elm`, 50 demonstrations | laptop | 8.5 µs | same |
 | `iris_knn_predict`, 256 demonstrations | laptop | 1.2 µs | same |
-| One prediction, 2-12-3 | ESP32-S3, 240 MHz | 14.95 µs (median of batches, empty loop subtracted); 99.9% of calls within 19.8 µs, worst 47 µs | `board_probe`, [release board log](docs/board/2026-09-25-es3c28p-v0.2.0.txt) |
+| One prediction, 2-12-3 | ESP32-S3, 240 MHz | 14.95 µs (median of batches, empty loop subtracted); 99.9% of calls within 19.8 µs, worst 48.5 µs | `board_probe`, [release board log](docs/board/2026-09-28-es3c28p-v0.3.0.txt) |
 | One prediction, 6-16-8 / 12-32-8 | ESP32-S3 | 35.7 µs / 74.2 µs (medians) | same |
 | `iris_train`, 20 demonstrations of the reference task | ESP32-S3 | 18,000 epochs, 13.4 s | same |
 | `iris_train`, 10 / 50 demonstrations | ESP32-S3 | 10.6 s / 22.1 s | same |
@@ -232,11 +232,16 @@ the main loop.
 | `iris_train_elm`, 20 / 50 demonstrations | ESP32-S3 | 1.5 ms / 3.5 ms | same |
 
 "Laptop" is the development machine, an Apple M4 Max, with Apple clang `-O2`.
-The board figures are iris 0.2.0 as released (tag `v0.2.0`) on an ES3C28P
+The board figures are iris 0.3.0 as released (tag `v0.3.0`) on an ES3C28P
 (ESP32-S3 revision 2, 240 MHz, Arduino-ESP32 3.3.3, gcc 14.2, `-Os`), measured on
-2026-09-25 by the starter kit's `board_probe` sketch; the
-[release board log](docs/board/2026-09-25-es3c28p-v0.2.0.txt) names the build. Training on the board is slow: a sketch that must keep drawing trains in
-slices (48 ms per 64 epochs), or uses the closed-form trainer.
+2026-09-28 by the starter kit's `board_probe` sketch; the
+[release board log](docs/board/2026-09-28-es3c28p-v0.3.0.txt) names the build.
+The same sketch on the 0.2.0 release header gave the same figures but for the
+worst single call, 46.6 µs
+([its log](docs/board/2026-09-25-es3c28p-v0.2.0.txt)): the worst call depends
+on the run, not on the release. Training on the board is slow: a sketch that
+must keep drawing trains in slices (48 ms per 64 epochs), or uses the
+closed-form trainer.
 
 For audio, 14.95 µs against the 20.8 µs of one sample at 48 kHz is 1.4 times of
 margin: 72% of a core spent on playing alone. It is enough to run per sample and
@@ -269,7 +274,7 @@ It stops at the first failure and says which check failed. One check at a time:
 | `sh build.sh playing` | the playing and neighbour paths |
 | `sh build.sh portability` | the in-header square root against the host's, and the other stand-ins for the C library |
 | `sh build.sh recipes` | the starter kit's two pinned recipes (`tests/starter_recipes.c`) |
-| `sh build.sh tu` | two translation units with different maxima sharing one instrument |
+| `sh build.sh tu` | three translation units, with the default, shrunk and raised maxima, sharing instruments |
 | `sh build.sh fuzz` | random shapes and call sequences under AddressSanitizer |
 | `sh build.sh examples` | every example, built with `-Werror` and run |
 | `sh build.sh sanitize` | every test program and example, and the dump tool's self-check, under AddressSanitizer and UndefinedBehaviorSanitizer |
@@ -367,7 +372,9 @@ every byte back.
   golden recipe of `tests/audit.c` (`0x6805FB0D`) in `board_probe`
   ([board log](docs/board/2026-09-25-es3c28p.txt)), and did so again with the
   header as tagged `v0.2.0`
-  ([release board log](docs/board/2026-09-25-es3c28p-v0.2.0.txt)). A second
+  ([release board log](docs/board/2026-09-25-es3c28p-v0.2.0.txt)) and, on
+  2026-09-28, as tagged `v0.3.0`
+  ([0.3.0 board log](docs/board/2026-09-28-es3c28p-v0.3.0.txt)). A second
   board has not been run.
 - **The ESP32-S3 does not flush subnormal numbers to zero** (measured by
   `board_probe`). iris flushes its own decaying tails below `IRIS_TINY`, so
@@ -440,7 +447,7 @@ one minor release first. The interface block at the top of `iris.h` lists the
 whole public interface. Anything named `iris_internal_` can change or disappear
 in any release: do not call it.
 
-**The file format has its own number.** 0.2.0 writes format 7. Every later
+**The file format has its own number.** 0.2.0 and 0.3.0 write format 7. Every later
 release reads every format from 7 on, for ever. A file loads into an
 instrument made with the same shape (inputs, hidden units, outputs) and a
 capacity at least the number of takes it holds. The file carries its shape
@@ -475,14 +482,15 @@ with a note in `CHANGELOG.md` saying what moved and what to do about it, and
 never silently. The file-format promise holds from 0.2.0 regardless. 1.0 comes
 when a study of real recorded gestures settles when training should stop and
 how much smoothing is the default, and the determinism check has matched the
-host on more than one ESP32-S3 board.
+host on more than one ESP32-S3 board. `tools/iris_dump.c` is how such a
+study's instruments, and the takes in them, come off the board.
 
 ### What each part of the version number permits
 
 | Release | Permitted | Not permitted |
 |---|---|---|
-| Patch (0.2.1) | Documentation, comments, tests, build tooling; a new refusal for an input the documentation already called invalid, or that crashed or corrupted memory; a fix that moves no golden hash | Any golden hash moving; any signature change; any change to a result for a valid input |
-| Minor (0.3.0) | New functions and macros; training changes with re-pinned training hashes; deprecations; a new file-format version whose files older releases refuse cleanly. Before 1.0 only: other breaking changes, each with a migration note | Removing or renaming a public function without a completed deprecation; moving a playback hash (after 1.0) |
+| Patch (0.3.1) | Documentation, comments, tests, build tooling; a new refusal for an input the documentation already called invalid, or that crashed or corrupted memory; a fix that moves no golden hash | Any golden hash moving; any signature change; any change to a result for a valid input |
+| Minor (0.4.0) | New functions and macros; training changes with re-pinned training hashes; deprecations; a new file-format version whose files older releases refuse cleanly. Before 1.0 only: other breaking changes, each with a migration note | Removing or renaming a public function without a completed deprecation; moving a playback hash (after 1.0) |
 | Major (after 1.0) | Removing or changing public functions after deprecation; a playback change, which also takes a new file-format number | Dropping a reader: every format from 7 on stays readable |
 
 A behaviour change is anything that moves a golden hash, changes a return value

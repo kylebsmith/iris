@@ -1,6 +1,6 @@
 # iris: a single-header C99 library for interactive supervised learning on embedded hardware
 
-**Version 0.2.0.** BSD 3-Clause, `Copyright (c) 2026, Kyle Smith`. One header,
+**Version 0.3.0.** BSD 3-Clause, `Copyright (c) 2026, Kyle Smith`. One header,
 no build system: `cc -std=c99 -O2 -I. -o hello examples/01_hello.c`. This page
 summarises the design for a technical reader; [`iris.h`](../iris.h) is the
 authority. Each figure below names its source as the README sets out under
@@ -128,7 +128,11 @@ scaled by `1/n_ex`.
   `examples/01_hello.c` stops at 2,557 epochs with error 9.89e-7: not a
   multiple of 2,000, so the floor stopped it.
 - **`iris_train_begin` / `iris_train_slice`** run the same training in slices
-  and are bit-identical to `iris_train` (`tests/train.c`).
+  and are bit-identical to `iris_train` (`tests/train.c`). A run starts from
+  the seed, so the instrument it trains plays a half-trained network until it
+  ends; **`iris_copy`**, `iris_save` then `iris_load` with no buffer, hands the
+  finished fit to a second instrument that kept playing meanwhile
+  (`examples/05_keep_playing.c`, `tests/load.c`).
 - **`iris_continue`** and **`iris_continue_to_plateau`** carry on from the
   current weights: fixed epochs, or to the plateau. `iris_continue` is the
   fixed-epoch recursion the golden hash pins. After a deleted bad take they keep
@@ -251,11 +255,11 @@ training-cost table `sh build.sh audit` prints:
 One prediction takes 0.036 µs; `iris_knn_predict` takes 0.30 µs at 64
 demonstrations and 1.2 µs at 256.
 
-On the ESP32-S3 (an ES3C28P at 240 MHz, iris 0.2.0, measured on 2026-09-25 by
-the starter kit's `board_probe`; [log](board/2026-09-25-es3c28p.txt)): one
+On the ESP32-S3 (an ES3C28P at 240 MHz, iris 0.3.0, measured on 2026-09-28 by
+the starter kit's `board_probe`; [log](board/2026-09-28-es3c28p-v0.3.0.txt)): one
 prediction of a 2-12-3 instrument takes 14.95 µs, the median over repeated
 batches with the empty loop's 12 cycles subtracted; 99.9% of single calls
-finish within 19.8 µs and the worst took 47 µs. 6-16-8 takes 35.7 µs and
+finish within 19.8 µs and the worst took 48.5 µs. 6-16-8 takes 35.7 µs and
 12-32-8 74.2 µs. `iris_train` on the reference task takes 10.6 s at 10
 demonstrations, 13.4 s at 20 (18,000 epochs) and 22.1 s at 50; one slice of 64
 epochs at 20 demonstrations takes 48 ms; `iris_train_elm` takes 1.5 ms at 20 and

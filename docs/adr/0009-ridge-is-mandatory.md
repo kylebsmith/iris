@@ -1,6 +1,6 @@
 # 0009 — The ridge is mandatory: the single-precision normal matrix is rank-deficient even on friendly data
 
-**Status:** accepted, 2026-08-21. Governs `iris.h` 0.2.0; the handling of an
+**Status:** accepted, 2026-08-21. Governs `iris.h` from 0.2.0; the handling of an
 exhausted escalation is superseded, see the Decision.
 **Affects:** `iris.h` PART 8d (the Cholesky factorisation inside
 `iris_internal_train_elm_ex`), `tests/audit.c` ("ELM: solve cannot fail on

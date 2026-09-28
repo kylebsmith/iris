@@ -1,6 +1,6 @@
 # 0004 — Guards report, never silently mutate
 
-**Status:** accepted, 2026-08-21. Governs `iris.h` 0.2.0. Two parts no longer
+**Status:** accepted, 2026-08-21. Governs `iris.h` from 0.2.0. Two parts no longer
 hold as first written: the weight limit fires on some good fits on sharp
 targets (the figures, and why 16 is kept, are at `IRIS_W_LIMIT`), and
 `iris_predict` takes a non-`const` instrument instead of writing the status

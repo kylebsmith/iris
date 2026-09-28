@@ -1,6 +1,6 @@
 # 0017 — Train to the plateau, not to a constant
 
-**Status:** accepted, 2026-08-22. Governs `iris.h` 0.2.0: `iris_train` is this
+**Status:** accepted, 2026-08-22. Governs `iris.h` from 0.2.0: `iris_train` is this
 decision. Whether the plateau is the right default on noisy demonstrations is
 contested (iris-studies S08; see "The caveat" below).
 **Affects:** `iris.h` PART 8 (`iris_train`, `iris_continue`,

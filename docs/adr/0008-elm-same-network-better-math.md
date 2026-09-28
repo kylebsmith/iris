@@ -1,6 +1,6 @@
 # 0008 — The closed-form trainer: same network, different mathematics
 
-**Status:** accepted, 2026-08-21. Governs `iris.h` 0.2.0 (`iris_train_elm`).
+**Status:** accepted, 2026-08-21. Governs `iris.h` from 0.2.0 (`iris_train_elm`).
 **Affects:** `iris.h` PART 8d (`iris_train_elm`,
 `iris_internal_train_elm_ex`, `iris_internal_artanh`, `iris_internal_logit`,
 `IRIS_ELM_SCRATCH`, `IRIS_ARENA_ELM`), `tests/audit.c` (the three "ELM:"

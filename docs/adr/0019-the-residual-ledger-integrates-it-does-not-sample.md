@@ -1,6 +1,6 @@
 # 0019 — The bad-example detector integrates the residual; it does not sample the endpoint
 
-**Status:** accepted, 2026-08-22. Governs `iris.h` 0.2.0 PART 8f.
+**Status:** accepted, 2026-08-22. Governs `iris.h` PART 8f from 0.2.0.
 **Affects:** `iris.h` PART 8f (`iris_example_stress`, `iris_worst_example`,
 `iris_worst_example_id`, `IRIS_STRESS_FLAG`, `IRIS_STRESS_MIN_EX`), `IRIS_ARENA`,
 `tests/audit.c` ("finds the demonstration that fights, stays quiet
@@ -15,7 +15,7 @@ the demonstrations by how badly the model still misses them. At 6,000 epochs
 it ranks a deliberately corrupted demonstration first in 16 trials out of 20 at
 +0.05, where leave-one-out cross-validation, which costs *n* full retrains,
 manages 1. Every measurement in this record is on smooth synthetic data. All
-but the 0.2.0 figures under "The caveat", which `tests/elm.c measure` prints,
+but the figures under "The caveat", which `tests/elm.c measure` prints,
 are from a study whose program is not yet published.
 
 ## Why the obvious version fails
@@ -100,7 +100,7 @@ been checked against a recorded gesture. On demonstrations that all
 contradict one another there is no crowd to disagree with, and the margin
 stays low: the detector declines to accuse anybody.
 
-The current figures for 0.2.0 come from `tests/elm.c measure` (12 hidden
+The current figures come from `tests/elm.c measure` (12 hidden
 units, 8 outputs, one take offset on one output): after `iris_train` the
 offset take is ranked first in 18 to 20 of 20 sessions at offsets from 0.05 to
 0.40 and 20, 50 or 100 demonstrations, and clean sessions reach the flag in 7,
@@ -149,6 +149,6 @@ State the relation to TracIn in those terms in any write-up. Every number in
 this record comes from smooth synthetic data, and no human gesture has been
 tested; that bound belongs in any write-up too.
 
-Measurements: `tests/elm.c measure` for the 0.2.0 figures; the rest are from
+Measurements: `tests/elm.c measure` for the figures under "The caveat"; the rest are from
 a study whose program is not yet published, which iris-studies lists as S10
 and points back to this record.

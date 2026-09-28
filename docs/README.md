@@ -1,6 +1,6 @@
 # docs
 
-What each document here is. Everything in this folder describes iris 0.2.0 and
+What each document here is. Everything in this folder describes iris 0.3.0 and
 is kept true with it; where a document and [`../iris.h`](../iris.h) disagree,
 the header is right and the document is wrong. Read the header and
 [`../README.md`](../README.md) first.
@@ -38,3 +38,7 @@ how they are written and where the removed ones went.
 | [0017](adr/0017-train-to-the-plateau-not-to-a-constant.md) | Training to a plateau instead of a fixed epoch count; contested on noisy data. |
 | [0018](adr/0018-the-input-scaling-travels-with-the-file.md) | Inputs scaled to [-1, +1]; what stored bytes mean is fixed by the format version. |
 | [0019](adr/0019-the-residual-ledger-integrates-it-does-not-sample.md) | The worst-demonstration detector integrates the residual over training. |
+| [0022](adr/0022-per-output-behaviour.md) | Proposed: whether an output can snap to the nearest take instead of interpolating, listen to some inputs only, or be taught by some takes only. |
+| [0023](adr/0023-input-scales-for-the-neighbour-functions.md) | Proposed: letting inputs that are one direction share one scale in the neighbour functions. |
+| [0024](adr/0024-names-in-saved-files.md) | Proposed: the names of inputs and outputs inside saved files. |
+| [0025](adr/0025-takes-that-carry-time.md) | Proposed: takes that are short movements rather than single readings. |

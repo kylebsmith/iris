@@ -1,6 +1,6 @@
 # 0010 — Nearest neighbour: the sampler beside the morpher
 
-**Status:** accepted, 2026-08-21. Governs `iris.h` 0.2.0 PART 10.
+**Status:** accepted, 2026-08-21. Governs `iris.h` PART 10 from 0.2.0.
 **Affects:** `iris.h` PART 10 (`iris_knn_predict`, `iris_classify_1nn`,
 `IRIS_KNN_MAXK`), `tests/audit.c` ("k-NN: exact recall on every demo",
 "k-NN: convex, finite, does not reroll", "1-NN: agrees with the Weka-IBk

@@ -2,7 +2,7 @@
    Copyright (c) 2026 Kyle Smith */
 /* ============================================================================
    iris.h  --  interactive machine learning for handmade instruments
-   v0.2.0 · one file · C99 · no dependencies · no allocation · no C library
+   v0.3.0 · one file · C99 · no dependencies · no allocation · no C library
 
    You show it a handful of examples of "when I do THIS, it sounds like THAT".
    It learns a mapping and fills in everything in between.
