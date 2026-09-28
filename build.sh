@@ -55,9 +55,10 @@
 #                build with -Werror, CONTRIBUTING.md lists exactly this
 #                script's arms, and
 #                tests/version_check.sh holds tools/version-check.sh to its
-#                rule (on a release tag, the CHANGELOG.md heading and
-#                CITATION.cff's date-released must both give the release
-#                date)
+#                rule: iris.h (its version and its masthead), the packaging
+#                files, CHANGELOG.md, README.md and docs/ name one version,
+#                and on a release tag the CHANGELOG.md heading and
+#                CITATION.cff's date-released both give the release date
 #
 # The whole suite under a tool
 #   sanitize     every test program and example above, and

@@ -27,7 +27,9 @@ fresh() {
   rm -rf "$T/r"
   mkdir -p "$T/r/tools"
   cp "$ROOT/tools/version-check.sh" "$T/r/tools/"
-  for f in iris.h library.properties CITATION.cff CHANGELOG.md; do cp "$ROOT/$f" "$T/r/"; done
+  mkdir -p "$T/r/docs"
+  for f in iris.h library.properties CITATION.cff CHANGELOG.md README.md; do cp "$ROOT/$f" "$T/r/"; done
+  cp "$ROOT/docs/SYSTEM-technical.md" "$ROOT/docs/README.md" "$T/r/docs/"
 }
 # heading <text>: the first version heading of CHANGELOG.md becomes
 # "## <version> — <text>"
@@ -64,5 +66,15 @@ fresh; heading 2026-10-01; released 2026-10-02
 fresh; heading soon;                      expect FAIL branch "a heading that is neither a date nor unreleased"
 fresh; sed "s/^version=.*/version=$V.1/" "$T/r/library.properties" > "$T/c" && mv "$T/c" "$T/r/library.properties"
                                           expect FAIL branch "library.properties naming another version"
+# other <file> <sed expression>: one line of <file> names another version
+other() { sed "$2" "$T/r/$1" > "$T/c" && mv "$T/c" "$T/r/$1"; }
+fresh; other iris.h "s/^   v$V /   v$V.1 /"
+                                          expect FAIL branch "the header's masthead naming another version"
+fresh; other README.md "s/ Version $V\.\$/ Version $V.1./"
+                                          expect FAIL branch "README.md naming another version"
+fresh; other docs/SYSTEM-technical.md "s/^\*\*Version $V\./**Version $V.1./"
+                                          expect FAIL branch "docs/SYSTEM-technical.md naming another version"
+fresh; other docs/README.md "s/describes iris $V and/describes iris $V.1 and/"
+                                          expect FAIL branch "docs/README.md naming another version"
 if [ "$fail" = 0 ]; then echo "PASS  every case"; else echo "FAIL  a case gave the wrong answer"; fi
 exit "$fail"

@@ -75,7 +75,7 @@ sh build.sh tu             # three translation units: the default, shrunk and ra
 sh build.sh fuzz [N]       # N random call sequences (400) under AddressSanitizer
 sh build.sh examples       # every example, with -Werror, run
 sh build.sh tiny           # docs/tiny.c, iris_train written again, against the library to the bit
-sh build.sh docs           # keywords.txt, docs/tiny.c, the README program, this list and the version check, against the code
+sh build.sh docs           # keywords.txt, docs/tiny.c, the README program, this list, and one version in every file that names it
 
 # the whole suite under a tool
 sh build.sh sanitize       # every test program, example and the dump tool under AddressSanitizer and UndefinedBehaviorSanitizer

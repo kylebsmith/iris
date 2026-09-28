@@ -7,13 +7,18 @@
 # The release workflow runs this when a tag is pushed; tests/version_check.sh
 # (part of sh build.sh docs) runs it against altered copies of the files. It
 # is the one check in the repository that compares text with text, and a
-# version only has to agree at the moment it is released. Five places must
+# version only has to agree at the moment it is released. Nine places must
 # name the same version:
 #   the tag                       v0.2.0 (the leading v is dropped)
 #   iris.h                        #define IRIS_VERSION_STRING "0.2.0"
+#   iris.h, its masthead          the line "   v0.2.0 · one file · ..."
 #   library.properties            version=0.2.0
 #   CITATION.cff                  version: 0.2.0
 #   CHANGELOG.md                  the first heading of the form "## 0.2.0 ..."
+#   README.md                     the line "BSD 3-Clause licensed. Version 0.2.0."
+#   docs/SYSTEM-technical.md      the line starting "**Version 0.2.0.**"
+#   docs/README.md                "Everything in this folder describes iris 0.2.0"
+# A line reworded so that the version cannot be read from it fails too.
 # That heading ends in "unreleased" or in the release date, YYYY-MM-DD. Off a
 # tag either will do. On a tag -- GITHUB_REF_TYPE is tag, as the release
 # workflow sets it, or HEAD carries the tag v<version> -- it must be the date,
@@ -29,6 +34,10 @@ if [ -z "$tag" ]; then
 fi
 tag=${tag#v}
 header=$(sed -n 's/^#define IRIS_VERSION_STRING "\(.*\)"$/\1/p' iris.h)
+masthead=$(sed -n 's/^   v\([0-9][0-9.]*[0-9]\) .*one file.*/\1/p' iris.h | head -1)
+readme=$(sed -n 's/^BSD 3-Clause licensed\. Version \([0-9][0-9.]*[0-9]\)\.$/\1/p' README.md | head -1)
+technical=$(sed -n 's/^\*\*Version \([0-9][0-9.]*[0-9]\)\.\*\*.*/\1/p' docs/SYSTEM-technical.md | head -1)
+docsindex=$(sed -n 's/.*describes iris \([0-9][0-9.]*[0-9]\) and.*/\1/p' docs/README.md | head -1)
 props=$(sed -n 's/^version=//p' library.properties)
 cff=$(sed -n 's/^version: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' CITATION.cff)
 released=$(sed -n 's/^date-released: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' CITATION.cff)
@@ -45,7 +54,11 @@ printf '  IRIS_VERSION_STRING   %s\n' "$header"
 printf '  library.properties    %s\n' "$props"
 printf '  CITATION.cff          %s, date-released %s\n' "$cff" "${released:-none}"
 printf '  CHANGELOG.md          %s, %s\n' "$changelog" "${when:-no date or unreleased}"
-for v in "$header" "$props" "$cff" "$changelog"; do
+printf '  iris.h masthead       %s\n' "${masthead:-not found}"
+printf '  README.md             %s\n' "${readme:-not found}"
+printf '  SYSTEM-technical.md   %s\n' "${technical:-not found}"
+printf '  docs/README.md        %s\n' "${docsindex:-not found}"
+for v in "$header" "$masthead" "$props" "$cff" "$changelog" "$readme" "$technical" "$docsindex"; do
   if [ "$v" != "$tag" ]; then
     echo "FAIL  the versions disagree"
     exit 1

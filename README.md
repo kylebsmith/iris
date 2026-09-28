@@ -289,7 +289,7 @@ It stops at the first failure and says which check failed. One check at a time:
 | `sh build.sh mutate` | an advisory mutation run; it reports, it never fails the build (needs Python) |
 | `sh build.sh reference` | an independent double-precision reference in Python (skips without numpy, Python's numerical library, and scikit-learn, its machine-learning library) |
 | `sh build.sh tiny` | [`docs/tiny.c`](docs/tiny.c), `iris_train` written out again by hand, which must agree with the library to the bit |
-| `sh build.sh docs` | `keywords.txt` lists every public function and type, `docs/tiny.c` and the first program in this README build with `-Werror` and the README program runs, `CONTRIBUTING.md` lists every command, and the release version check keeps its rule |
+| `sh build.sh docs` | `keywords.txt` lists every public function and type, `docs/tiny.c` and the first program in this README build with `-Werror` and the README program runs, `CONTRIBUTING.md` lists every command, and every file that names the version (the header, the packaging files, the changelog, this README and `docs/`) names the same one |
 | `sh build.sh clean` | remove `build/` |
 
 AddressSanitizer and UndefinedBehaviorSanitizer are compiler instrumentation
