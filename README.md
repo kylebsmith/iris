@@ -304,7 +304,7 @@ before a pull request.
 | [`iris.h`](iris.h) | The whole library. Start at the top. |
 | [`examples/`](examples/) | `00_minimal.c` draws the learned space; `01_hello.c` three gestures; `02_fix_a_mistake.c` the repair loop; `03_reroll.c` same demonstrations, different instrument; `04_categories.c` one instrument read two ways, continuous and snapped; `05_keep_playing.c` playing one instrument while another trains; `iris_smallest/` the Arduino one |
 | [`tests/`](tests/) | The test programs and the committed saved instrument in `tests/golden/` |
-| [`tools/`](tools/) | Programs the tests use, such as the exhaustive square-root comparison, and `iris_dump.c`, which takes an instrument off a board and writes its takes and a prediction grid as CSV |
+| [`tools/`](tools/) | Programs the tests use, such as the exhaustive square-root comparison, and `iris_dump.c`, which takes an instrument off a board and writes its takes and a prediction grid as CSV, and with `--c-array` the instrument itself as C for a sketch to `iris_load` at boot |
 | [`docs/`](docs/) | The two explanations of the system, decision records, the negative-results index and the board logs; [`docs/README.md`](docs/README.md) is the index |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to change iris without breaking it |

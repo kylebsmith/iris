@@ -13,6 +13,38 @@ promised about saved instruments, is in
 | 0.2.0 | 7 | 7 |
 | 0.1.0 | 5 (6 for an instrument never fitted) | 1 to 6 |
 
+## Unreleased
+
+`iris.h` is untouched: the library version, the golden training hash, the
+starter kit's recipes, the save format and what a saved file plays are all
+unmoved. This is tooling, which a patch release permits; fold this heading into
+that release's when it is made.
+
+### Tools
+
+- `tools/iris_dump.c` takes `--c-array`, and writes `PREFIX-model.h` beside
+  the `.iris` file and the tables: the saved instrument's own bytes as
+  `static const unsigned char model[] = { ... }`, with the `iris_init` and
+  `iris_load` lines for that instrument's shape written out above them. A
+  sketch includes that file, or has the array pasted into it, and loads it
+  once at boot — so a finished instrument can carry a trained mapping with no
+  training interface, no buttons and no screen. Training in the loop is what
+  this library is for; it should not be the fee for a first instrument.
+  Because the takes travel inside a saved file, a baked instrument is still
+  the whole instrument: it answers `iris_count` and `iris_get`, and it records
+  and trains. The emitted comment says so with that instrument's own numbers,
+  and names the argument to raise to leave room for another take. An
+  instrument that was never fitted, or that was fitted and then given other
+  takes, is written with a warning that says what `iris_predict` will do
+  instead and what to call to fix it, and the program says the same on its own
+  output rather than writing a quiet dud. Two checks are added to
+  `./build/iris_dump --check`, and so to `sh build.sh load` and
+  `sh build.sh sanitize`: that the array holds the file's bytes and that
+  nothing in the prose above it nests a comment, which would end the header's
+  own comment early and stop it compiling; and that what comes back out of the
+  array loads, keeps every demonstration and plays every one of them to the
+  bit.
+
 ## 0.3.0 — 2026-09-27
 
 Additions only: nothing an existing function returns for a valid input

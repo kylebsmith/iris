@@ -15,25 +15,46 @@
      PREFIX-grid.csv    the instrument played over a grid spanning the takes:
                         each input across the range its takes cover, or, past
                         the first two, held at the middle of that range
+     PREFIX-model.h     with --c-array: the same bytes as C, and the lines
+                        that load them. For deployment rather than analysis
 
    Build and run from the repository root:
 
      cc -std=c99 -O2 -Wall -Wextra -I. -o build/iris_dump tools/iris_dump.c
      ./build/iris_dump capture.txt session1 [--inputs a,b,c] [--outputs x,y]
-                                            [--grid N]
+                                            [--grid N] [--c-array]
 
    --inputs and --outputs name the columns (in0, in1, ... and out0, ... when
    not given); --grid sets the points per input (21). A capture holding
    several blocks gives the last one. Lines may carry the timestamp the
    Arduino IDE's Serial Monitor can add ("12:34:56.789 -> "); it is skipped.
 
+   --c-array is the last hop to a finished instrument. It writes
+   PREFIX-model.h:
+
+     static const unsigned char model[] = { 0x69, 0x72, ... };
+
+   which a sketch includes, or has the array pasted into it, and loads once
+   with iris_load at boot. That instrument plays a trained mapping with no
+   training interface, no buttons and no screen -- training in the loop is
+   what this library is for, but it should not be the fee for a first
+   instrument. The emitted file carries the iris_init and iris_load lines for
+   this instrument's own shape, and says what it holds.
+
+   Baking is not a dead end, because the takes travel inside the saved file:
+   the baked instrument still answers iris_count and iris_get, and still
+   records and trains. The emitted comment says so, with this instrument's
+   numbers in it.
+
      ./build/iris_dump --check
 
    runs the self-check sh build.sh load runs: a saved file printed as a
    sketch prints it, noise around it, comes back byte for byte, loads, and
-   gives back every take and every grid prediction to the bit; a changed
-   digit, a missing END or a short block is refused. Exit status 0 means
-   every check passed.
+   gives back every take and every grid prediction to the bit; the --c-array
+   header holds the same bytes inside one block comment, and the instrument
+   that comes back out of it keeps every take and plays every one to the bit;
+   a changed digit, a missing END or a short block is refused. Exit status 0
+   means every check passed.
 
    iris.h itself is unchanged by this program: it uses the C library and
    the heap, which the header does not. The maxima are raised so that an
@@ -227,6 +248,106 @@ static void write_grid(FILE *f, iris *k, int g, const char *in_names, const char
   free(in); free(out); free(lo); free(hi);
 }
 
+/* The instrument as C: the bytes iris_save wrote, and the lines that load
+   them again. `from` names where the block came from and `prefix` names the
+   file this is being written to. Everything it says about the instrument it
+   reads from the instrument.
+
+   Nothing it writes before the array may contain a comment opener or closer:
+   all of it is inside one block comment, so a nested one would end that
+   comment early and the header would not compile. The example lines below
+   use // for that reason, and the self-check holds this. */
+static void write_c_array(FILE *f, const unsigned char *file, size_t n, iris *k,
+                          const char *prefix, const char *from) {
+  int ni, nh, no, stored;             /* stored: the store's capacity, unused */
+  iris_shape(k, &ni, &nh, &no, &stored);
+  const int takes = iris_count(k);
+  const int cap = takes > 0 ? takes : 1;   /* a store of 0 cannot be sized */
+  const int fitted = (int)(u32_at(file, 12) & 1u);
+  char guard[256];
+  size_t gi = 0;
+  const char *lead = "IRIS_BAKED_";
+  while (lead[gi]) { guard[gi] = lead[gi]; ++gi; }
+  for (const char *p = prefix; *p && gi + 3 < sizeof guard; ++p)
+    guard[gi++] = (*p >= 'a' && *p <= 'z') ? (char)(*p - 'a' + 'A')
+                : (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') ? *p : '_';
+  guard[gi++] = '_'; guard[gi++] = 'H'; guard[gi] = 0;
+
+  fprintf(f,
+    "/* An iris instrument, baked: the bytes iris_save wrote, as C.\n"
+    "\n"
+    "   Written by iris_dump from %s.\n"
+    "   %d input%s, %d hidden units, %d output%s, %d demonstration%s.\n"
+    "   %s. %lu bytes, save format %lu, seed %lu, smoothing %g.\n",
+    from,
+    ni, ni == 1 ? "" : "s", nh, no, no == 1 ? "" : "s",
+    takes, takes == 1 ? "" : "s",
+    iris_is_trained(k) ? "Trained on them"
+                       : fitted ? "Fitted, then given more demonstrations or fewer"
+                                : "NEVER TRAINED",
+    (unsigned long)n, (unsigned long)IRIS_FILE_VERSION,
+    (unsigned long)iris_seed(k), (double)iris_get_smoothing(k));
+
+  if (!fitted)
+    fprintf(f,
+      "\n"
+      "   WARNING: this instrument was never fitted. iris_predict will not play\n"
+      "   it: it writes the middle of each output's range and reports\n"
+      "   IRIS_NOT_FITTED. Call iris_train(k) after iris_load below -- the\n"
+      "   demonstrations are in these bytes, so that works -- or bake a trained\n"
+      "   one instead.\n");
+  else if (!iris_is_trained(k))
+    fprintf(f,
+      "\n"
+      "   WARNING: this instrument was fitted and then had demonstrations added\n"
+      "   or removed, so what it plays is not a fit of the %d it now holds.\n"
+      "   Call iris_train(k) after iris_load below to make it one.\n", takes);
+
+  fprintf(f,
+    "\n"
+    "   Keep this file in the sketch's folder and include it, or paste the\n"
+    "   array below into the sketch. Then load it once, at boot:\n"
+    "\n"
+    "     #include \"iris.h\"\n"
+    "     #include \"%s-model.h\"\n"
+    "\n"
+    "     static unsigned char memory[IRIS_ARENA(%d, %d, %d, %d)];\n"
+    "     static iris *k;\n"
+    "\n"
+    "     void setup(void) {\n"
+    "       Serial.begin(115200);\n"
+    "       k = iris_init(memory, sizeof memory, %d, %d, %d, %d, %luu);\n"
+    "       if (!k || !iris_load(k, model, sizeof model)) {\n"
+    "         Serial.println(F(\"the baked instrument was REFUSED. not playing it.\"));\n"
+    "         for (;;);            // never play what did not load\n"
+    "       }\n"
+    "       Serial.println(F(\"loaded the baked instrument.\"));\n"
+    "     }\n"
+    "\n"
+    "   iris_predict(k, in, out) then plays it, and that is the whole\n"
+    "   instrument: no SAVE button, no screen, no training interface.\n",
+    prefix, ni, nh, no, cap, ni, nh, no, cap, (unsigned long)iris_seed(k));
+
+  fprintf(f,
+    "\n"
+    "   It is not a dead end. The demonstrations travel inside these bytes, so\n"
+    "   a baked instrument is still the whole instrument: iris_count(k) is %d\n"
+    "   here, iris_get(k, r, in, out) reads any of them back, and iris_record\n"
+    "   and iris_train go on working. Raise the last argument of IRIS_ARENA and\n"
+    "   of iris_init above %d to leave room, and you can add a demonstration to\n"
+    "   a finished instrument and refit it on the spot.\n"
+    "*/\n"
+    "#ifndef %s\n"
+    "#define %s\n"
+    "static const unsigned char model[] = {\n",
+    takes, cap, guard, guard);
+
+  for (size_t i = 0; i < n; ++i)
+    fprintf(f, i % 12 == 0 ? "  0x%02X,%s" : " 0x%02X,%s",
+            file[i], (i % 12 == 11 || i + 1 == n) ? "\n" : "");
+  fprintf(f, "};\n#endif\n");
+}
+
 /* ------------------------------------------------------------ self-check */
 
 static int fails = 0;
@@ -319,6 +440,57 @@ static int self_check(void) {
   }
   check("the grid is the instrument played at each row, 25 rows", grid_ok && rows == 25);
 
+  /* the C array: the file's own bytes, and an instrument that comes back
+     from them whole -- every demonstration, and the same playing */
+  f = tmpfile();
+  int c_ok = f && r, c_loads = 0;
+  unsigned char *baked_mem = 0;
+  if (c_ok) {
+    const size_t room = 4096 + 8 * n;
+    char *text = (char *)malloc(room);
+    write_c_array(f, file, n, r, "session1", "capture.txt");
+    rewind(f);
+    const size_t len = fread(text, 1, room - 1, f);
+    text[len] = 0;
+    fclose(f);
+    const char *at = strstr(text, "model[] = {");
+    unsigned char *got = (unsigned char *)malloc(n + 16);
+    size_t g = 0;
+    for (const char *p = at ? at : text; p && p[0] && p[1] && p[2] && p[3]; ++p)
+      if (p[0] == '0' && p[1] == 'x' && hexval(p[2]) >= 0 && hexval(p[3]) >= 0) {
+        if (g < n + 16) got[g++] = (unsigned char)(hexval(p[2]) * 16 + hexval(p[3]));
+        p += 3;
+      }
+    /* One block comment, opened once and closed once. A nested opener or
+       closer in the prose above the array ends the comment early and the
+       header stops compiling, which a byte-for-byte check cannot see. */
+    const char *first_close = strstr(text, "*/");
+    int one_comment = text[0] == '/' && text[1] == '*'
+                   && first_close && strstr(first_close + 2, "*/") == 0
+                   && strstr(text + 2, "/*") == 0;
+    c_ok = at && one_comment && g == n && memcmp(got, file, n) == 0;
+    const char *why2 = "";
+    iris *baked = c_ok ? load_file(got, g, &baked_mem, &why2) : 0;
+    c_loads = baked && iris_count(baked) == iris_count(k)
+           && iris_is_trained(baked) == iris_is_trained(k);
+    for (int row = 0; c_loads && row < iris_count(k); ++row) {
+      float ia[3], oa[2], ib[3], ob[2];
+      const int ida = iris_get(k, row, ia, oa);
+      const int idb = iris_get(baked, row, ib, ob);
+      c_loads = ida == idb && memcmp(ia, ib, sizeof ia) == 0
+                           && memcmp(oa, ob, sizeof oa) == 0;
+      if (c_loads) {                         /* and it plays the same there */
+        iris_predict(k, ia, oa);
+        iris_predict(baked, ia, ob);
+        c_loads = oa[0] == ob[0] && oa[1] == ob[1];
+      }
+    }
+    free(text); free(got);
+  }
+  check("--c-array holds the saved file's own bytes, in one block comment", c_ok);
+  check("the baked array loads, keeps every demonstration and plays the same", c_loads);
+  free(baked_mem);
+
   free(cap); free(back); back = 0;
   cap = capture_of(file, n, 1, 0, 0);
   m = find_block(cap, strlen(cap), &back, &blocks, &why);
@@ -341,17 +513,19 @@ static int self_check(void) {
 int main(int argc, char **argv) {
   if (argc == 2 && strcmp(argv[1], "--check") == 0) return self_check();
   const char *in_names = 0, *out_names = 0, *capture = 0, *prefix = 0;
-  int g = 21;
+  int g = 21, c_array = 0;
   for (int a = 1; a < argc; ++a) {
     if (strcmp(argv[a], "--inputs") == 0 && a + 1 < argc) in_names = argv[++a];
     else if (strcmp(argv[a], "--outputs") == 0 && a + 1 < argc) out_names = argv[++a];
     else if (strcmp(argv[a], "--grid") == 0 && a + 1 < argc) g = atoi(argv[++a]);
+    else if (strcmp(argv[a], "--c-array") == 0) c_array = 1;
     else if (!capture) capture = argv[a];
     else if (!prefix) prefix = argv[a];
     else { capture = 0; break; }
   }
   if (!capture || !prefix || g < 1 || g > 1000) {
-    fprintf(stderr, "usage: iris_dump CAPTURE PREFIX [--inputs a,b,..] [--outputs x,y,..] [--grid N]\n"
+    fprintf(stderr, "usage: iris_dump CAPTURE PREFIX [--inputs a,b,..] [--outputs x,y,..]\n"
+                    "                               [--grid N] [--c-array]\n"
                     "       iris_dump --check\n");
     return 2;
   }
@@ -390,14 +564,24 @@ int main(int argc, char **argv) {
     write_grid(f, k, g, in_names, out_names);
     fclose(f);
   }
+  if (c_array) {
+    snprintf(path, sizeof path, "%s-model.h", prefix);
+    if (!(f = fopen(path, "w"))) { fprintf(stderr, "iris_dump: cannot write %s\n", path); return 1; }
+    write_c_array(f, file, bytes, k, prefix, capture);
+    if (fclose(f)) { fprintf(stderr, "iris_dump: cannot write %s\n", path); return 1; }
+  }
   printf("%d-%d-%d instrument, %d takes, %s, seed %lu, smoothing %g (block %d of %d in the capture)\n"
-         "wrote %s.iris, %s-takes.csv%s%s%s\n",
+         "wrote %s.iris, %s-takes.csv%s%s%s%s%s%s\n",
          ni, nh, no, iris_count(k),
          iris_is_trained(k) ? "trained on these takes" : fitted ? "fitted, then given more takes or fewer"
                                                                   : "never trained: no grid",
          (unsigned long)iris_seed(k), (double)iris_get_smoothing(k), blocks, blocks,
          prefix, prefix, fitted && iris_count(k) > 0 ? ", " : "",
-         fitted && iris_count(k) > 0 ? prefix : "", fitted && iris_count(k) > 0 ? "-grid.csv" : "");
+         fitted && iris_count(k) > 0 ? prefix : "", fitted && iris_count(k) > 0 ? "-grid.csv" : "",
+         c_array ? ", " : "", c_array ? prefix : "", c_array ? "-model.h" : "");
+  if (c_array && !fitted)
+    printf("%s-model.h holds an instrument that was never fitted: it says so, and says\n"
+           "to call iris_train after iris_load. Do not ship it as it stands.\n", prefix);
   free(file); free(mem);
   return 0;
 }
